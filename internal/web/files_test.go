@@ -1251,6 +1251,10 @@ func postHostUploadWithQuickRunSync(t *testing.T, client *http.Client, serverURL
 }
 
 func postHostUploadBatch(t *testing.T, client *http.Client, serverURL, csrfToken, directory, conflictAction string, files map[string]string) (int, []byte) {
+	return postHostUploadBatchWithQuickRunSync(t, client, serverURL, csrfToken, directory, conflictAction, files, false)
+}
+
+func postHostUploadBatchWithQuickRunSync(t *testing.T, client *http.Client, serverURL, csrfToken, directory, conflictAction string, files map[string]string, syncQuickRuns bool) (int, []byte) {
 	t.Helper()
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
@@ -1260,6 +1264,11 @@ func postHostUploadBatch(t *testing.T, client *http.Client, serverURL, csrfToken
 		{name: "conflict_action", value: conflictAction},
 	} {
 		if err := writer.WriteField(field.name, field.value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if syncQuickRuns {
+		if err := writer.WriteField("sync_quick_runs", "1"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1417,6 +1426,54 @@ func TestOverwritingUploadedScriptCanSynchronizeQuickRunVersions(t *testing.T) {
 	wantDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(withSync)))
 	if digest != wantDigest || revision != 5 {
 		t.Fatalf("synchronized Quick Run digest=%s revision=%d, want digest=%s revision=5", digest, revision, wantDigest)
+	}
+}
+
+func TestBatchUploadCanSynchronizeOverwrittenQuickRunScript(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot, stateRoot := filepath.Join(root, "managed"), filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptName, original, replacement := "deploy.sh", "#!/bin/sh\nexit 0\n", "#!/bin/sh\necho synchronized\n"
+	if runtime.GOOS == "windows" {
+		scriptName, original, replacement = "deploy.cmd", "@echo off\r\nexit /b 0\r\n", "@echo off\r\necho synchronized\r\n"
+	}
+	scriptPath := filepath.Join(hostRoot, scriptName)
+	if err := os.WriteFile(scriptPath, []byte(original), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	database := openExternalTestDatabase(t, filepath.Join(stateRoot, "app.db"))
+	originalDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(original)))
+	if _, err := database.Exec(`INSERT INTO quick_runs
+		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, sort_order, created_at, locked, script_sha256, revision, updated_at)
+		VALUES ('batch-upload-quick', 'Batch deploy', ?, ?, '', 30, 1, 1, 0, ?, 2, 1)`, scriptPath, hostfiles.ComparisonKey(scriptPath), originalDigest); err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	status, body := postHostUploadBatchWithQuickRunSync(t, client, serverURL, formToken(t, page), hostRoot, "overwrite", map[string]string{
+		scriptName:  replacement,
+		"notes.txt": "same upload batch",
+	}, true)
+	if status != http.StatusOK {
+		t.Fatalf("batch upload with synchronization status=%d body=%s", status, body)
+	}
+	var digest string
+	var revision int64
+	if err := database.QueryRow("SELECT script_sha256, revision FROM quick_runs WHERE id = 'batch-upload-quick'").Scan(&digest, &revision); err != nil {
+		t.Fatal(err)
+	}
+	wantDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(replacement)))
+	if digest != wantDigest || revision != 3 {
+		t.Fatalf("batch-synchronized Quick Run became invalid: digest=%s revision=%d, want digest=%s revision=3", digest, revision, wantDigest)
 	}
 }
 

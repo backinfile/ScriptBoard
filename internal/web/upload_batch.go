@@ -120,7 +120,8 @@ func (a *App) uploadBatchFiles(response http.ResponseWriter, request *http.Reque
 		inputs = append(inputs, hostfiles.UploadBatchInput{Name: uploadName, Source: file, MaxBytes: 1 << 30, StoredName: storedID})
 	}
 
-	results, err := a.hostUploadBatch(request.Context(), relative, inputs, action == conflictActionOverwrite)
+	synchronizeQuickRuns := request.FormValue("sync_quick_runs") == "1" && action == conflictActionOverwrite
+	results, err := a.hostUploadBatch(request.Context(), relative, inputs, action == conflictActionOverwrite, synchronizeQuickRuns)
 	if err != nil {
 		a.recordAuditForRequest(request, "upload_batch", fmt.Sprintf("%d files", len(inputs)), "failed")
 		http.Error(response, "批量上传失败，目标目录未保留本批次修改："+secretredaction.String(err.Error()), http.StatusConflict)
@@ -134,7 +135,10 @@ func (a *App) uploadBatchFiles(response http.ResponseWriter, request *http.Reque
 	for index, result := range results {
 		a.recordAuditForRequest(request, "upload_file", result.Name, "succeeded")
 		detail := webText(locale, "upload_results.saved")
-		if result.Name != files[index].Filename {
+		if result.QuickRunsSynchronized > 0 {
+			detail = fmt.Sprintf(webText(locale, "upload_results.saved_quick_runs"), result.QuickRunsSynchronized)
+			a.recordAuditResourceForRequest(request, "sync_quick_runs_after_upload", result.Path, "succeeded", "", result.ScriptSHA256)
+		} else if result.Name != files[index].Filename {
 			detail = fmt.Sprintf(webText(locale, "upload_results.renamed"), result.Name)
 		}
 		views = append(views, uploadResult{Name: result.Name, Result: webText(locale, "upload_results.succeeded"), Detail: detail, Succeeded: true})

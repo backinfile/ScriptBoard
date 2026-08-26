@@ -156,13 +156,33 @@ func (a *App) hostUpload(ctx context.Context, directory, name string, source io.
 	return a.files.Upload(directory, name, source, maxBytes, replace, storedName)
 }
 
-func (a *App) hostUploadBatch(ctx context.Context, directory string, inputs []hostfiles.UploadBatchInput, replace bool) ([]hostfiles.UploadBatchResult, error) {
+func (a *App) hostUploadBatch(ctx context.Context, directory string, inputs []hostfiles.UploadBatchInput, replace, synchronizeQuickRuns bool) ([]hostfiles.UploadBatchResult, error) {
 	if a.hostFilesBackend != nil {
-		return a.hostFilesBackend.UploadBatch(ctx, directory, inputs, replace)
+		return a.hostFilesBackend.UploadBatch(ctx, directory, inputs, replace, synchronizeQuickRuns)
 	}
 	results, err := a.files.UploadBatch(directory, inputs, replace)
 	if err != nil {
 		return nil, err
+	}
+	// Keep batch replacement metadata and Quick Run versions in one database
+	// transaction so a checked synchronization cannot leave stale references.
+	if synchronizeQuickRuns {
+		for index := range results {
+			if results[index].Trashed == nil {
+				continue
+			}
+			var references int
+			if err := a.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM quick_runs WHERE script_path_key = ?", hostfiles.ComparisonKey(results[index].Path)).Scan(&references); err != nil {
+				return nil, errors.Join(err, a.files.RollbackUploadBatch(results))
+			}
+			if references > 0 {
+				prepared, prepareErr := a.files.PrepareScript(results[index].Path)
+				if prepareErr != nil {
+					return nil, errors.Join(prepareErr, a.files.RollbackUploadBatch(results))
+				}
+				results[index].ScriptSHA256 = prepared.Digest
+			}
+		}
 	}
 	transaction, err := a.db.BeginTx(ctx, nil)
 	if err == nil {
@@ -178,6 +198,19 @@ func (a *App) hostUploadBatch(ctx context.Context, directory string, inputs []ho
 			if err != nil {
 				break
 			}
+		}
+		for index := range results {
+			if err != nil || results[index].ScriptSHA256 == "" {
+				continue
+			}
+			updated, updateErr := transaction.ExecContext(ctx, `UPDATE quick_runs
+				SET script_sha256 = ?, revision = revision + 1, updated_at = ?
+				WHERE script_path_key = ?`, results[index].ScriptSHA256, time.Now().UTC().Unix(), hostfiles.ComparisonKey(results[index].Path))
+			if updateErr != nil {
+				err = updateErr
+				break
+			}
+			results[index].QuickRunsSynchronized, _ = updated.RowsAffected()
 		}
 	}
 	if err == nil {

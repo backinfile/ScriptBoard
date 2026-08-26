@@ -1924,7 +1924,7 @@ func (a *App) publishExternalUpload(ctx context.Context, entry externaltrigger.E
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}
-	results, err := a.hostUploadBatch(ctx, config.Directory, []hostfiles.UploadBatchInput{{Name: targetName, Source: io.LimitReader(source, config.MaxBytes+1), MaxBytes: config.MaxBytes, StoredName: storedID}}, false)
+	results, err := a.hostUploadBatch(ctx, config.Directory, []hostfiles.UploadBatchInput{{Name: targetName, Source: io.LimitReader(source, config.MaxBytes+1), MaxBytes: config.MaxBytes, StoredName: storedID}}, false, false)
 	if err != nil || len(results) != 1 {
 		return externalFailure(http.StatusConflict, "upload_failed")
 	}

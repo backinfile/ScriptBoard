@@ -100,7 +100,8 @@ type hostFilesWireResponse struct {
 }
 
 type hostFilesUploadBatchManifest struct {
-	Files []hostFilesUploadBatchFile `json:"files"`
+	Files                []hostFilesUploadBatchFile `json:"files"`
+	SynchronizeQuickRuns bool                       `json:"synchronize_quick_runs,omitempty"`
 }
 
 type hostFilesUploadBatchFile struct {
@@ -476,8 +477,34 @@ func (service *brokerHostFilesService) UploadBatch(ctx context.Context, manifest
 		inputs = append(inputs, hostfiles.UploadBatchInput{Name: entry.Name, Source: file, MaxBytes: entry.MaxBytes, StoredName: entry.StoredName})
 	}
 	results, err := service.files.UploadBatch(directory, inputs, replace)
-	if err != nil || service.db == nil {
+	if err != nil {
 		return results, err
+	}
+	if manifest.SynchronizeQuickRuns && service.db == nil {
+		return nil, errors.Join(errors.New("Quick Run synchronization database is unavailable"), service.files.RollbackUploadBatch(results))
+	}
+	// Keep the broker-side file transaction recoverable until every referenced
+	// Quick Run has the digest of the newly committed script.
+	if manifest.SynchronizeQuickRuns {
+		for index := range results {
+			if results[index].Trashed == nil {
+				continue
+			}
+			var references int
+			if err := service.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM quick_runs WHERE script_path_key = ?", hostfiles.ComparisonKey(results[index].Path)).Scan(&references); err != nil {
+				return nil, errors.Join(err, service.files.RollbackUploadBatch(results))
+			}
+			if references > 0 {
+				prepared, prepareErr := service.files.PrepareScript(results[index].Path)
+				if prepareErr != nil {
+					return nil, errors.Join(prepareErr, service.files.RollbackUploadBatch(results))
+				}
+				results[index].ScriptSHA256 = prepared.Digest
+			}
+		}
+	}
+	if service.db == nil {
+		return results, nil
 	}
 	transaction, err := service.db.BeginTx(ctx, nil)
 	if err == nil {
@@ -493,6 +520,19 @@ func (service *brokerHostFilesService) UploadBatch(ctx context.Context, manifest
 			if err != nil {
 				break
 			}
+		}
+		for index := range results {
+			if err != nil || results[index].ScriptSHA256 == "" {
+				continue
+			}
+			updated, updateErr := transaction.ExecContext(ctx, `UPDATE quick_runs
+				SET script_sha256 = ?, revision = revision + 1, updated_at = ?
+				WHERE script_path_key = ?`, results[index].ScriptSHA256, time.Now().UTC().Unix(), hostfiles.ComparisonKey(results[index].Path))
+			if updateErr != nil {
+				err = updateErr
+				break
+			}
+			results[index].QuickRunsSynchronized, _ = updated.RowsAffected()
 		}
 	}
 	if err == nil {
@@ -1359,8 +1399,8 @@ func (backend *HostFilesBackend) Upload(ctx context.Context, directory, name str
 	return value.Trashed, err
 }
 
-func (backend *HostFilesBackend) UploadBatch(ctx context.Context, directory string, inputs []hostfiles.UploadBatchInput, replace bool) ([]hostfiles.UploadBatchResult, error) {
-	manifest := hostFilesUploadBatchManifest{Files: make([]hostFilesUploadBatchFile, 0, len(inputs))}
+func (backend *HostFilesBackend) UploadBatch(ctx context.Context, directory string, inputs []hostfiles.UploadBatchInput, replace, synchronizeQuickRuns bool) ([]hostfiles.UploadBatchResult, error) {
+	manifest := hostFilesUploadBatchManifest{Files: make([]hostFilesUploadBatchFile, 0, len(inputs)), SynchronizeQuickRuns: synchronizeQuickRuns}
 	stagedPaths := make([]string, 0, len(inputs))
 	defer func() {
 		for _, path := range stagedPaths {
