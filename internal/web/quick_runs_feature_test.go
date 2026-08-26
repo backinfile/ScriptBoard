@@ -372,6 +372,10 @@ func TestAdminCanCreateQuickRunInAGroupFromHostFile(t *testing.T) {
 	if !bytes.Contains(detail, []byte("Deployment / Grouped deploy")) || !bytes.Contains(detail, []byte("Back to Quick Runs")) || !bytes.Contains(detail, []byte(`href="/config/quick-runs"`)) {
 		t.Fatalf("Quick Run detail is missing its group source or return link: %s", detail)
 	}
+	if !bytes.Contains(detail, []byte(`<h1>Grouped deploy</h1>`)) || !bytes.Contains(detail, []byte(`action="/config/quick-runs/`+quickRunID+`/start"`)) ||
+		!bytes.Contains(detail, []byte(`data-run-rerun`)) || bytes.Contains(detail, []byte("save-quick-run")) {
+		t.Fatalf("Quick Run detail title or actions are incorrect: %s", detail)
+	}
 }
 
 func TestDeletingQuickRunGroupMovesItsItemsToUngrouped(t *testing.T) {

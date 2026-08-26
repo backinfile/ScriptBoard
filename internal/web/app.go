@@ -3460,30 +3460,50 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 		finishedAt = run.FinishedAt.UTC().Format(time.RFC3339Nano)
 	}
 	locale := resolveWebLocale(request)
-	quickRunSourceLabel, quickRunURL := a.runQuickRunSource(request.Context(), run, locale)
+	quickRunSourceLabel, quickRunTitle, quickRunURL, quickRunStartURL := a.runQuickRunSource(request.Context(), run, locale)
+	displayTitle := run.ScriptPath
+	if quickRunTitle != "" {
+		displayTitle = quickRunTitle
+	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = runTemplate.Execute(response, struct {
-		Run                         runmanager.Run
-		CSRFToken                   string
-		Locale                      webLocale
-		StartedAt, FinishedAt       string
-		QuickRunSourceLabel         string
-		QuickRunURL                 string
-		CanStop, CanManageExecution bool
+		Run                      runmanager.Run
+		CSRFToken                string
+		Locale                   webLocale
+		StartedAt, FinishedAt    string
+		DisplayTitle             string
+		QuickRunSourceLabel      string
+		QuickRunURL, RerunAction string
+		IsQuickRunSource         bool
+		CanStop, CanExecute      bool
+		CanManageExecution       bool
 	}{
 		Run: run, CSRFToken: current.csrfToken, Locale: locale,
 		StartedAt: startedAt.UTC().Format(time.RFC3339Nano), FinishedAt: finishedAt,
-		QuickRunSourceLabel: quickRunSourceLabel, QuickRunURL: quickRunURL,
-		CanStop: canStop, CanManageExecution: canManageExecution,
+		DisplayTitle: displayTitle, QuickRunSourceLabel: quickRunSourceLabel, QuickRunURL: quickRunURL,
+		RerunAction: quickRunStartURL, IsQuickRunSource: quickRunSourceLabel != "",
+		CanStop: canStop, CanExecute: identity.Allows(current.role, identity.PermissionExecute), CanManageExecution: canManageExecution,
 	})
 }
 
-func (a *App) runQuickRunSource(_ context.Context, run runmanager.Run, _ webLocale) (string, string) {
+func (a *App) runQuickRunSource(_ context.Context, run runmanager.Run, _ webLocale) (string, string, string, string) {
 	switch run.SourceType {
-	case "admin/quick-run", "external/quick-run":
-		return run.SourceName, "/config/quick-runs"
+	case "admin/quick-run":
+		title := run.SourceName
+		startURL := ""
+		if quick, err := a.loadQuickRun(run.SourceID); err == nil {
+			title = quick.Name
+			startURL = "/config/quick-runs/" + url.PathEscape(quick.ID) + "/start"
+		}
+		return run.SourceName, title, "/config/quick-runs", startURL
+	case "external/quick-run":
+		title := run.SourceName
+		if separator := strings.LastIndex(title, " / "); separator >= 0 {
+			title = title[separator+3:]
+		}
+		return run.SourceName, title, "/config/quick-runs", ""
 	default:
-		return "", ""
+		return "", "", "", ""
 	}
 }
 

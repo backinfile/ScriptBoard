@@ -2246,6 +2246,7 @@ var webMessages = map[string]localizedMessage{
 	"run_detail.jump_bottom":                        {"移到底部", "Go to bottom"},
 	"run_detail.download_txt":                       {"下载 TXT", "Download TXT"},
 	"run_detail.save_quick":                         {"保存为快捷执行", "Save as Quick Run"},
+	"run_detail.rerun":                              {"重新执行", "Run again"},
 	"runs.open_script_directory":                    {"打开脚本目录", "Open script directory"},
 	"run_detail.quick_name":                         {"快捷执行名称", "Quick Run name"},
 	"run_detail.created":                            {"发起时间", "Created"},

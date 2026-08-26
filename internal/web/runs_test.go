@@ -116,6 +116,14 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 			t.Fatalf("completed Run output controls missing %q: %s", expected, completedPage)
 		}
 	}
+	detailsPosition := strings.Index(completedPage, `data-run-details`)
+	logPosition := strings.Index(completedPage, `class="run-log-section"`)
+	if detailsPosition < 0 || logPosition < 0 || detailsPosition > logPosition || strings.Contains(completedPage, `class="ledger-disclosure run-technical"`) {
+		t.Fatalf("Run details and technical facts were not merged above the log: %s", completedPage)
+	}
+	if !strings.Contains(completedPage, `action="/history/runs/start"`) || !strings.Contains(completedPage, `name="script" value="`+filepath.Join(hostRoot, scriptName)+`"`) || !strings.Contains(completedPage, `data-run-rerun`) {
+		t.Fatalf("manual Run detail does not offer rerun with its saved configuration: %s", completedPage)
+	}
 
 	response, err = client.Get(runURL + "/download")
 	if err != nil {
