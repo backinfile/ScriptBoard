@@ -62,6 +62,7 @@ type externalApprovalDetailData struct {
 	Locale                                                                      webLocale
 	CSRFToken, BackURL, ActionText, StatusText, TargetText, ConfigurationNotice string
 	Kind, TargetPath, TargetDirectoryURL, TargetPreviewURL                      string
+	UploadDownloadURL                                                           string
 	TargetOutcome, TargetOutcomeText, ConflictPolicyText                        string
 	PreviewText, PreviewMode, PreviewContentType, PreviewNotice                 string
 	BeforeValue, AfterValue, VariableName, VariableType, VariableRevision       string
@@ -835,6 +836,24 @@ func (a *App) externalApprovalDetail(response http.ResponseWriter, request *http
 	}
 }
 
+func (a *App) downloadExternalApprovalUpload(response http.ResponseWriter, request *http.Request) {
+	approval, err := a.externalTriggers.Approval(request.Context(), request.PathValue("id"))
+	if err != nil || approval.Status != externaltrigger.ApprovalPending || approval.ActionType != externaltrigger.ActionUpload || approval.UploadName == "" {
+		http.Error(response, "External Interface approval upload not found", http.StatusNotFound)
+		return
+	}
+	payload, err := a.approvalUploads.Open(approval.ID)
+	if err != nil {
+		http.Error(response, "External Interface approval upload not found", http.StatusNotFound)
+		return
+	}
+	defer payload.Close()
+	response.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": approval.UploadName}))
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(response, request, approval.UploadName, time.Time{}, payload)
+}
+
 func (a *App) externalVariableApprovalPreview(ctx context.Context, entry externaltrigger.Entry, entryErr error, data *externalApprovalDetailData) {
 	var payload struct {
 		Value string `json:"value"`
@@ -866,6 +885,9 @@ func (a *App) externalUploadApprovalPreview(ctx context.Context, entry externalt
 	content, truncated, previewErr := a.approvalUploads.Preview(data.ID, externalApprovalPreviewLimit)
 	data.PreviewTruncated = truncated
 	if previewErr == nil {
+		if data.Status == externaltrigger.ApprovalPending {
+			data.UploadDownloadURL = "/config/external-interfaces/approvals/" + url.PathEscape(data.ID) + "/download"
+		}
 		data.PreviewContentType = http.DetectContentType(content)
 		if approvalPreviewIsText(content) {
 			data.PreviewMode, data.PreviewText = "text", string(content)

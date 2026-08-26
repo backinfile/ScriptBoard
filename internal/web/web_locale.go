@@ -1806,6 +1806,7 @@ var webMessages = map[string]localizedMessage{
 	"external.approval_conflict.rename":             {"不覆盖；同名时自动重命名", "Never overwrite; automatically rename an existing name"},
 	"external.open_target_directory":                {"打开目标目录", "Open target directory"},
 	"external.approval_file_content":                {"缓存文件内容", "Cached file content"},
+	"external.download_cached_file":                 {"下载缓存文件", "Download cached file"},
 	"external.approval_preview_truncated":           {"仅显示前 64 KiB", "Showing the first 64 KiB"},
 	"external.approval_preview_unavailable":         {"缓存内容已不可用；可能已处理或被恢复清理。", "The cached content is no longer available; it may have been processed or removed during recovery."},
 	"external.approval_log_content":                 {"即将写入的日志内容", "Log content to be written"},

@@ -144,6 +144,14 @@ func (store *Store) Preview(id string, maximum int64) ([]byte, bool, error) {
 	return content, truncated, nil
 }
 
+// Open returns the pending payload for read-only download without claiming it.
+func (store *Store) Open(id string) (*os.File, error) {
+	if !identifierPattern.MatchString(id) {
+		return nil, errors.New("invalid approval download")
+	}
+	return os.Open(filepath.Join(store.root, id, "payload"))
+}
+
 func (store *Store) Remove(id string) error {
 	if !identifierPattern.MatchString(id) {
 		return errors.New("invalid approval identifier")

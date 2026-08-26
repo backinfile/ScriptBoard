@@ -186,8 +186,21 @@ func TestExternalUploadIsCachedUntilApprovalThenWrittenToTarget(t *testing.T) {
 	_ = detailResponse.Body.Close()
 	if detailResponse.StatusCode != http.StatusOK || !bytes.Contains(detail, []byte(`data-approval-kind="upload"`)) ||
 		!bytes.Contains(detail, []byte(`data-approval-upload-preview`)) || !bytes.Contains(detail, []byte("approved upload")) ||
-		!bytes.Contains(detail, []byte(`data-approval-target-outcome="create"`)) || !bytes.Contains(detail, []byte(`/resources/files?path=`)) {
+		!bytes.Contains(detail, []byte(`data-approval-target-outcome="create"`)) || !bytes.Contains(detail, []byte(`/resources/files?path=`)) ||
+		!bytes.Contains(detail, []byte(`/config/external-interfaces/approvals/`+string(match[1])+`/download`)) {
 		t.Fatalf("upload approval detail status=%d body=%s", detailResponse.StatusCode, detail)
+	}
+	downloadResponse, err := client.Get(serverURL + "/config/external-interfaces/approvals/" + string(match[1]) + "/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloaded, _ := io.ReadAll(downloadResponse.Body)
+	_ = downloadResponse.Body.Close()
+	if downloadResponse.StatusCode != http.StatusOK || string(downloaded) != "approved upload" ||
+		!strings.Contains(downloadResponse.Header.Get("Content-Disposition"), "attachment") ||
+		!strings.Contains(downloadResponse.Header.Get("Content-Disposition"), "result.txt") ||
+		downloadResponse.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("approval download status=%d disposition=%q cache=%q body=%q", downloadResponse.StatusCode, downloadResponse.Header.Get("Content-Disposition"), downloadResponse.Header.Get("Cache-Control"), downloaded)
 	}
 	approved, err := client.PostForm(serverURL+"/config/external-interfaces/approvals/"+string(match[1])+"/approve", url.Values{"csrf_token": {formToken(t, page)}})
 	if err != nil {
@@ -197,6 +210,14 @@ func TestExternalUploadIsCachedUntilApprovalThenWrittenToTarget(t *testing.T) {
 	content, readErr := os.ReadFile(filepath.Join(uploadRoot, "result.txt"))
 	if approved.StatusCode != http.StatusSeeOther || readErr != nil || string(content) != "approved upload" {
 		t.Fatalf("approved upload status=%d content=%q error=%v", approved.StatusCode, content, readErr)
+	}
+	afterApproval, err := client.Get(serverURL + "/config/external-interfaces/approvals/" + string(match[1]) + "/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = afterApproval.Body.Close()
+	if afterApproval.StatusCode != http.StatusNotFound {
+		t.Fatalf("processed approval download status=%d, want 404", afterApproval.StatusCode)
 	}
 }
 

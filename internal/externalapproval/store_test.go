@@ -62,6 +62,32 @@ func TestPendingUploadCanBePreviewedWithoutClaimingIt(t *testing.T) {
 	}
 }
 
+func TestPendingUploadCanBeOpenedForDownloadWithoutClaimingIt(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "downloadpendingupload1"
+	if _, err := store.Stage(id, strings.NewReader("download body"), 128); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := store.Open(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloaded, readErr := io.ReadAll(payload)
+	closeErr := payload.Close()
+	if readErr != nil || closeErr != nil || string(downloaded) != "download body" {
+		t.Fatalf("download=%q read=%v close=%v", downloaded, readErr, closeErr)
+	}
+	claimed, claim, err := store.Claim(id)
+	if err != nil {
+		t.Fatalf("download claimed or removed payload: %v", err)
+	}
+	_ = claimed.Close()
+	_ = claim.Complete()
+}
+
 func TestRetainRemovesOrphanedPayloadsAfterRecovery(t *testing.T) {
 	root := t.TempDir()
 	store, err := New(root)

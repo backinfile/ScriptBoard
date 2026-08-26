@@ -80,6 +80,7 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"external interface global control", http.MethodPost, "/config/external-interfaces/control", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"external interface mutation", http.MethodPost, "/config/external-interfaces/keys/key-one/toggle", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"external interface approval", http.MethodPost, "/config/external-interfaces/approvals/request-one/approve", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"external interface approval upload download", http.MethodGet, "/config/external-interfaces/approvals/request-one/download", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"audit html", http.MethodGet, "/history/audit", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"audit download", http.MethodGet, "/history/audit.csv", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"audit service logs", http.MethodGet, "/history/audit/service-logs", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},

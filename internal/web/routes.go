@@ -399,6 +399,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requireStepUp(identity.PermissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))
 	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requireStepUp(identity.PermissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
 	mux.Handle("GET /config/external-interfaces/approvals/{id}", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.externalApprovalDetail)))
+	mux.Handle("GET /config/external-interfaces/approvals/{id}/download", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.downloadExternalApprovalUpload)))
 	mux.Handle("POST /config/external-interfaces/approvals/{id}/approve", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.approveExternalInvocation)))
 	mux.Handle("POST /config/external-interfaces/approvals/{id}/reject", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.rejectExternalInvocation)))
 	mux.Handle("GET /history/audit", a.requirePermission(identity.PermissionReadAudit, http.HandlerFunc(a.auditPage)))
