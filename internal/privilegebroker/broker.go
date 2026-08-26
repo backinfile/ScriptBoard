@@ -358,6 +358,7 @@ type HostFilesService interface {
 	Prepare(context.Context, string, bool) (hostFilesPrepared, error)
 	SameFilesystem(context.Context, string, string) (bool, error)
 	AppendText(context.Context, string, string) error
+	AppendRotatingText(context.Context, string, string, int64, int) error
 	OpenLog(context.Context, string, string) (string, logstream.Metadata, error)
 	LogHistory(context.Context, string, string, string) (logstream.Page, error)
 	LogFollow(context.Context, string, string, string) ([]logstream.Event, error)

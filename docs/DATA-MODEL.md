@@ -520,16 +520,17 @@ Custom Dashboard 的 HTTP 数据源继续允许保存 `Authorization`、`Cookie`
 
 ## 11. 文件快捷访问
 
-`file_quick_access_pins` 持久化当前实例的全局文件页固定目录，最多 30 项：
+`file_quick_access_pins` 持久化当前实例的全局文件页快捷访问条目，最多 30 项：
 
 | 字段 | 约束 |
 |---|---|
-| path / path_key | 固定时由 Host Filesystem 规范化的目录绝对路径及平台比较键 |
-| label | 从规范路径派生的显示名称 |
-| sort_order | 用户范围内的稳定顺序 |
+| path / path_key | 固定时由 Host Filesystem 规范化的文件或目录绝对路径及平台比较键 |
+| label | 初始从规范路径派生、之后可独立编辑的显示名称 |
+| target_kind | `directory` 或 `file`；文件链接进入父目录并携带定位参数 |
+| sort_order | 实例范围内可拖动调整的稳定顺序 |
 | created_at | UTC |
 
-全局按 `path_key` 唯一，所有有文件页权限的用户读取和修改同一列表。目录暂时离线或权限变化时保留记录，展示时重新验证可访问性；固定新目录时必须通过 Host Filesystem 的目录边界。schema 28 最初增加用户级固定项，schema 29 将其按路径去重合并为全局列表；旧浏览器本地固定项仍作为一次性兼容迁移来源。
+全局按 `path_key` 唯一，所有有文件页权限的用户读取和修改同一列表。目标暂时离线或权限变化时保留记录，展示时重新验证可访问性；固定时必须通过 Host Filesystem 的现存路径边界。schema 28 最初增加用户级固定项，schema 29 将其按路径去重合并为全局列表，schema 59 增加文件目标类型；旧浏览器本地目录固定项仍作为一次性兼容迁移来源。
 
 ## 12. External Interfaces
 
@@ -542,6 +543,8 @@ schema 44 收敛了并行开发期间重复使用 35–43 版本号的两条数�
 schema 45 增加 `custom_dashboard_registry_operations`。Registry 连接在 Broker 中 prepare 后，卡片配置和操作 ID 在同一 SQLite 事务提交；随后 Broker 幂等激活连接并删除操作行。启动时残留行会被重放，因此数据库不会把尚未激活的连接误报为已经完成，也不会把新 Endpoint 与旧密码组合使用。
 
 schema 54 增加 `redis_instances`，只保存连接名称、环境、地址、ACL 用户、数据库索引、TLS 策略、CA 路径、凭据已配置事实和最近连接状态。密码使用用途绑定的 AES-GCM 密封保存在独立凭据文件中，不进入 SQLite、HTML、审计或错误信息。受管部署的 Web 只提交元数据，Privileged Broker 在执行前将完整连接配置与已提交行逐项校验；凭据写入和删除要求近期身份验证并记录不含明文密码的摘要审计。
+
+schema 58 在 Entry 增加默认关闭的 `require_approval`，并增加 `external_trigger_approvals`。需要审批的调用先保存动作类型、配置修订快照和经过类型校验的输入；上传内容以私有固定文件缓存并记录实际大小与 SHA-256。批准先原子领取 `pending` 行，再复核全局开关、Key、分组、Entry 和配置修订后执行一次；拒绝直接删除缓存。进程在执行中退出时，审批与调用记录恢复为 `failed/unknown`，处理中或孤立 payload 会被删除以避免重放。
 
 `audit_events` 按 ID 顺序链接 `previous_hash` 与 `event_hash`，`audit_chain_state` 保存保留锚点和
 当前链尾。为防止事件尾部与同库链尾状态一起回退后仍通过本地校验，每个 State Root 另有一份
@@ -567,11 +570,7 @@ Trigger Key 本身只保留不可逆 verifier，不进入这套可恢复秘密�
 
 变量与快捷执行条目使用 `target` 建立领域引用：目标被引用时禁止删除；变量被引用时也禁止改名或转为密码变量。日志文件与上传目录都在配置和调用时通过 Host Filesystem 边界重新验证；日志动作将规范化后的文件绝对路径保存在 `target` 与 `config_json.file` 中。到期 Key 不需要后台任务修改数据库；鉴权时根据当前时间派生为不可用状态。
 
-私有上传收件箱同时接收 External Interface 文件与 Host Files 页面提交的可执行扩展。两类
-payload 都只使用随机目录内固定无扩展名、0600 文件，metadata 保存来源、原始文件名、规范
-目标目录、冲突策略、大小、SHA-256 和创建时间。Host Files 普通文档仍可原子直传；内置或
-自定义执行器扩展必须经 step-up 发布路由重新读取并校验整个 payload 后才进入主机路径，且
-普通上传不得直接覆盖已有可执行文件。
+旧上传收件箱、路由、模板与暂存目录已删除。文件页上传使用既有批次原子提交；外部上传在未要求审批时直接走受限 Host Filesystem 批次写入，在要求审批时只使用 `approvals/uploads` 私有缓存，并在批准后重新校验摘要再发布。
 
 ## 13. MySQL 备份恢复管理
 

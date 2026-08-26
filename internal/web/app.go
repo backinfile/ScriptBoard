@@ -44,6 +44,7 @@ import (
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/customtab"
+	"scriptboard/internal/externalapproval"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/fleetstatus"
 	"scriptboard/internal/hostfiles"
@@ -70,7 +71,6 @@ import (
 	"scriptboard/internal/store/migrations"
 	storesqlite "scriptboard/internal/store/sqlite"
 	updatepkg "scriptboard/internal/update"
-	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/variables"
 	"scriptboard/internal/websitemonitor"
 )
@@ -502,7 +502,7 @@ type App struct {
 	securityEvents        *securityevents.Manager
 	auditCheckpointStop   context.CancelFunc
 	auditCheckpointWG     sync.WaitGroup
-	uploadInbox           *uploadinbox.Store
+	approvalUploads       *externalapproval.Store
 	fileOperations        *sqliteFileOperationStore
 	fileMoves             *hostfiles.MoveEngine
 	fileOperationCtx      context.Context
@@ -638,7 +638,12 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	uploadInboxStore, err := uploadinbox.New(filepath.Join(stateRoot, "inbox", "uploads"))
+	// The retired upload inbox is intentionally removed; External Interface approvals own their isolated payloads now.
+	if err := os.RemoveAll(filepath.Join(stateRoot, "inbox")); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("remove retired upload inbox: %w", err)
+	}
+	approvalUploads, err := externalapproval.New(filepath.Join(stateRoot, "approvals", "uploads"))
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -668,7 +673,7 @@ func Open(config Config) (*App, error) {
 		}
 	}
 	application := &App{
-		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, stateBackups: config.StateBackups, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
+		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, stateBackups: config.StateBackups, approvalUploads: approvalUploads, instanceLock: instanceLock, mfa: mfaStore,
 		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(), loginChallenges: newLoginChallengeStore(),
 		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
@@ -722,6 +727,19 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("verify external audit checkpoint: %w", err)
 	}
 	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets"), SecretStore: credentialStore})
+	if err := application.externalTriggers.RecoverApprovals(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("recover External Interface approvals: %w", err)
+	}
+	pendingApprovalIDs, err := application.externalTriggers.PendingApprovalIDs(context.Background())
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("reconcile External Interface approval payloads: %w", err)
+	}
+	if err := application.approvalUploads.Retain(pendingApprovalIDs); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("reconcile External Interface approval payloads: %w", err)
+	}
 	retiredRemoteSourceIDs, err := retireRemoteWebsiteFeature(db, stateRoot)
 	if err != nil {
 		_ = db.Close()
@@ -2774,25 +2792,23 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
 	canManage := identity.Allows(current.role, identity.PermissionManageExecution)
-	reorderGroupID := strings.TrimSpace(request.URL.Query().Get("reorder"))
-	reorder := canManage && reorderGroupID != ""
+	reorder := canManage && request.URL.Query().Get("reorder") == "1"
 	if isDeferredDataShell(request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := quickRunsTemplate.Execute(response, struct {
-			QuickRuns      []quickRunView
-			Groups         []quickRunGroup
-			CSRFToken      string
-			Locale         webLocale
-			DeferredData   bool
-			CanExecute     bool
-			CanManage      bool
-			CanReadFiles   bool
-			Reorder        bool
-			ReorderGroupID string
+			QuickRuns    []quickRunView
+			Groups       []quickRunGroup
+			CSRFToken    string
+			Locale       webLocale
+			DeferredData bool
+			CanExecute   bool
+			CanManage    bool
+			CanReadFiles bool
+			Reorder      bool
 		}{
 			CSRFToken: current.csrfToken, Locale: locale, DeferredData: true,
 			CanExecute: identity.Allows(current.role, identity.PermissionExecute), CanManage: canManage,
-			CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles), Reorder: reorder, ReorderGroupID: reorderGroupID,
+			CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles), Reorder: reorder,
 		}); err != nil {
 			http.Error(response, "Unable to render Quick Runs: "+err.Error(), http.StatusInternalServerError)
 		}
@@ -2852,35 +2868,21 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 			QuickRunCount: len(ungrouped), Items: ungrouped, Ungrouped: true,
 		})
 	}
-	if reorder {
-		found := false
-		for _, group := range groups {
-			if group.ID == reorderGroupID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			reorder = false
-			reorderGroupID = ""
-		}
-	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := quickRunsTemplate.Execute(response, struct {
-		QuickRuns      []quickRunView
-		Groups         []quickRunGroup
-		CSRFToken      string
-		Locale         webLocale
-		DeferredData   bool
-		CanExecute     bool
-		CanManage      bool
-		CanReadFiles   bool
-		Reorder        bool
-		ReorderGroupID string
+		QuickRuns    []quickRunView
+		Groups       []quickRunGroup
+		CSRFToken    string
+		Locale       webLocale
+		DeferredData bool
+		CanExecute   bool
+		CanManage    bool
+		CanReadFiles bool
+		Reorder      bool
 	}{
 		QuickRuns: quickRuns, Groups: groups, CSRFToken: current.csrfToken, Locale: locale,
 		CanExecute: identity.Allows(current.role, identity.PermissionExecute), CanManage: canManage,
-		CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles), Reorder: reorder, ReorderGroupID: reorderGroupID,
+		CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles), Reorder: reorder,
 	}); err != nil {
 		http.Error(response, "Unable to render Quick Runs: "+err.Error(), http.StatusInternalServerError)
 	}
@@ -4697,7 +4699,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		Path, BrowseURL, PinURL, DownloadURL, EditURL, PreviewURL, ViewURL, RunURL, QuickRunURL, MoveURL string
 		LogURL                                                                                           string
 		Protection, IconClass                                                                            string
-		Runnable, IsHidden, CanMutate                                                                    bool
+		Runnable, IsHidden, CanMutate, Focused                                                           bool
 		NameParts                                                                                        []fileNamePart
 		CategoryLabel                                                                                    string
 	}
@@ -4714,7 +4716,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		view := fileView{
 			Entry: entry, Path: path, IconClass: fileCategoryIcon(displayCategory),
 			NameParts: splitFileNameMatches(entry.Name, query), CategoryLabel: fileCategoryLabel(locale, displayCategory),
-			IsHidden: entry.Hidden, CanMutate: canMutate,
+			IsHidden: entry.Hidden, CanMutate: canMutate, Focused: hostfiles.ComparisonKey(request.URL.Query().Get("focus_path")) == hostfiles.ComparisonKey(path),
 		}
 		if view.CanMutate {
 			view.MoveURL = routeFileURL("/resources/files/move", path)
@@ -4734,6 +4736,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			view.BrowseURL = filesStateURL(path, "", sortField, direction, showHidden, 0)
 			view.PinURL = filesURL(path)
 		} else if entry.Kind == hostfiles.Regular {
+			view.PinURL = fileQuickAccessHref(path, "file")
 			view.DownloadURL = routeFileURL("/resources/files/download", path)
 			switch category {
 			case fileCategoryImage:
@@ -4842,7 +4845,7 @@ func buildHostBreadcrumbs(path, sortField, direction string, showHidden bool) []
 func (a *App) validateFileQuickAccess(response http.ResponseWriter, request *http.Request) {
 	accessible := false
 	if path := request.URL.Query().Get("path"); path != "" {
-		if info, _, err := a.hostInfo(request.Context(), path); err == nil && info.IsDir() {
+		if _, _, err := a.hostInfo(request.Context(), path); err == nil {
 			accessible = true
 		}
 	}

@@ -65,8 +65,6 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"file upload task", http.MethodGet, "/resources/files/upload", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"file move task", http.MethodGet, "/resources/files/move?path=C%3A%5Cscripts%5Cscript.ps1", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"file mutation", http.MethodPost, "/resources/files/delete", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
-		{"external upload inbox", http.MethodGet, "/resources/inbox", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
-		{"publish external upload", http.MethodPost, "/resources/inbox/upload-one/publish", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"file quick access pin", http.MethodPost, "/resources/files/quick-access", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
 		{"file script task", http.MethodGet, "/resources/files/run?path=C%3A%5Cscripts%5Cscript.ps1", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
 		{"quick run start", http.MethodPost, "/config/quick-runs/quick-one/start", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
@@ -81,6 +79,7 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"external interfaces", http.MethodGet, "/config/external-interfaces", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"external interface global control", http.MethodPost, "/config/external-interfaces/control", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"external interface mutation", http.MethodPost, "/config/external-interfaces/keys/key-one/toggle", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"external interface approval", http.MethodPost, "/config/external-interfaces/approvals/request-one/approve", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"audit html", http.MethodGet, "/history/audit", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"audit download", http.MethodGet, "/history/audit.csv", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"audit service logs", http.MethodGet, "/history/audit/service-logs", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
@@ -203,7 +202,6 @@ func TestHighRiskRoutesDeclareRecentAuthentication(t *testing.T) {
 		{http.MethodPost, "/monitor/security/firewall/draft/apply"},
 		{http.MethodPost, "/settings/updates/apply"},
 		{http.MethodPost, "/resources/databases/backups/backup-one/restore"},
-		{http.MethodPost, "/resources/inbox/upload-one/publish"},
 	} {
 		request := httptest.NewRequest(route.method, route.path, nil)
 		spec, ok := declaredSpecForRequest(application.routeSpecs, request)

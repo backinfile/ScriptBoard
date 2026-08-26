@@ -3,6 +3,7 @@ package web
 import (
 	"cmp"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"scriptboard/internal/hostfiles"
 )
@@ -21,10 +23,11 @@ type fileQuickAccessPin struct {
 	Path  string `json:"path"`
 	Label string `json:"label"`
 	Href  string `json:"href"`
+	Kind  string `json:"kind"`
 }
 
 func (a *App) quickAccessPins() ([]fileQuickAccessPin, error) {
-	rows, err := a.db.Query(`SELECT path, label FROM file_quick_access_pins ORDER BY sort_order, created_at`)
+	rows, err := a.db.Query(`SELECT path, label, target_kind FROM file_quick_access_pins ORDER BY sort_order, created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -32,10 +35,10 @@ func (a *App) quickAccessPins() ([]fileQuickAccessPin, error) {
 	pins := make([]fileQuickAccessPin, 0, maxFileQuickAccessPins)
 	for rows.Next() {
 		var pin fileQuickAccessPin
-		if err := rows.Scan(&pin.Path, &pin.Label); err != nil {
+		if err := rows.Scan(&pin.Path, &pin.Label, &pin.Kind); err != nil {
 			return nil, err
 		}
-		pin.Href = filesURL(pin.Path)
+		pin.Href = fileQuickAccessHref(pin.Path, pin.Kind)
 		pins = append(pins, pin)
 	}
 	return pins, rows.Err()
@@ -57,22 +60,38 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 		http.Error(response, "Invalid CSRF token", http.StatusForbidden)
 		return
 	}
+	action := strings.TrimSpace(request.FormValue("action"))
+	if action == "" {
+		if request.FormValue("pinned") == "true" {
+			action = "pin"
+		} else {
+			action = "unpin"
+		}
+	}
 	path := strings.TrimSpace(request.FormValue("path"))
-	pinned := request.FormValue("pinned") == "true"
-	if path == "" {
+	if path == "" && action != "reorder" {
 		http.Error(response, "Path is required", http.StatusBadRequest)
 		return
 	}
-
 	pathKey := hostfiles.ComparisonKey(path)
-	if pinned {
-		canonical, err := a.hostCanonicalDirectory(request.Context(), path)
+	var targetKind string
+	if action == "pin" {
+		canonical, err := a.hostCanonicalExisting(request.Context(), path)
 		if err != nil {
-			writeHostFileError(response, "Unable to pin directory", err)
+			writeHostFileError(response, "Unable to pin path", err)
+			return
+		}
+		info, _, err := a.hostInfo(request.Context(), canonical)
+		if err != nil {
+			writeHostFileError(response, "Unable to pin path", err)
 			return
 		}
 		path = canonical
 		pathKey = hostfiles.ComparisonKey(canonical)
+		targetKind = "file"
+		if info.IsDir() {
+			targetKind = "directory"
+		}
 	}
 
 	transaction, err := a.db.Begin()
@@ -81,7 +100,8 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 		return
 	}
 	defer func() { _ = transaction.Rollback() }()
-	if pinned {
+	switch action {
+	case "pin":
 		label := filepath.Base(path)
 		if volume := filepath.VolumeName(path); volume != "" && filepath.Clean(path) == filepath.Clean(volume+string(filepath.Separator)) {
 			label = path
@@ -90,17 +110,75 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 			label = path
 		}
 		_, err = transaction.Exec(`INSERT INTO file_quick_access_pins
-			(path, path_key, label, sort_order, created_at)
-			VALUES (?, ?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM file_quick_access_pins), 1), ?)
-			ON CONFLICT(path_key) DO UPDATE SET path = excluded.path, label = excluded.label`,
-			path, pathKey, label, time.Now().UTC().UnixNano())
+			(path, path_key, label, target_kind, sort_order, created_at)
+			VALUES (?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM file_quick_access_pins), 1), ?)
+			ON CONFLICT(path_key) DO UPDATE SET path = excluded.path, target_kind = excluded.target_kind`,
+			path, pathKey, label, targetKind, time.Now().UTC().UnixNano())
 		if err == nil {
 			_, err = transaction.Exec(`DELETE FROM file_quick_access_pins WHERE path_key IN (
 				SELECT path_key FROM file_quick_access_pins ORDER BY sort_order DESC, created_at DESC LIMIT -1 OFFSET ?
 			)`, maxFileQuickAccessPins)
 		}
-	} else {
+	case "unpin":
 		_, err = transaction.Exec("DELETE FROM file_quick_access_pins WHERE path_key = ?", pathKey)
+	case "rename":
+		label := strings.TrimSpace(request.FormValue("label"))
+		if label == "" || utf8.RuneCountInString(label) > 128 {
+			http.Error(response, "Display name must be between 1 and 128 characters", http.StatusBadRequest)
+			return
+		}
+		result, updateErr := transaction.Exec("UPDATE file_quick_access_pins SET label = ? WHERE path_key = ?", label, pathKey)
+		err = updateErr
+		if err == nil {
+			if changed, _ := result.RowsAffected(); changed != 1 {
+				http.Error(response, "Quick access item not found", http.StatusNotFound)
+				return
+			}
+		}
+	case "reorder":
+		var orderedPaths []string
+		if decodeErr := json.Unmarshal([]byte(request.FormValue("order")), &orderedPaths); decodeErr != nil {
+			http.Error(response, "Invalid Quick access order", http.StatusBadRequest)
+			return
+		}
+		rows, queryErr := transaction.Query("SELECT path_key FROM file_quick_access_pins")
+		if queryErr != nil {
+			err = queryErr
+			break
+		}
+		existing := map[string]bool{}
+		for rows.Next() {
+			var key string
+			if scanErr := rows.Scan(&key); scanErr != nil {
+				err = scanErr
+				break
+			}
+			existing[key] = true
+		}
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+		seen := map[string]bool{}
+		if err == nil {
+			for index, orderedPath := range orderedPaths {
+				key := hostfiles.ComparisonKey(strings.TrimSpace(orderedPath))
+				if !existing[key] || seen[key] {
+					err = fmt.Errorf("order does not match saved Quick access items")
+					break
+				}
+				seen[key] = true
+				_, err = transaction.Exec("UPDATE file_quick_access_pins SET sort_order = ? WHERE path_key = ?", index+1, key)
+				if err != nil {
+					break
+				}
+			}
+			if err == nil && len(seen) != len(existing) {
+				err = fmt.Errorf("order does not include every saved Quick access item")
+			}
+		}
+	default:
+		http.Error(response, "Invalid Quick access action", http.StatusBadRequest)
+		return
 	}
 	if err != nil {
 		http.Error(response, "Unable to save Quick access", http.StatusInternalServerError)
@@ -119,6 +197,21 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(response).Encode(map[string]any{"pins": pins})
+}
+
+func fileQuickAccessHref(path, kind string) string {
+	if kind != "file" {
+		return filesURL(path)
+	}
+	parent, ok := hostPathParent(path)
+	if !ok {
+		parent = ""
+	}
+	values := url.Values{"focus_path": {path}}
+	if parent != "" {
+		values.Set("path", parent)
+	}
+	return "/resources/files?" + values.Encode()
 }
 
 type fileCategory string

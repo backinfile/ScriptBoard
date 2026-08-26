@@ -819,49 +819,8 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusAccepted {
+	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("upload trigger status=%d body=%s", response.StatusCode, body)
-	}
-	if _, err := os.Stat(filepath.Join(uploadRoot, "result.txt")); !os.IsNotExist(err) {
-		t.Fatalf("external upload bypassed private staging: %v", err)
-	}
-	var uploadResponse struct {
-		Data struct {
-			InboxID string `json:"inbox_id"`
-			SHA256  string `json:"sha256"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &uploadResponse); err != nil || uploadResponse.Data.InboxID == "" || uploadResponse.Data.SHA256 == "" {
-		t.Fatalf("invalid staged upload response: %s err=%v", body, err)
-	}
-	inboxResponse, err := client.Get(serverURL + "/resources/inbox")
-	if err != nil {
-		t.Fatal(err)
-	}
-	inboxPage, _ := io.ReadAll(inboxResponse.Body)
-	_ = inboxResponse.Body.Close()
-	rejectedPublish, err := client.PostForm(serverURL+"/resources/inbox/"+uploadResponse.Data.InboxID+"/publish", url.Values{
-		"csrf_token": {formToken(t, inboxPage)}, "sha256": {strings.Repeat("0", 64)}, "confirm": {"yes"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = rejectedPublish.Body.Close()
-	if rejectedPublish.StatusCode != http.StatusConflict {
-		t.Fatalf("digest mismatch publish status=%d", rejectedPublish.StatusCode)
-	}
-	if _, err := os.Stat(filepath.Join(uploadRoot, "result.txt")); !os.IsNotExist(err) {
-		t.Fatalf("digest mismatch still published content: %v", err)
-	}
-	published, err := client.PostForm(serverURL+"/resources/inbox/"+uploadResponse.Data.InboxID+"/publish", url.Values{
-		"csrf_token": {formToken(t, inboxPage)}, "sha256": {uploadResponse.Data.SHA256}, "confirm": {"yes"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = published.Body.Close()
-	if published.StatusCode != http.StatusSeeOther {
-		t.Fatalf("publish staged upload status=%d", published.StatusCode)
 	}
 	if content, err := os.ReadFile(filepath.Join(uploadRoot, "result.txt")); err != nil || string(content) != "complete" {
 		t.Fatalf("uploaded content=%q err=%v", content, err)

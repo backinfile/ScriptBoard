@@ -190,6 +190,7 @@ var baseSchemaStatements = []string{
 			path TEXT NOT NULL,
 			path_key TEXT PRIMARY KEY,
 			label TEXT NOT NULL,
+			target_kind TEXT NOT NULL DEFAULT 'directory' CHECK (target_kind IN ('directory', 'file')),
 			sort_order INTEGER NOT NULL,
 			created_at INTEGER NOT NULL
 		)`,

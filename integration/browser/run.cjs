@@ -1277,6 +1277,7 @@ async function assertExternalInterfaces(page, fixture) {
   await form.locator('input[name="upload_extensions"]').fill(".txt");
   await form.locator('select[name="upload_conflict"]').selectOption("rename");
   assert.equal(await form.locator('input[name="require_signature"]').isChecked(), true);
+  await form.locator('input[name="require_approval"]').check();
   await form.locator('button[type="submit"]').click();
   // Group-owned call paths reuse an explicitly selected key; creating a path
   // must not rotate or redisplay that one-time secret.
@@ -1313,14 +1314,16 @@ async function assertExternalInterfaces(page, fixture) {
   assert.equal(trigger.status(), 202);
   const uploadPayload = await trigger.json();
   assert.equal(uploadPayload.action, "upload");
-  assert.equal(uploadPayload.data.state, "pending_review");
-  await page.goto(`${fixture.baseURL}/resources/inbox`);
-  await page.getByRole("heading", { name: "Upload inbox", exact: true }).waitFor();
-  await page.getByText("external-result.txt", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Publish", exact: true }).click();
-  await page.getByRole("dialog", { name: "Confirm action" }).getByRole("button", { name: "Publish", exact: true }).click();
-  await page.waitForURL("**/resources/inbox");
-  await page.getByText("No external uploads are awaiting review.", { exact: true }).waitFor();
+  assert.equal(uploadPayload.data.state, "pending_approval");
+  assert.equal(fs.existsSync(path.join(fixture.hostRoot, "data", "exports", "external-result.txt")), false);
+  await page.goto(`${fixture.baseURL}/config/external-interfaces?tab=approvals`);
+  await page.getByRole("heading", { name: "Approvals", exact: true }).waitFor();
+  const approval = page.locator('[data-external-approval-id]').filter({ hasText: "external-result.txt" });
+  await approval.waitFor();
+  await approval.getByRole("button", { name: "Approve", exact: true }).click();
+  await page.waitForURL("**/config/external-interfaces?tab=approvals");
+  await page.getByText("No invocations are awaiting approval.", { exact: true }).waitFor();
+  assert.equal(fs.readFileSync(path.join(fixture.hostRoot, "data", "exports", "external-result.txt"), "utf8"), "fixture complete");
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
@@ -1698,7 +1701,7 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(await savedQuickRun.locator("[data-quick-run-history-entry]").count(), 0);
     assert.equal((await savedQuickRun.locator(".quick-run-history__latest dd").nth(1).textContent()).trim(), "—");
     const quickHeadingActions = page.locator(".quick-run-heading-actions > .button");
-    assert.equal(await quickHeadingActions.count(), 3);
+    assert.equal(await quickHeadingActions.count(), 4);
     const quickHeadingMetrics = await quickHeadingActions.evaluateAll(actions => actions.map(action => {
       const bounds = action.getBoundingClientRect();
       return { top: Math.round(bounds.top), height: Math.round(bounds.height) };
@@ -1707,7 +1710,7 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(new Set(quickHeadingMetrics.map(metric => metric.height)).size, 1, JSON.stringify(quickHeadingMetrics));
     assert.deepEqual(
       await quickHeadingActions.evaluateAll(actions => actions.map(action => `${new URL(action.href).pathname}${new URL(action.href).search}`)),
-      ["/config/quick-runs/groups/new", "/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new"],
+      ["/config/quick-runs?reorder=1", "/config/quick-runs/groups/new", "/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new"],
     );
 
     const assertWorkingDirectoryTree = async (href, kind) => {

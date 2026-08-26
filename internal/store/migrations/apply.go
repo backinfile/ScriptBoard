@@ -60,6 +60,28 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 57 {
+		exists, err := storesqlite.ColumnExists(migration, "external_trigger_entries", "require_approval")
+		if err != nil {
+			return fmt.Errorf("inspect External Interface approval migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE external_trigger_entries ADD COLUMN require_approval INTEGER NOT NULL DEFAULT 0 CHECK (require_approval IN (0, 1))`); err != nil {
+				return fmt.Errorf("add External Interface approval requirement: %w", err)
+			}
+		}
+	}
+	if schemaVersion >= 20 && schemaVersion <= 58 {
+		exists, err := storesqlite.ColumnExists(migration, "file_quick_access_pins", "target_kind")
+		if err != nil {
+			return fmt.Errorf("inspect file Quick access target migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE file_quick_access_pins ADD COLUMN target_kind TEXT NOT NULL DEFAULT 'directory' CHECK (target_kind IN ('directory', 'file'))`); err != nil {
+				return fmt.Errorf("add file Quick access target kind: %w", err)
+			}
+		}
+	}
 	if schemaVersion >= 20 && schemaVersion <= 56 {
 		exists, err := storesqlite.ColumnExists(migration, "custom_dashboards", "show_as_tab")
 		if err != nil {
@@ -127,11 +149,12 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 				path TEXT NOT NULL,
 				path_key TEXT PRIMARY KEY,
 				label TEXT NOT NULL,
+				target_kind TEXT NOT NULL DEFAULT 'directory' CHECK (target_kind IN ('directory', 'file')),
 				sort_order INTEGER NOT NULL,
 				created_at INTEGER NOT NULL
 			)`,
-			`INSERT INTO file_quick_access_pins (path, path_key, label, sort_order, created_at)
-				SELECT path, path_key, label, MIN(sort_order), MIN(created_at)
+			`INSERT INTO file_quick_access_pins (path, path_key, label, target_kind, sort_order, created_at)
+				SELECT path, path_key, label, target_kind, MIN(sort_order), MIN(created_at)
 				FROM file_quick_access_pins_user_scoped GROUP BY path_key`,
 			`DROP TABLE file_quick_access_pins_user_scoped`,
 		} {

@@ -68,6 +68,8 @@ type hostFilesWireRequest struct {
 	Replace           bool                   `json:"replace,omitempty"`
 	DirectoryPrepare  bool                   `json:"directory_prepare,omitempty"`
 	Record            string                 `json:"record,omitempty"`
+	Rotate            bool                   `json:"rotate,omitempty"`
+	MaxBackups        int                    `json:"max_backups,omitempty"`
 	Cursor            string                 `json:"cursor,omitempty"`
 	OperationID       string                 `json:"operation_id,omitempty"`
 	ExternalToken     string                 `json:"external_token,omitempty"`
@@ -550,6 +552,12 @@ func (service *brokerHostFilesService) AppendText(_ context.Context, path, recor
 	return service.files.AppendText(path, record)
 }
 
+func (service *brokerHostFilesService) AppendRotatingText(_ context.Context, path, record string, maxBytes int64, maxBackups int) error {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	return service.files.AppendRotatingText(path, record, maxBytes, maxBackups)
+}
+
 func (service *brokerHostFilesService) PrepareAppend(_ context.Context, path string) (string, error) {
 	return service.files.PrepareAppendFile(path)
 }
@@ -709,7 +717,11 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 		same, err = server.hostFiles.SameFilesystem(ctx, payload.Path, payload.Destination)
 		result.SameFilesystem = &same
 	case operationHostFilesAppend:
-		err = server.hostFiles.AppendText(ctx, payload.Path, payload.Record)
+		if payload.Rotate {
+			err = server.hostFiles.AppendRotatingText(ctx, payload.Path, payload.Record, payload.MaxBytes, payload.MaxBackups)
+		} else {
+			err = server.hostFiles.AppendText(ctx, payload.Path, payload.Record)
+		}
 	case operationHostFilesLogOpen:
 		var metadata logstream.Metadata
 		result.Handle, metadata, err = server.hostFiles.OpenLog(ctx, actor.UserID, payload.Path)
@@ -955,7 +967,7 @@ func validateHostFilesRequest(request wireRequest) error {
 			return errors.New("Host Files prepare request is invalid")
 		}
 	case operationHostFilesAppend:
-		if !isAbsoluteHostFilePath(payload.Path) || payload.Record == "" {
+		if !isAbsoluteHostFilePath(payload.Path) || payload.Record == "" || (payload.Rotate && (payload.MaxBytes <= 0 || payload.MaxBackups <= 0)) || (!payload.Rotate && (payload.MaxBytes != 0 || payload.MaxBackups != 0)) {
 			return errors.New("Host Files append request is invalid")
 		}
 	case operationHostFilesLogHistory, operationHostFilesLogFollow:
@@ -1041,7 +1053,7 @@ func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) ho
 	case operationHostFilesPrepare:
 		return hostFilesWireRequest{Path: payload.Path, DirectoryPrepare: payload.DirectoryPrepare}
 	case operationHostFilesAppend:
-		return hostFilesWireRequest{Path: payload.Path, Record: payload.Record}
+		return hostFilesWireRequest{Path: payload.Path, Record: payload.Record, Rotate: payload.Rotate, MaxBytes: payload.MaxBytes, MaxBackups: payload.MaxBackups}
 	case operationHostFilesLogHistory, operationHostFilesLogFollow:
 		return hostFilesWireRequest{Handle: payload.Handle, Cursor: payload.Cursor}
 	case operationHostFilesLogClose:
@@ -1425,6 +1437,11 @@ func (backend *HostFilesBackend) SameFilesystem(ctx context.Context, source, des
 
 func (backend *HostFilesBackend) AppendText(ctx context.Context, path, record string) error {
 	_, err := backend.call(ctx, operationHostFilesAppend, hostFilesWireRequest{Path: path, Record: record})
+	return err
+}
+
+func (backend *HostFilesBackend) AppendRotatingText(ctx context.Context, path, record string, maxBytes int64, maxBackups int) error {
+	_, err := backend.call(ctx, operationHostFilesAppend, hostFilesWireRequest{Path: path, Record: record, Rotate: true, MaxBytes: maxBytes, MaxBackups: maxBackups})
 	return err
 }
 

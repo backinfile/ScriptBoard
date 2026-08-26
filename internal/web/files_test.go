@@ -45,7 +45,7 @@ func TestFilesPageUsesAbsoluteHostPathsAndHasNoFileSettings(t *testing.T) {
 		t.Fatalf("read files: %v", err)
 	}
 	filesPage := string(body)
-	for _, expected := range []string{"This host", html.EscapeString(hostRoot), `name="path" value="` + html.EscapeString(hostRoot) + `"`, `class="file-search-links"`, `href="/resources/inbox"`, `href="/resources/trash"`} {
+	for _, expected := range []string{"This host", html.EscapeString(hostRoot), `name="path" value="` + html.EscapeString(hostRoot) + `"`, `class="file-search-links"`, `href="/resources/trash"`} {
 		if !strings.Contains(filesPage, expected) {
 			t.Fatalf("files page does not contain %q: %s", expected, filesPage)
 		}
@@ -437,6 +437,9 @@ func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(hostRoot, "automation"), 0o755); err != nil {
 		t.Fatalf("create directory: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(hostRoot, "notes.txt"), []byte("notes"), 0o644); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
 	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
 	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
@@ -460,10 +463,14 @@ func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 		`data-pins-url="/resources/files/quick-access"`,
 		`data-csrf-token="`,
 		`data-file-quick-status`,
-		`data-file-quick-one-label>folder</span>`,
-		`data-file-quick-many-label>folders</span>`,
+		`data-file-quick-one-label>item</span>`,
+		`data-file-quick-many-label>items</span>`,
 		"Quick access",
 		"Pin directory",
+		`data-file-pin-path="` + html.EscapeString(filepath.Join(hostRoot, "notes.txt")) + `"`,
+		`data-file-pin-action-label>Pin to Quick access</span>`,
+		`data-file-quick-edit-drawer`,
+		`data-file-quick-edit-form`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
@@ -492,6 +499,10 @@ func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 		`if (link.hasAttribute("href")) disclosure.open = false`,
 		`openFileQuickAccess: mainNavigation && destination.pathname === "/resources/files"`,
 		`initFileQuickAccess(document, cleanups, options.openFileQuickAccess === true)`,
+		`savePin("rename"`,
+		`savePin("reorder"`,
+		`item.draggable = true`,
+		`focusedRow.scrollIntoView`,
 	} {
 		if !bytes.Contains(script, []byte(expected)) {
 			t.Fatalf("Quick access interaction script does not contain %q", expected)
@@ -604,6 +615,89 @@ type fileQuickAccessPinTestView struct {
 	Path  string `json:"path"`
 	Label string `json:"label"`
 	Href  string `json:"href"`
+	Kind  string `json:"kind"`
+}
+
+func TestFileQuickAccessSupportsFilesLabelsAndOrdering(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	firstPath := filepath.Join(hostRoot, "first.txt")
+	secondPath := filepath.Join(hostRoot, "second")
+	if err := os.MkdirAll(secondPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(firstPath, []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := formToken(t, page)
+	for _, path := range []string{firstPath, secondPath} {
+		response, err = client.PostForm(serverURL+"/resources/files/quick-access", url.Values{
+			"csrf_token": {token}, "action": {"pin"}, "path": {path},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("pin %s status=%d", path, response.StatusCode)
+		}
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/files/quick-access", url.Values{
+		"csrf_token": {token}, "action": {"rename"}, "path": {firstPath}, "label": {"Release notes"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("rename file pin status=%d", response.StatusCode)
+	}
+	order, _ := json.Marshal([]string{secondPath, firstPath})
+	response, err = client.PostForm(serverURL+"/resources/files/quick-access", url.Values{
+		"csrf_token": {token}, "action": {"reorder"}, "order": {string(order)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var result struct {
+		Pins []fileQuickAccessPinTestView `json:"pins"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Pins) != 2 || result.Pins[0].Path != secondPath || result.Pins[1].Label != "Release notes" || result.Pins[1].Kind != "file" {
+		t.Fatalf("updated Quick access pins = %#v", result.Pins)
+	}
+	wantHref := "/resources/files?" + url.Values{"path": {hostRoot}, "focus_path": {firstPath}}.Encode()
+	if result.Pins[1].Href != wantHref {
+		t.Fatalf("file Quick access href=%q, want %q", result.Pins[1].Href, wantHref)
+	}
+	response, err = client.Get(serverURL + result.Pins[1].Href)
+	if err != nil {
+		t.Fatal(err)
+	}
+	focusedPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(focusedPage, []byte(`data-file-focus`)) || !bytes.Contains(focusedPage, []byte(`>first.txt</a>`)) {
+		t.Fatalf("file Quick access target was not focused: %s", focusedPage)
+	}
 }
 
 func TestOperatorGetsReadOnlyFilesWithoutAnUploadDropTarget(t *testing.T) {

@@ -23,10 +23,10 @@ import (
 	"unicode/utf8"
 
 	"scriptboard/internal/externaltrigger"
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/identity"
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/runmanager"
-	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/variables"
 )
 
@@ -52,6 +52,11 @@ type externalInvocationView struct {
 	ActionText, ResultText string
 }
 
+type externalApprovalView struct {
+	externaltrigger.Approval
+	ActionText, TargetText string
+}
+
 type externalLogFileView struct {
 	EntryID, EntryName, EntryLabel, GroupLabel        string
 	Path, FileName, PreviewURL, DownloadURL, CallPath string
@@ -72,6 +77,7 @@ type externalInterfacesPageData struct {
 	Keys          []externalKeyView
 	Entries       map[string][]externalEntryView
 	Requests      []externalInvocationView
+	Approvals     []externalApprovalView
 	LogFiles      []externalLogFileView
 	LogGroups     []externalLogGroupView
 	LogFileCount  int
@@ -102,6 +108,7 @@ type externalInterfaceFormData struct {
 	VariableConfig                                       externaltrigger.VariableConfig
 	EntryEnabled                                         bool
 	RequireSignature                                     bool
+	RequireApproval                                      bool
 	Submitted                                            bool
 	LogMessageLimitInput, UploadMaxBytesInput            string
 	LogTargetModeInput, LogMaxFileMBInput                string
@@ -126,6 +133,8 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	switch request.URL.Query().Get("tab") {
 	case "activity":
 		activeTab = "activity"
+	case "approvals":
+		activeTab = "approvals"
 	case "logs":
 		activeTab = "logs"
 	}
@@ -171,6 +180,21 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 			ResultText: webText(locale, "external.result."+invocation.Result),
 		})
 	}
+	var approvals []externalApprovalView
+	if activeTab == "approvals" {
+		pending, approvalErr := a.externalTriggers.ListApprovals(request.Context(), externaltrigger.ApprovalPending, 200)
+		if approvalErr != nil {
+			http.Error(response, "Unable to read External Interface approvals", http.StatusInternalServerError)
+			return
+		}
+		for _, approval := range pending {
+			view := externalApprovalView{Approval: approval, ActionText: externalActionText(locale, approval.ActionType)}
+			if entry, entryErr := a.externalTriggers.Entry(request.Context(), approval.EntryID); entryErr == nil {
+				view.TargetText = externalTargetText(locale, entry)
+			}
+			approvals = append(approvals, view)
+		}
+	}
 	groupViews := make([]externalGroupView, 0, len(groups))
 	logQuery := strings.TrimSpace(request.URL.Query().Get("q"))
 	logFiles := make([]externalLogFileView, 0)
@@ -211,7 +235,7 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := externalInterfacesTemplate.Execute(response, externalInterfacesPageData{
-		ActiveTab: activeTab, Groups: groupViews, Requests: requests, LogFiles: logFiles, LogGroups: logGroups, LogFileCount: len(logFiles), LogQuery: logQuery, Filters: filters, Pagination: pagination,
+		ActiveTab: activeTab, Groups: groupViews, Requests: requests, Approvals: approvals, LogFiles: logFiles, LogGroups: logGroups, LogFileCount: len(logFiles), LogQuery: logQuery, Filters: filters, Pagination: pagination,
 		CSRFToken: current.csrfToken, Locale: locale, Now: now, GlobalEnabled: globalEnabled,
 	}); err != nil {
 		http.Error(response, "Unable to render External Interfaces", http.StatusInternalServerError)
@@ -748,7 +772,7 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 	targetText := externalTargetText(locale, entry)
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-detail", Title: entry.Label, Description: webText(locale, "external.function_details_description"),
-		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Group: group, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature,
+		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Group: group, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature, RequireApproval: entry.RequireApproval,
 		CallMethod: callMethod, CallURL: callURL, CallBody: callBody, CallCopyText: externalCallCopyText(locale, entry, group, callMethod, callURL, callBody, typeText, targetText),
 		TypeText: typeText, TargetText: targetText, PreviewURL: previewURL,
 	})
@@ -771,7 +795,7 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
 	}
-	data := externalInterfaceFormData{Kind: "entry-edit", BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/entries/" + entry.ID, Group: group, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature, QuickRuns: quickRuns, Variables: variables}
+	data := externalInterfaceFormData{Kind: "entry-edit", BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/entries/" + entry.ID, Group: group, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature, RequireApproval: entry.RequireApproval, QuickRuns: quickRuns, Variables: variables}
 	data.Locale = locale
 	data.Title, data.Description = webText(data.Locale, "external.edit_function"), webText(data.Locale, "external.edit_function_description")
 	data.CSRFToken = request.Context().Value(sessionContextKey).(session).csrfToken
@@ -865,7 +889,7 @@ func (a *App) createExternalEntry(response http.ResponseWriter, request *http.Re
 	}
 	entry, secret, err := a.externalTriggers.CreateEntry(request.Context(), externaltrigger.CreateEntryInput{
 		GroupID: groupID, KeyID: legacyKeyID, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType,
-		Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config,
+		Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", RequireApproval: request.FormValue("require_approval") == "1", Config: config,
 	})
 	if err != nil {
 		a.renderExternalEntrySubmissionError(response, request, group)
@@ -894,7 +918,7 @@ func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, r
 		Kind: "entry-new", Title: webText(locale, "external.add_function_title"), Description: webText(locale, "external.add_function_description"),
 		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/groups/" + group.ID + "/entries",
 		CSRFToken: request.Context().Value(sessionContextKey).(session).csrfToken, Locale: locale, Group: group,
-		QuickRuns: quickRuns, Variables: variables, EntryEnabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Submitted: true,
+		QuickRuns: quickRuns, Variables: variables, EntryEnabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", RequireApproval: request.FormValue("require_approval") == "1", Submitted: true,
 		FormError:            webText(locale, "external.entry_save_error"),
 		Entry:                externaltrigger.Entry{Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: externaltrigger.ActionType(request.FormValue("action_type"))},
 		LogConfig:            externaltrigger.LogConfig{File: request.FormValue("log_file"), Managed: request.FormValue("log_target_mode") == "managed", Category: request.FormValue("log_category")},
@@ -929,7 +953,7 @@ func (a *App) updateExternalEntry(response http.ResponseWriter, request *http.Re
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	entry, err := a.externalTriggers.UpdateEntry(request.Context(), externaltrigger.UpdateEntryInput{ID: id, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config})
+	entry, err := a.externalTriggers.UpdateEntry(request.Context(), externaltrigger.UpdateEntryInput{ID: id, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", RequireApproval: request.FormValue("require_approval") == "1", Config: config})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
@@ -1199,6 +1223,13 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		writeExternalTriggerError(response, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
+	if entry.RequireApproval {
+		if a.queueExternalApproval(response, request, key, entry, requestID) {
+			return
+		}
+		writeExternalTriggerError(response, http.StatusInternalServerError, "action_failed")
+		return
+	}
 	started := time.Now()
 	invocation := externaltrigger.Invocation{
 		ID: requestID, OccurredAt: started.UTC(), KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
@@ -1242,6 +1273,176 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	_ = json.NewEncoder(response).Encode(payload)
 }
 
+func (a *App) approveExternalInvocation(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	approval, err := a.externalTriggers.ClaimApproval(request.Context(), request.PathValue("id"), current.username)
+	if err != nil {
+		http.Error(response, "External Interface approval is no longer pending", http.StatusConflict)
+		return
+	}
+	entry, entryErr := a.externalTriggers.Entry(request.Context(), approval.EntryID)
+	key, keyErr := a.externalTriggers.Key(request.Context(), approval.KeyID)
+	var group externaltrigger.Group
+	var groupErr error
+	if entryErr == nil {
+		group, groupErr = a.externalTriggers.Group(request.Context(), entry.GroupID)
+	} else {
+		groupErr = entryErr
+	}
+	globalEnabled, _, globalErr := a.externalTriggers.GlobalEnabled(request.Context())
+	if entryErr != nil || keyErr != nil || groupErr != nil || globalErr != nil || !globalEnabled || !key.Active(time.Now().UTC()) || !group.Enabled || !entry.Enabled || !entry.RequireApproval || entry.GroupID != key.GroupID || entry.Type != approval.ActionType || !entry.UpdatedAt.Equal(approval.EntryUpdatedAt) {
+		_ = a.approvalUploads.Remove(approval.ID)
+		_ = a.externalTriggers.FinalizeApprovalInvocation(request.Context(), approval.ID, externaltrigger.ApprovalFailed, "target_unavailable", http.StatusConflict, approval.BytesReceived, "", "configuration changed before approval")
+		http.Error(response, "External Interface approval target is no longer available", http.StatusConflict)
+		return
+	}
+	var result externalActionResult
+	switch approval.ActionType {
+	case externaltrigger.ActionVariable:
+		var payload struct {
+			Value string `json:"value"`
+		}
+		if json.Unmarshal([]byte(approval.PayloadJSON), &payload) != nil {
+			result = externalFailure(http.StatusInternalServerError, "action_failed")
+		} else {
+			result = a.executeExternalVariableValue(request.Context(), entry, payload.Value)
+		}
+	case externaltrigger.ActionUpload:
+		payload, claim, claimErr := a.approvalUploads.Claim(approval.ID)
+		if claimErr != nil {
+			result = externalFailure(http.StatusConflict, "upload_failed")
+		} else {
+			hash := sha256.New()
+			read, hashErr := io.Copy(hash, payload)
+			_, seekErr := payload.Seek(0, io.SeekStart)
+			if hashErr != nil || seekErr != nil || read != approval.BytesReceived || subtle.ConstantTimeCompare([]byte(hex.EncodeToString(hash.Sum(nil))), []byte(approval.UploadSHA256)) != 1 {
+				result = externalFailure(http.StatusConflict, "upload_failed")
+			} else {
+				result = a.publishExternalUpload(request.Context(), entry, approval.UploadName, approval.BytesReceived, payload)
+			}
+			_ = payload.Close()
+			_ = claim.Complete()
+		}
+	case externaltrigger.ActionLog:
+		var payload struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal([]byte(approval.PayloadJSON), &payload) != nil {
+			result = externalFailure(http.StatusInternalServerError, "action_failed")
+		} else {
+			result = a.appendExternalLog(request.Context(), entry, payload.Message, approval.ID, "", true)
+		}
+	case externaltrigger.ActionQuickRun:
+		result = a.executeExternalQuickRunPrepared(request.Context(), entry)
+	default:
+		result = externalFailure(http.StatusInternalServerError, "action_failed")
+	}
+	status := externaltrigger.ApprovalApproved
+	if result.status >= 400 {
+		status = externaltrigger.ApprovalFailed
+	}
+	if err := a.externalTriggers.FinalizeApprovalInvocation(request.Context(), approval.ID, status, result.result, result.status, approval.BytesReceived, result.runID, result.message); err != nil {
+		http.Error(response, "Unable to complete External Interface approval", http.StatusInternalServerError)
+		return
+	}
+	a.recordAuditForRequest(request, "approve_external_interface_invocation", approval.ID, string(status))
+	if result.status >= 400 {
+		http.Error(response, "External Interface approval action failed", http.StatusConflict)
+		return
+	}
+	http.Redirect(response, request, "/config/external-interfaces?tab=approvals", http.StatusSeeOther)
+}
+
+func (a *App) rejectExternalInvocation(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	approval, err := a.externalTriggers.ClaimApproval(request.Context(), request.PathValue("id"), current.username)
+	if err != nil {
+		http.Error(response, "External Interface approval is no longer pending", http.StatusConflict)
+		return
+	}
+	_ = a.approvalUploads.Remove(approval.ID)
+	if err := a.externalTriggers.FinalizeApprovalInvocation(request.Context(), approval.ID, externaltrigger.ApprovalRejected, "rejected", http.StatusAccepted, approval.BytesReceived, "", "rejected by "+current.username); err != nil {
+		http.Error(response, "Unable to reject External Interface approval", http.StatusInternalServerError)
+		return
+	}
+	a.recordAuditForRequest(request, "reject_external_interface_invocation", approval.ID, "rejected")
+	http.Redirect(response, request, "/config/external-interfaces?tab=approvals", http.StatusSeeOther)
+}
+
+func (a *App) queueExternalApproval(response http.ResponseWriter, request *http.Request, key externaltrigger.Key, entry externaltrigger.Entry, requestID string) bool {
+	approval := externaltrigger.Approval{
+		ID: requestID, OccurredAt: time.Now().UTC(), KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
+		ActionType: entry.Type, EntryUpdatedAt: entry.UpdatedAt, Source: request.RemoteAddr,
+	}
+	switch entry.Type {
+	case externaltrigger.ActionVariable:
+		value, result := a.prepareExternalVariable(response, request, entry)
+		if result.status >= 400 {
+			writeExternalTriggerError(response, result.status, result.code)
+			return true
+		}
+		payload, err := json.Marshal(map[string]string{"value": value})
+		if err != nil {
+			return false
+		}
+		approval.PayloadJSON, approval.Message = string(payload), value
+	case externaltrigger.ActionUpload:
+		prepared, result := a.prepareExternalUpload(response, request, entry)
+		if result.status >= 400 {
+			writeExternalTriggerError(response, result.status, result.code)
+			return true
+		}
+		defer prepared.cleanup()
+		staged, err := a.approvalUploads.Stage(approval.ID, prepared.source, prepared.config.MaxBytes)
+		if err != nil {
+			return false
+		}
+		approval.PayloadJSON, approval.Message = "{}", prepared.name
+		approval.UploadName, approval.UploadSHA256, approval.BytesReceived = prepared.name, staged.SHA256, staged.Size
+	case externaltrigger.ActionLog:
+		message, result := a.prepareExternalLog(response, request, entry)
+		if result.status >= 400 {
+			writeExternalTriggerError(response, result.status, result.code)
+			return true
+		}
+		payload, err := json.Marshal(map[string]string{"message": message})
+		if err != nil {
+			return false
+		}
+		approval.PayloadJSON, approval.Message = string(payload), message
+	case externaltrigger.ActionQuickRun:
+		if result := prepareExternalQuickRun(response, request); result.status >= 400 {
+			writeExternalTriggerError(response, result.status, result.code)
+			return true
+		}
+		approval.PayloadJSON = "{}"
+	default:
+		return false
+	}
+	if err := a.externalTriggers.CreateApproval(request.Context(), approval); err != nil {
+		_ = a.approvalUploads.Remove(approval.ID)
+		return false
+	}
+	invocation := externaltrigger.Invocation{ID: requestID, OccurredAt: approval.OccurredAt, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name, ActionType: entry.Type, Result: "pending_approval", HTTPStatus: http.StatusAccepted, Message: approval.Message, Source: request.RemoteAddr}
+	if err := a.externalTriggers.RecordInvocation(request.Context(), invocation); err != nil {
+		_ = a.externalTriggers.DeleteApproval(request.Context(), approval.ID)
+		_ = a.approvalUploads.Remove(approval.ID)
+		return false
+	}
+	a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "pending_approval", request.RemoteAddr, "", key.Label, identity.Role("external"))
+	response.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(response).Encode(map[string]any{"ok": true, "request_id": requestID, "action": string(entry.Type), "data": map[string]any{"state": "pending_approval"}, "schema_version": 1})
+	return true
+}
+
 var errExternalSignedBodyTooLarge = errors.New("external signed request body is too large")
 
 func (a *App) stageExternalSignedBody(request *http.Request, entry externaltrigger.Entry) (int64, string, func(), error) {
@@ -1249,7 +1450,7 @@ func (a *App) stageExternalSignedBody(request *http.Request, entry externaltrigg
 	if err != nil {
 		return 0, "", func() {}, err
 	}
-	directory := filepath.Join(a.stateRoot, "inbox", "external-bodies")
+	directory := filepath.Join(a.stateRoot, "external-requests", "signed-bodies")
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return 0, "", func() {}, err
 	}
@@ -1357,34 +1558,55 @@ func (a *App) executeExternalAction(response http.ResponseWriter, request *http.
 }
 
 func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry, token string) externalActionResult {
+	message, result := a.prepareExternalLog(response, request, entry)
+	if result.status >= 400 {
+		return result
+	}
+	requestID, _ := request.Context().Value(requestIDContextKey).(string)
+	return a.appendExternalLog(request.Context(), entry, message, requestID, token, false)
+}
+
+func (a *App) prepareExternalLog(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) (string, externalActionResult) {
 	if request.Method != http.MethodGet && request.Method != http.MethodPost {
-		return externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
+		return "", externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 	var config externaltrigger.LogConfig
 	if entry.DecodeConfig(&config) != nil {
-		return externalFailure(http.StatusInternalServerError, "action_failed")
+		return "", externalFailure(http.StatusInternalServerError, "action_failed")
 	}
 	message := request.URL.Query().Get("message")
 	if request.Method == http.MethodPost {
 		request.Body = http.MaxBytesReader(response, request.Body, 8<<10)
 		if err := request.ParseForm(); err != nil {
-			return externalFailure(http.StatusBadRequest, "invalid_request")
+			return "", externalFailure(http.StatusBadRequest, "invalid_request")
 		}
 		message = request.FormValue("message")
 	}
 	if !utf8.ValidString(message) || len([]byte(message)) > config.MaxMessageBytes || strings.IndexFunc(message, unicode.IsControl) >= 0 {
-		return externalFailure(http.StatusBadRequest, "invalid_request")
+		return "", externalFailure(http.StatusBadRequest, "invalid_request")
 	}
-	requestID, _ := request.Context().Value(requestIDContextKey).(string)
+	return message, externalActionResult{status: http.StatusOK}
+}
+
+func (a *App) appendExternalLog(ctx context.Context, entry externaltrigger.Entry, message, requestID, token string, approved bool) externalActionResult {
+	var config externaltrigger.LogConfig
+	if entry.DecodeConfig(&config) != nil {
+		return externalFailure(http.StatusInternalServerError, "action_failed")
+	}
 	var appendErr error
-	if a.hostFilesBackend != nil {
-		appendErr = a.hostAppendExternalLog(request.Context(), requestID, token, entry.ID, entry.Name, message)
+	if a.hostFilesBackend != nil && !approved {
+		appendErr = a.hostAppendExternalLog(ctx, requestID, token, entry.ID, entry.Name, message)
 	} else {
 		record := fmt.Sprintf("%s\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), message)
 		if config.Category != "" {
 			record = fmt.Sprintf("%s\t[%s]\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), config.Category, message)
 		}
-		if config.Rotate {
+		if a.hostFilesBackend != nil && config.Rotate {
+			// Approval executes under the authenticated reviewer while preserving the function's rotation policy.
+			appendErr = a.hostFilesBackend.AppendRotatingText(ctx, config.File, record, config.MaxFileBytes, config.MaxBackups)
+		} else if a.hostFilesBackend != nil {
+			appendErr = a.hostFilesBackend.AppendText(ctx, config.File, record)
+		} else if config.Rotate {
 			appendErr = a.files.AppendRotatingText(config.File, record, config.MaxFileBytes, config.MaxBackups)
 		} else {
 			appendErr = a.files.AppendText(config.File, record)
@@ -1396,13 +1618,21 @@ func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Req
 	return externalActionResult{status: http.StatusOK, result: "succeeded", message: message}
 }
 
-func (a *App) executeExternalUpload(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) externalActionResult {
+type preparedExternalUpload struct {
+	config  externaltrigger.UploadConfig
+	name    string
+	size    int64
+	source  io.ReadCloser
+	cleanup func()
+}
+
+func (a *App) prepareExternalUpload(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) (preparedExternalUpload, externalActionResult) {
 	if request.Method != http.MethodPost {
-		return externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
+		return preparedExternalUpload{}, externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 	var config externaltrigger.UploadConfig
 	if entry.DecodeConfig(&config) != nil {
-		return externalFailure(http.StatusInternalServerError, "action_failed")
+		return preparedExternalUpload{}, externalFailure(http.StatusInternalServerError, "action_failed")
 	}
 	request.Body = http.MaxBytesReader(response, request.Body, config.MaxBytes+(1<<20))
 	if err := request.ParseMultipartForm(1 << 20); err != nil {
@@ -1411,46 +1641,86 @@ func (a *App) executeExternalUpload(response http.ResponseWriter, request *http.
 		}
 		var maximumError *http.MaxBytesError
 		if errors.As(err, &maximumError) {
-			return externalFailure(http.StatusRequestEntityTooLarge, "payload_too_large")
+			return preparedExternalUpload{}, externalFailure(http.StatusRequestEntityTooLarge, "payload_too_large")
 		}
-		return externalFailure(http.StatusBadRequest, "invalid_request")
+		return preparedExternalUpload{}, externalFailure(http.StatusBadRequest, "invalid_request")
 	}
-	defer request.MultipartForm.RemoveAll()
+	cleanup := func() { _ = request.MultipartForm.RemoveAll() }
 	files := request.MultipartForm.File["file"]
 	if len(files) != 1 || len(request.MultipartForm.File) != 1 {
-		return externalFailure(http.StatusBadRequest, "invalid_request")
+		cleanup()
+		return preparedExternalUpload{}, externalFailure(http.StatusBadRequest, "invalid_request")
 	}
 	header := files[0]
 	if header.Size > config.MaxBytes {
-		return externalFailure(http.StatusRequestEntityTooLarge, "payload_too_large")
+		cleanup()
+		return preparedExternalUpload{}, externalFailure(http.StatusRequestEntityTooLarge, "payload_too_large")
 	}
 	if !externalExtensionAllowed(header.Filename, config.Extensions) {
-		return externalFailure(http.StatusBadRequest, "file_not_allowed")
+		cleanup()
+		return preparedExternalUpload{}, externalFailure(http.StatusBadRequest, "file_not_allowed")
 	}
 	_, disposition, dispositionErr := mime.ParseMediaType(header.Header.Get("Content-Disposition"))
 	rawName := disposition["filename"]
 	if dispositionErr != nil || rawName == "" || strings.ContainsAny(rawName, `/\`) {
-		return externalFailure(http.StatusBadRequest, "file_not_allowed")
+		cleanup()
+		return preparedExternalUpload{}, externalFailure(http.StatusBadRequest, "file_not_allowed")
 	}
 	file, err := header.Open()
 	if err != nil {
-		return externalFailure(http.StatusBadRequest, "invalid_request")
+		cleanup()
+		return preparedExternalUpload{}, externalFailure(http.StatusBadRequest, "invalid_request")
 	}
-	defer file.Close()
 	name := filepath.Base(header.Filename)
 	if name != header.Filename {
-		return externalFailure(http.StatusBadRequest, "file_not_allowed")
+		_ = file.Close()
+		cleanup()
+		return preparedExternalUpload{}, externalFailure(http.StatusBadRequest, "file_not_allowed")
 	}
-	pending, err := a.uploadInbox.Receive(uploadinbox.Input{
-		EntryID: entry.ID, OriginalName: name, TargetDirectory: config.Directory, ConflictPolicy: config.ConflictPolicy,
-	}, io.LimitReader(file, config.MaxBytes+1), config.MaxBytes)
+	return preparedExternalUpload{config: config, name: name, size: header.Size, source: file, cleanup: func() { _ = file.Close(); cleanup() }}, externalActionResult{status: http.StatusOK}
+}
+
+func (a *App) publishExternalUpload(ctx context.Context, entry externaltrigger.Entry, name string, size int64, source io.Reader) externalActionResult {
+	var config externaltrigger.UploadConfig
+	if entry.DecodeConfig(&config) != nil {
+		return externalFailure(http.StatusInternalServerError, "action_failed")
+	}
+	targetName := name
+	targetPath, err := a.hostDestination(ctx, config.Directory, targetName)
 	if err != nil {
 		return externalFailure(http.StatusConflict, "upload_failed")
 	}
-	return externalActionResult{
-		status: http.StatusAccepted, result: "accepted", message: name, filename: name, bytesReceived: header.Size,
-		payload: map[string]any{"inbox_id": pending.ID, "sha256": pending.SHA256, "state": "pending_review"},
+	if _, _, statErr := a.hostInfo(ctx, targetPath); statErr == nil {
+		if config.ConflictPolicy != "rename" {
+			return externalFailure(http.StatusConflict, "upload_failed")
+		}
+		targetName, err = a.hostAvailableName(ctx, config.Directory, targetName)
+		if err != nil {
+			return externalFailure(http.StatusConflict, "upload_failed")
+		}
+	} else if !os.IsNotExist(statErr) {
+		return externalFailure(http.StatusConflict, "upload_failed")
 	}
+	storedID, err := randomToken(18)
+	if err != nil {
+		return externalFailure(http.StatusInternalServerError, "action_failed")
+	}
+	results, err := a.hostUploadBatch(ctx, config.Directory, []hostfiles.UploadBatchInput{{Name: targetName, Source: io.LimitReader(source, config.MaxBytes+1), MaxBytes: config.MaxBytes, StoredName: storedID}}, false)
+	if err != nil || len(results) != 1 {
+		return externalFailure(http.StatusConflict, "upload_failed")
+	}
+	return externalActionResult{
+		status: http.StatusCreated, result: "succeeded", message: targetName, filename: targetName, bytesReceived: size,
+	}
+}
+
+func (a *App) executeExternalUpload(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) externalActionResult {
+	prepared, result := a.prepareExternalUpload(response, request, entry)
+	if result.status >= 400 {
+		return result
+	}
+	defer prepared.cleanup()
+	return a.publishExternalUpload(request.Context(), entry, prepared.name, prepared.size, prepared.source)
 }
 
 func externalExtensionAllowed(name string, allowed []string) bool {
@@ -1476,6 +1746,13 @@ func externalExtensionAllowed(name string, allowed []string) bool {
 }
 
 func (a *App) executeExternalQuickRun(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) externalActionResult {
+	if result := prepareExternalQuickRun(response, request); result.status >= 400 {
+		return result
+	}
+	return a.executeExternalQuickRunPrepared(request.Context(), entry)
+}
+
+func prepareExternalQuickRun(response http.ResponseWriter, request *http.Request) externalActionResult {
 	if request.Method != http.MethodPost {
 		return externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
 	}
@@ -1483,6 +1760,10 @@ func (a *App) executeExternalQuickRun(response http.ResponseWriter, request *htt
 	if body, err := io.ReadAll(request.Body); err != nil || len(body) != 0 {
 		return externalFailure(http.StatusBadRequest, "invalid_request")
 	}
+	return externalActionResult{status: http.StatusOK}
+}
+
+func (a *App) executeExternalQuickRunPrepared(ctx context.Context, entry externaltrigger.Entry) externalActionResult {
 	var config externaltrigger.QuickRunConfig
 	if entry.DecodeConfig(&config) != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
@@ -1494,11 +1775,11 @@ func (a *App) executeExternalQuickRun(response http.ResponseWriter, request *htt
 	if quick.Revision != config.Revision || subtle.ConstantTimeCompare([]byte(quick.ScriptSHA256), []byte(config.ScriptSHA256)) != 1 {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
-	prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
+	prepared, err := a.hostPrepareScript(ctx, quick.ScriptPath)
 	if err != nil || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(config.ScriptSHA256)) != 1 {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
-	workingDirectory, err := a.hostPrepareDirectory(request.Context(), prepared.Directory)
+	workingDirectory, err := a.hostPrepareDirectory(ctx, prepared.Directory)
 	if err != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
@@ -1514,13 +1795,21 @@ func (a *App) executeExternalQuickRun(response http.ResponseWriter, request *htt
 }
 
 func (a *App) executeExternalVariable(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) externalActionResult {
+	value, result := a.prepareExternalVariable(response, request, entry)
+	if result.status >= 400 {
+		return result
+	}
+	return a.executeExternalVariableValue(request.Context(), entry, value)
+}
+
+func (a *App) prepareExternalVariable(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) (string, externalActionResult) {
 	if request.Method != http.MethodPost {
-		return externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
+		return "", externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 	request.Body = http.MaxBytesReader(response, request.Body, 8<<10)
 	var config externaltrigger.VariableConfig
 	if entry.DecodeConfig(&config) != nil {
-		return externalFailure(http.StatusInternalServerError, "action_failed")
+		return "", externalFailure(http.StatusInternalServerError, "action_failed")
 	}
 	var raw any
 	if strings.HasPrefix(request.Header.Get("Content-Type"), "application/json") {
@@ -1530,32 +1819,40 @@ func (a *App) executeExternalVariable(response http.ResponseWriter, request *htt
 			Value any `json:"value"`
 		}
 		if err := decoder.Decode(&payload); err != nil {
-			return externalFailure(http.StatusBadRequest, "invalid_request")
+			return "", externalFailure(http.StatusBadRequest, "invalid_request")
 		}
 		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-			return externalFailure(http.StatusBadRequest, "invalid_request")
+			return "", externalFailure(http.StatusBadRequest, "invalid_request")
 		}
 		raw = payload.Value
 	} else {
 		if err := request.ParseForm(); err != nil {
-			return externalFailure(http.StatusBadRequest, "invalid_request")
+			return "", externalFailure(http.StatusBadRequest, "invalid_request")
 		}
 		raw = request.FormValue("value")
 	}
 	value, err := externaltrigger.ValidateVariableValue(config, raw)
 	if err != nil {
-		return externalFailure(http.StatusBadRequest, "invalid_value")
+		return "", externalFailure(http.StatusBadRequest, "invalid_value")
+	}
+	return value, externalActionResult{status: http.StatusOK}
+}
+
+func (a *App) executeExternalVariableValue(ctx context.Context, entry externaltrigger.Entry, value string) externalActionResult {
+	var config externaltrigger.VariableConfig
+	if entry.DecodeConfig(&config) != nil {
+		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}
 	var valueType variables.Kind
 	var isPassword bool
-	if err := a.db.QueryRowContext(request.Context(), "SELECT value_type, is_password FROM variables WHERE name = ?", config.VariableName).Scan(&valueType, &isPassword); err != nil || isPassword {
+	if err := a.db.QueryRowContext(ctx, "SELECT value_type, is_password FROM variables WHERE name = ?", config.VariableName).Scan(&valueType, &isPassword); err != nil || isPassword {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
-	value, err = variables.Parse(valueType, value)
+	value, err := variables.Parse(valueType, value)
 	if err != nil {
 		return externalFailure(http.StatusBadRequest, "invalid_value")
 	}
-	result, err := a.db.ExecContext(request.Context(), "UPDATE variables SET value = ?, revision = revision + 1, updated_at = ? WHERE name = ? AND is_password = 0 AND value_type = ?", value, time.Now().UTC().Unix(), config.VariableName, valueType)
+	result, err := a.db.ExecContext(ctx, "UPDATE variables SET value = ?, revision = revision + 1, updated_at = ? WHERE name = ? AND is_password = 0 AND value_type = ?", value, time.Now().UTC().Unix(), config.VariableName, valueType)
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}

@@ -172,6 +172,8 @@ SEED: 94d9bb9f.
 .external-entry-action strong, .external-entry-action span { display: block; }
 .external-entry-action strong { font-size: .85rem; }
 .external-target { display: block; min-width: 0; max-width: 52ch; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.external-approval-detail { display: grid; gap: 4px; }
+.external-approval-detail > small { max-width: 48ch; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .external-secret { padding: 18px; display: flex; align-items: flex-start; gap: 12px; border: 1px solid var(--success-border); border-radius: var(--rounded-control); background: var(--success-soft); }
 .external-secret > [data-lucide] { color: var(--success); }
 .external-secret > div { min-width: 0; flex: 1; }
@@ -1225,7 +1227,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .file-quick-access__body > p { margin: 0; padding: 10px 0 12px; color: var(--muted); font-size: .78rem; border-top: 1px solid var(--rule); }
 .file-quick-access__body > .file-quick-access__status { color: var(--danger); }
 .file-quick-access__body ul { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
-.file-quick-row { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; border-bottom: 1px solid var(--rule); }
+.file-quick-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 34px 34px; align-items: center; border-bottom: 1px solid var(--rule); transition: opacity 120ms ease, background 120ms ease; }
+.file-quick-row.is-dragging { opacity: .45; background: var(--accent-soft); }
 .file-quick-row:last-child { border-bottom: 0; }
 .file-quick-row > a { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 52px; padding: 7px 4px; color: var(--ink); text-decoration: none; }
 .file-quick-row > a:hover { color: var(--accent); }
@@ -1235,7 +1238,25 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .file-quick-row strong { font-size: .82rem; }
 .file-quick-row small { color: var(--muted); font: .7rem/1.3 var(--font-mono); }
 .file-quick-row > .icon-button { width: 34px; height: 34px; color: var(--muted); }
+.file-quick-row > .file-quick-row__grip { width: 28px; cursor: grab; color: var(--faint); }
+.file-quick-row > .file-quick-row__grip:active { cursor: grabbing; }
 .file-pin-button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.file-row--focused { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--accent-soft); }
+body.has-file-quick-edit-drawer { overflow: hidden; }
+.file-quick-edit-drawer-host { position: fixed; z-index: 150; inset: 0; visibility: hidden; pointer-events: none; }
+.file-quick-edit-drawer-host.is-open { visibility: visible; pointer-events: auto; }
+.file-quick-edit-drawer__scrim { position: absolute; inset: 0; width: 100%; border: 0; border-radius: 0; background: rgb(15 23 42 / .42); opacity: 0; transition: opacity var(--drawer-enter-transition); }
+.file-quick-edit-drawer-host.is-open .file-quick-edit-drawer__scrim { opacity: 1; }
+.file-quick-edit-drawer { position: absolute; inset: 0 0 0 auto; display: flex; width: min(520px, 100%); flex-direction: column; overflow: hidden; background: var(--surface); border-left: 1px solid var(--rule-strong); box-shadow: var(--overlay-shadow); outline: 0; transform: translateX(var(--drawer-offset)); transition: transform var(--drawer-enter-transition); }
+.file-quick-edit-drawer-host.is-open .file-quick-edit-drawer { transform: translateX(0); }
+.file-quick-edit-drawer > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 26px 28px 22px; border-bottom: 1px solid var(--rule); }
+.file-quick-edit-drawer > header p { margin: 0 0 5px; color: var(--accent); font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.file-quick-edit-drawer > header h2 { margin: 0; font-size: 1.25rem; }
+.file-quick-edit-drawer > form { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.file-quick-edit-drawer__body { display: grid; flex: 1; align-content: start; gap: 10px; padding: 28px; }
+.file-quick-edit-drawer__body label { display: grid; gap: 8px; font-weight: 650; }
+.file-quick-edit-drawer__body small { overflow-wrap: anywhere; color: var(--muted); font-family: var(--font-mono); }
+.file-quick-edit-drawer footer { display: flex; justify-content: flex-end; gap: 10px; padding: 18px 28px; border-top: 1px solid var(--rule); }
 .file-hidden-badge { padding: 1px 5px; color: var(--muted); background: var(--canvas); border: 1px solid var(--rule); border-radius: 4px; font-size: .65rem; line-height: 1.2; }
 .segmented-control {
   display: inline-flex;
@@ -6798,8 +6819,7 @@ and contract tests depend on them.
 .quick-run-group__identity > svg { width: 14px; height: 14px; color: var(--faint); }
 .quick-run-group__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quick-run-group__count { color: var(--faint); font-size: 12px; font-weight: 500; white-space: nowrap; }
-.quick-run-group__menu, .quick-run-group__reorder { flex: 0 0 auto; }
-.quick-run-group__reorder[aria-current="true"] { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-border); }
+.quick-run-group__menu { flex: 0 0 auto; }
 .quick-run-group__body[hidden] { display: none; }
 .quick-run-group[data-record-group="ungrouped"] .quick-run-group__identity > svg { color: var(--faint); }
 
@@ -6821,6 +6841,8 @@ and contract tests depend on them.
 [data-quick-run-drag-handle]:active { cursor: grabbing; }
 [data-quick-run-drag-handle].is-dragging { opacity: .42; background: var(--accent-soft); }
 [data-quick-run-reorder-url][aria-busy] [data-quick-run-drag-handle] { cursor: wait; opacity: .55; }
+[data-quick-run-reorder-active="true"] [data-quick-run-reorder-toggle] { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-border); }
+[data-quick-run-reorder-active="true"] .qr { border-color: var(--accent-border); }
 
 @media (max-width: 680px) {
   .quick-run-reorder-guidance { align-items: stretch; flex-direction: column; }
@@ -6886,9 +6908,9 @@ table (.records-table.file-table with tbody tr, td.record-primary >
 (.file-search-primary / [data-search-submit]), and every data-* hook is
 unchanged. This block REPLACES the legacy `.files-page .breadcrumb`
 flex-wrap rules and the plain `.record-icon` sizing for rows that carry
-the new .file-icon class (files, trash, upload inbox).
+the new .file-icon class (files and trash).
 
-New classes introduced by files.html / trash.html / upload-inbox.html:
+New classes introduced by files.html / trash.html:
   .breadcrumb-root .breadcrumb-sep .breadcrumb-current .breadcrumb-ellipsis
   .file-icon .file-name-cell .file-meta .file-type-badge .file-size .file-modified
 */

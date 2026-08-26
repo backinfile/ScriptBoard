@@ -110,6 +110,117 @@ func TestGroupSupportsMultipleImmutableEntriesWithoutDeletingKeys(t *testing.T) 
 	}
 }
 
+func TestEntryApprovalRequirementDefaultsOffAndPersistsUpdates(t *testing.T) {
+	now := time.Date(2026, 8, 26, 9, 0, 0, 0, time.UTC)
+	manager, _ := testManager(t, now)
+	group, err := manager.CreateGroup(context.Background(), "Approval hooks", "approval-hooks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _, err := manager.CreateEntry(context.Background(), CreateEntryInput{
+		GroupID: group.ID, Name: "notice", Label: "Notice", Type: ActionLog, Enabled: true,
+		Config: LogConfig{File: "/logs/notice.log", MaxMessageBytes: 100},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.RequireApproval {
+		t.Fatal("new entries must not require approval by default")
+	}
+	updated, err := manager.UpdateEntry(context.Background(), UpdateEntryInput{
+		ID: entry.ID, Name: entry.Name, Label: entry.Label, Type: entry.Type, Enabled: true, RequireApproval: true,
+		Config: LogConfig{File: "/logs/notice.log", MaxMessageBytes: 100},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.RequireApproval {
+		t.Fatal("updated entry did not retain its approval requirement")
+	}
+}
+
+func TestApprovalCanBeClaimedOnlyOnceAndRetainsInvocationInput(t *testing.T) {
+	now := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	manager, _ := testManager(t, now)
+	approval := Approval{
+		ID: "approval-one", OccurredAt: now, KeyID: "key-one", KeyLabel: "CI", EntryID: "entry-one", EntryName: "deploy",
+		ActionType: ActionVariable, EntryUpdatedAt: now.Add(-time.Minute), PayloadJSON: `{"value":"production"}`, Source: "127.0.0.1",
+	}
+	if err := manager.CreateApproval(context.Background(), approval); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := manager.ListApprovals(context.Background(), ApprovalPending, 50)
+	if err != nil || len(pending) != 1 || pending[0].PayloadJSON != approval.PayloadJSON {
+		t.Fatalf("pending approvals=%#v error=%v", pending, err)
+	}
+	claimed, err := manager.ClaimApproval(context.Background(), approval.ID, "admin-one")
+	if err != nil || claimed.Status != ApprovalProcessing || claimed.DecidedBy != "admin-one" {
+		t.Fatalf("claimed approval=%#v error=%v", claimed, err)
+	}
+	if _, err := manager.ClaimApproval(context.Background(), approval.ID, "admin-two"); !errors.Is(err, ErrApprovalNotPending) {
+		t.Fatalf("second claim error=%v", err)
+	}
+	if err := manager.CompleteApproval(context.Background(), approval.ID, ApprovalApproved, "succeeded", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := manager.Approval(context.Background(), approval.ID)
+	if err != nil || completed.Status != ApprovalApproved || completed.Result != "succeeded" {
+		t.Fatalf("completed approval=%#v error=%v", completed, err)
+	}
+}
+
+func TestApprovalRecoveryMarksTheInvocationUnknown(t *testing.T) {
+	now := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	manager, _ := testManager(t, now)
+	approval := Approval{ID: "approval-recovery", OccurredAt: now, KeyID: "key-one", KeyLabel: "CI", EntryID: "entry-one", EntryName: "deploy", ActionType: ActionUpload, EntryUpdatedAt: now, PayloadJSON: `{}`}
+	if err := manager.CreateApproval(context.Background(), approval); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RecordInvocation(context.Background(), Invocation{ID: approval.ID, OccurredAt: now, KeyID: approval.KeyID, KeyLabel: approval.KeyLabel, EntryID: approval.EntryID, EntryName: approval.EntryName, ActionType: approval.ActionType, Result: "pending_approval", HTTPStatus: 202}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ClaimApproval(context.Background(), approval.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RecoverApprovals(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := manager.Approval(context.Background(), approval.ID)
+	if err != nil || recovered.Status != ApprovalFailed || recovered.Result != "unknown" {
+		t.Fatalf("recovered approval=%#v error=%v", recovered, err)
+	}
+	requests, err := manager.ListInvocations(context.Background(), 10)
+	if err != nil || len(requests) != 1 || requests[0].Result != "unknown" || requests[0].HTTPStatus != 500 {
+		t.Fatalf("recovered invocations=%#v error=%v", requests, err)
+	}
+}
+
+func TestApprovalAndInvocationFinalizeInOneTransaction(t *testing.T) {
+	now := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	manager, _ := testManager(t, now)
+	approval := Approval{ID: "approval-finalize", OccurredAt: now, KeyID: "key-one", KeyLabel: "CI", EntryID: "entry-one", EntryName: "deploy", ActionType: ActionVariable, EntryUpdatedAt: now, PayloadJSON: `{"value":"production"}`}
+	if err := manager.CreateApproval(context.Background(), approval); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RecordInvocation(context.Background(), Invocation{ID: approval.ID, OccurredAt: now, KeyID: approval.KeyID, KeyLabel: approval.KeyLabel, EntryID: approval.EntryID, EntryName: approval.EntryName, ActionType: approval.ActionType, Result: "pending_approval", HTTPStatus: 202}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ClaimApproval(context.Background(), approval.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.FinalizeApprovalInvocation(context.Background(), approval.ID, ApprovalApproved, "succeeded", 200, 0, "", "production"); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := manager.Approval(context.Background(), approval.ID)
+	if err != nil || completed.Status != ApprovalApproved {
+		t.Fatalf("completed approval=%#v error=%v", completed, err)
+	}
+	requests, err := manager.ListInvocations(context.Background(), 10)
+	if err != nil || len(requests) != 1 || requests[0].Result != "succeeded" || requests[0].HTTPStatus != 200 {
+		t.Fatalf("completed invocations=%#v error=%v", requests, err)
+	}
+}
+
 func TestGroupKeysShareEveryCallablePathAndKeepIndependentLifetimes(t *testing.T) {
 	now := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
 	manager, _ := testManager(t, now)

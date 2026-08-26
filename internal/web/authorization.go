@@ -119,7 +119,6 @@ func stepUpReturnTarget(request *http.Request) string {
 		{"/settings/updates", "/settings/updates"},
 		{"/settings/state-backups", "/settings/state-backups"},
 		{"/resources/databases", "/resources/databases"},
-		{"/resources/inbox", "/resources/inbox"},
 		{"/resources/files", "/resources/files"},
 	} {
 		if strings.HasPrefix(request.URL.Path, candidate.prefix) {
