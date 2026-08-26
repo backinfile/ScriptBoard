@@ -688,13 +688,12 @@ func (m *Manager) supervise(id string, process ManagedProcess, stdout, stderr io
 	writeEvents := func(source string, reader io.Reader) {
 		defer readers.Done()
 		buffered := bufio.NewReaderSize(reader, 32<<10)
-		buffer := make([]byte, 32<<10)
 		for {
-			count, readErr := buffered.Read(buffer)
-			if count > 0 {
+			output, done := readRunOutputChunk(buffered)
+			if len(output) > 0 {
 				eventMu.Lock()
 				sequence++
-				encoded, _ := json.Marshal(persistedEvent{Sequence: sequence, Time: time.Now().UTC().UnixNano(), Source: source, Data: secretredaction.Bytes(buffer[:count])})
+				encoded, _ := json.Marshal(persistedEvent{Sequence: sequence, Time: time.Now().UTC().UnixNano(), Source: source, Data: secretredaction.Bytes(output)})
 				line := append(encoded, '\n')
 				if !logIncomplete && written+int64(len(line)) <= headLogBytes {
 					countWritten, writeErr := logFile.Write(line)
@@ -724,7 +723,7 @@ func (m *Manager) supervise(id string, process ManagedProcess, stdout, stderr io
 						} else {
 							last := &tail[len(tail)-1]
 							last.size += int64(countWritten)
-							last.dataBytes += int64(count)
+							last.dataBytes += int64(len(output))
 							tailBytes += int64(countWritten)
 						}
 					}
@@ -738,7 +737,7 @@ func (m *Manager) supervise(id string, process ManagedProcess, stdout, stderr io
 				eventMu.Unlock()
 				activeRun.signalChanged()
 			}
-			if readErr != nil {
+			if done {
 				return
 			}
 		}
@@ -843,6 +842,12 @@ func (m *Manager) supervise(id string, process ManagedProcess, stdout, stderr io
 	delete(m.active, id)
 	m.mu.Unlock()
 	m.files.ReleaseLease(activeRun.leaseID)
+}
+
+func readRunOutputChunk(reader *bufio.Reader) ([]byte, bool) {
+	// Keep complete lines in separate events so severity stays stable when the OS coalesces pipe reads.
+	output, err := reader.ReadSlice('\n')
+	return output, err != nil && !errors.Is(err, bufio.ErrBufferFull)
 }
 
 func (m *Manager) recordTerminalAudit(id, status string) {
