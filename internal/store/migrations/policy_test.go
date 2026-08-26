@@ -13,8 +13,13 @@ func TestCompatible(t *testing.T) {
 			t.Fatalf("schema 57 unexpectedly accepts %d", version)
 		}
 	}
-	if Compatible(58, 57) {
-		t.Fatal("a new current schema requires an explicit migration policy")
+	if !Compatible(58, 57) {
+		t.Fatal("schema 58 should accept schema 57 after the approval migration was declared")
+	}
+	for version := 20; version <= 58; version++ {
+		if !Compatible(59, version) {
+			t.Fatalf("schema 59 should accept supported predecessor %d", version)
+		}
 	}
 	if !Compatible(57, 57) {
 		t.Fatal("a current database must always remain compatible")

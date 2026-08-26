@@ -57,7 +57,8 @@
     <details class="file-quick-access" data-file-quick-access data-validation-url="/resources/files/validate"
       data-pins-url="/resources/files/quick-access" data-csrf-token="{{.CSRFToken}}"
       data-save-failed="{{t .Locale "files.quick_access_save_failed"}}" hidden
-      data-remove-label="{{t .Locale "files.remove_quick_access"}}">
+      data-remove-label="{{t .Locale "files.remove_quick_access"}}"
+      data-edit-label="{{t .Locale "files.edit_quick_access"}}">
       <summary>
         <span class="file-quick-access__icon" data-lucide="pin" aria-hidden="true"></span>
         <span><strong>{{t .Locale "files.quick_access"}}</strong></span>
@@ -72,6 +73,17 @@
       <span hidden data-file-quick-one-label>{{t .Locale "files.quick_access_folder"}}</span>
       <span hidden data-file-quick-many-label>{{t .Locale "files.quick_access_folders"}}</span>
     </details>
+    <div class="file-quick-edit-drawer-host" data-file-quick-edit-drawer aria-hidden="true">
+      <button class="file-quick-edit-drawer__scrim" type="button" aria-label="{{t .Locale "common.close"}}" data-file-quick-edit-close></button>
+      <aside class="file-quick-edit-drawer" role="dialog" aria-modal="true" aria-labelledby="file-quick-edit-title" tabindex="-1">
+        <header><div><p>{{t .Locale "files.quick_access"}}</p><h2 id="file-quick-edit-title">{{t .Locale "files.edit_quick_access_title"}}</h2></div><button class="icon-button icon-button--quiet" type="button" aria-label="{{t .Locale "common.close"}}" data-file-quick-edit-close><span data-lucide="x" aria-hidden="true"></span></button></header>
+        <form data-file-quick-edit-form>
+          <input type="hidden" name="path" data-file-quick-edit-path>
+          <div class="file-quick-edit-drawer__body"><label>{{t .Locale "files.quick_access_display_name"}} <input name="label" maxlength="128" autocomplete="off" required data-file-quick-edit-label></label><small data-file-quick-edit-technical></small></div>
+          <footer><button class="button button--quiet" type="button" data-file-quick-edit-close>{{t .Locale "common.cancel"}}</button><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
+        </form>
+      </aside>
+    </div>
 
     <section class="file-search-region" aria-label="{{t .Locale "files.search"}}">
       <form class="file-search-form" method="get" action="{{.SearchURL}}" data-async data-async-push data-file-search data-focus-after-navigation="[data-search-input]">
@@ -117,7 +129,7 @@
           <span class="file-hidden-toggle__track" aria-hidden="true"><span></span></span>
           <span>{{t .Locale "files.show_hidden"}}</span>
         </label>
-        {{if .CanWrite}}<span class="file-search-links"><a class="button button--quiet" href="/resources/inbox"><span data-lucide="inbox" aria-hidden="true"></span>{{t .Locale "inbox.title"}}</a><a class="button button--quiet file-trash-link" href="/resources/trash"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "files.trash"}}</a></span>{{end}}
+        {{if .CanWrite}}<span class="file-search-links"><a class="button button--quiet file-trash-link" href="/resources/trash"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "files.trash"}}</a></span>{{end}}
       </form>
     </section>
 
@@ -147,7 +159,7 @@
         <thead><tr><th>{{t .Locale "common.name"}}</th><th>{{t .Locale "common.size"}}</th><th>{{t .Locale "common.modified"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
         <tbody>
         {{range .Entries}}
-          <tr>
+          <tr{{if .Focused}} class="file-row--focused" tabindex="-1" data-file-focus{{end}}>
             <td data-label="{{t $.Locale "common.name"}}" class="record-primary">
               <div class="record-primary__content">
                 <span class="record-icon file-icon" aria-hidden="true" data-lucide="{{.IconClass}}"></span>
@@ -159,6 +171,7 @@
             <td class="record-actions">
               <div class="record-actions__group">
               {{if .BrowseURL}}<button class="icon-button file-pin-button" type="button" hidden data-file-pin data-file-pin-path="{{.Path}}" data-file-pin-label="{{.Name}}" data-file-pin-href="{{.PinURL}}" data-pin-label="{{t $.Locale "files.pin_directory"}}" data-unpin-label="{{t $.Locale "files.unpin_directory"}}" aria-label="{{t $.Locale "files.pin_directory"}}" aria-pressed="false"><span data-lucide="pin" aria-hidden="true"></span></button><a class="button button--quiet button--compact" href="{{.BrowseURL}}">{{t $.Locale "common.open"}}</a>{{end}}
+              {{if and .PinURL (not .BrowseURL)}}<button class="icon-button file-pin-button" type="button" hidden data-file-pin data-file-pin-path="{{.Path}}" data-file-pin-label="{{.Name}}" data-file-pin-href="{{.PinURL}}" data-pin-label="{{t $.Locale "files.pin_file"}}" data-unpin-label="{{t $.Locale "files.unpin_file"}}" aria-label="{{t $.Locale "files.pin_file"}}" aria-pressed="false"><span data-lucide="pin" aria-hidden="true"></span></button>{{end}}
               {{if and $.CanExecute .Runnable}}<a class="button button--compact" href="{{.RunURL}}" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "common.run"}}</a>{{end}}
               {{if ne .Kind "restricted"}}
               <details class="action-menu">

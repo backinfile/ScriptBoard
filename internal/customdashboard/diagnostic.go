@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/registryconnection"
 	"scriptboard/internal/registrymonitor"
 )
 
@@ -164,7 +165,11 @@ func (m *Manager) runRegistryRequest(ctx context.Context, input CardInput, exist
 	result := TestResult{Diagnostic: RequestDiagnostic{Code: DiagnosticOK, Stage: "complete", Summary: "请求成功", URL: redactRequestURL(config.Endpoint), AttemptedAt: m.now().UTC()}}
 	images, err := m.registry.Test(ctx, existingCardID, config, input.RegistryPassword, input.PreserveRegistryPassword && input.RegistryPassword == "")
 	if err != nil {
-		return finishRequestFailure(result, started, "registry_manifest", DiagnosticRegistryManifest, "Registry 查询失败，请检查地址与镜像名称", err), err
+		if errors.Is(err, registryconnection.ErrNotFound) || errors.Is(err, registryconnection.ErrInvalidConnection) {
+			return finishRequestFailure(result, started, "registry_auth", DiagnosticRegistryAuth, "Registry 凭据不可用，请重新输入密码或 Token", err), err
+		}
+		code := classifyNetworkError(err)
+		return finishRequestFailure(result, started, "connect", code, actionableSummary(code), err), err
 	}
 	failures := 0
 	authFailure := false

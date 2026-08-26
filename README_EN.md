@@ -96,13 +96,15 @@ mkdir -p state
 3. Change the password under Settings → Account, then add a passkey or TOTP if needed.
 4. Open Resources → Host Files, select an existing script, or upload files and create a Quick Run.
 
-For multi-file uploads, ScriptBoard validates the whole batch before committing it, so a failed batch does not leave partial results. Executables and scripts first enter the Upload Inbox and are published only after their target and SHA-256 are confirmed.
+For multi-file uploads, ScriptBoard validates the whole batch before committing it, so a failed batch does not leave partial results. Files and directories can both be pinned to instance-wide Quick access. A pinned file opens its containing directory and focuses the file; display names and ordering can be edited in place.
 
 ## Everyday use
 
 ### Quick Runs and schedules
 
-A Quick Run stores a script path, arguments, timeout, and script digest. If the script changes, the old configuration refuses to start until an authorized user republishes it. Schedules use standard five-field Cron; for example, `0 2 * * *` runs every day at 02:00. Missed schedules are not replayed after downtime.
+A Quick Run stores a script path, arguments, timeout, and script digest. If the script changes, the old configuration refuses to start until an authorized user republishes it. Reorder switches every group into draggable mode on the current page. Schedules use standard five-field Cron; for example, `0 2 * * *` runs every day at 02:00. Missed schedules are not replayed after downtime.
+
+Each External Interface function can independently require approval; the default is off. Variable, log, upload, and Quick Run calls that require approval first appear on the Approvals tab. Every approval has a type-specific detail drawer showing variable before/after values, pending log content, Quick Run configuration, or the cached upload content together with its target directory and name-conflict outcome. Reviewers can download a pending cached upload without claiming it or writing it to the target directory. Upload content reaches the target filesystem only after approval. Rejection, configuration drift, and failed recovery do not execute the target action, and each approval can be claimed only once.
 
 ### Monitoring and connections
 

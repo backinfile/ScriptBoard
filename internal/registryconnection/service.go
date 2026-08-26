@@ -452,6 +452,11 @@ func (service *Service) Inspect(ctx context.Context, cardID string) ([]registrym
 func (service *Service) Test(ctx context.Context, cardID string, config registrymonitor.Config, password string, preserve bool) ([]registrymonitor.ImageResult, error) {
 	config = registrymonitor.NormalizeConfig(config)
 	cardID = strings.TrimSpace(cardID)
+	// 匿名连接没有凭据；忽略上层误传的保留标记，避免读取不存在的旧密码。
+	if config.AuthMode == "anonymous" {
+		password = ""
+		preserve = false
+	}
 	if registrymonitor.ValidateConfig(config) != nil || !validCredential(password, true) || preserve && !validID(cardID) {
 		return nil, ErrInvalidConnection
 	}

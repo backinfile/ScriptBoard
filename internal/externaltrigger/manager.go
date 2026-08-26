@@ -37,15 +37,16 @@ const (
 )
 
 var (
-	ErrInvalidKey      = errors.New("external trigger key is invalid")
-	ErrEntryNotFound   = errors.New("external trigger entry does not exist")
-	ErrEntryDisabled   = errors.New("external trigger entry is disabled")
-	ErrKeyScopeBound   = errors.New("external trigger key is already bound to an entry")
-	ErrEntryImmutable  = errors.New("external trigger entry scope is immutable")
-	ErrInvalidInput    = errors.New("external trigger input is invalid")
-	ErrKeyLabelExists  = errors.New("external trigger key name already exists")
-	ErrGroupNameExists = errors.New("external trigger group call name already exists")
-	entryNamePattern   = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+	ErrInvalidKey         = errors.New("external trigger key is invalid")
+	ErrEntryNotFound      = errors.New("external trigger entry does not exist")
+	ErrEntryDisabled      = errors.New("external trigger entry is disabled")
+	ErrKeyScopeBound      = errors.New("external trigger key is already bound to an entry")
+	ErrEntryImmutable     = errors.New("external trigger entry scope is immutable")
+	ErrInvalidInput       = errors.New("external trigger input is invalid")
+	ErrKeyLabelExists     = errors.New("external trigger key name already exists")
+	ErrGroupNameExists    = errors.New("external trigger group call name already exists")
+	ErrApprovalNotPending = errors.New("external trigger approval is not pending")
+	entryNamePattern      = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 )
 
 func normalizedCallName(value string) string {
@@ -110,6 +111,7 @@ var SchemaStatements = []string{
 		target TEXT NOT NULL DEFAULT '',
 		config_json TEXT NOT NULL DEFAULT '{}',
 		require_signature INTEGER NOT NULL DEFAULT 0 CHECK (require_signature IN (0, 1)),
+		require_approval INTEGER NOT NULL DEFAULT 0 CHECK (require_approval IN (0, 1)),
 		enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL,
@@ -131,6 +133,27 @@ var SchemaStatements = []string{
 		message TEXT NOT NULL DEFAULT '',
 		source_address TEXT NOT NULL DEFAULT ''
 	)`,
+	`CREATE TABLE IF NOT EXISTS external_trigger_approvals (
+		id TEXT PRIMARY KEY,
+		occurred_at INTEGER NOT NULL,
+		key_id TEXT NOT NULL,
+		key_label TEXT NOT NULL,
+		entry_id TEXT NOT NULL,
+		entry_name TEXT NOT NULL,
+		action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable')),
+		entry_updated_at INTEGER NOT NULL,
+		payload_json TEXT NOT NULL DEFAULT '{}',
+		upload_name TEXT NOT NULL DEFAULT '',
+		upload_sha256 TEXT NOT NULL DEFAULT '',
+		bytes_received INTEGER NOT NULL DEFAULT 0,
+		source_address TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'approved', 'rejected', 'failed')),
+		decided_at INTEGER,
+		decided_by TEXT NOT NULL DEFAULT '',
+		result TEXT NOT NULL DEFAULT '',
+		run_id TEXT NOT NULL DEFAULT '',
+		message TEXT NOT NULL DEFAULT ''
+	)`,
 	`CREATE TABLE IF NOT EXISTS external_trigger_nonces (
 		key_id TEXT NOT NULL REFERENCES external_trigger_keys(id) ON DELETE CASCADE,
 		nonce TEXT NOT NULL,
@@ -139,6 +162,7 @@ var SchemaStatements = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_time_idx ON external_trigger_requests(occurred_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_key_time_idx ON external_trigger_requests(key_id, occurred_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS external_trigger_approvals_status_time_idx ON external_trigger_approvals(status, occurred_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_nonces_expiry_idx ON external_trigger_nonces(expires_at)`,
 }
 
@@ -176,6 +200,7 @@ type Entry struct {
 	ConfigJSON                              string
 	Enabled                                 bool
 	RequireSignature                        bool
+	RequireApproval                         bool
 	CreatedAt, UpdatedAt                    time.Time
 }
 
@@ -277,6 +302,7 @@ type CreateEntryInput struct {
 	Type                        ActionType
 	Enabled                     bool
 	RequireSignature            bool
+	RequireApproval             bool
 	Config                      any
 }
 
@@ -285,6 +311,7 @@ type UpdateEntryInput struct {
 	Type             ActionType
 	Enabled          bool
 	RequireSignature bool
+	RequireApproval  bool
 	Config           any
 }
 
@@ -305,6 +332,200 @@ type InvocationFilter struct {
 	Query                     string
 	FromUnix, ToExclusiveUnix int64
 	HasFromDate, HasToDate    bool
+}
+
+type ApprovalStatus string
+
+const (
+	ApprovalPending    ApprovalStatus = "pending"
+	ApprovalProcessing ApprovalStatus = "processing"
+	ApprovalApproved   ApprovalStatus = "approved"
+	ApprovalRejected   ApprovalStatus = "rejected"
+	ApprovalFailed     ApprovalStatus = "failed"
+)
+
+type Approval struct {
+	ID, KeyID, KeyLabel, EntryID, EntryName string
+	ActionType                              ActionType
+	EntryUpdatedAt, OccurredAt              time.Time
+	PayloadJSON, UploadName, UploadSHA256   string
+	BytesReceived                           int64
+	Source                                  string
+	Status                                  ApprovalStatus
+	DecidedAt                               *time.Time
+	DecidedBy, Result, RunID, Message       string
+}
+
+func (manager *Manager) CreateApproval(ctx context.Context, approval Approval) error {
+	if approval.ID == "" || approval.KeyID == "" || approval.EntryID == "" || approval.EntryUpdatedAt.IsZero() || len([]byte(approval.PayloadJSON)) > 16<<10 {
+		return fmt.Errorf("%w: approval", ErrInvalidInput)
+	}
+	if approval.OccurredAt.IsZero() {
+		approval.OccurredAt = manager.now().UTC()
+	}
+	if approval.PayloadJSON == "" {
+		approval.PayloadJSON = "{}"
+	}
+	_, err := manager.db.ExecContext(ctx, `INSERT INTO external_trigger_approvals
+		(id, occurred_at, key_id, key_label, entry_id, entry_name, action_type, entry_updated_at, payload_json,
+		 upload_name, upload_sha256, bytes_received, source_address, status, message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`, approval.ID, approval.OccurredAt.UTC().Unix(), approval.KeyID,
+		approval.KeyLabel, approval.EntryID, approval.EntryName, approval.ActionType, approval.EntryUpdatedAt.UTC().Unix(), approval.PayloadJSON,
+		approval.UploadName, approval.UploadSHA256, approval.BytesReceived, approval.Source, approval.Message)
+	return err
+}
+
+func (manager *Manager) DeleteApproval(ctx context.Context, id string) error {
+	_, err := manager.db.ExecContext(ctx, `DELETE FROM external_trigger_approvals WHERE id = ? AND status = 'pending'`, id)
+	return err
+}
+
+func scanApproval(scanner interface{ Scan(...any) error }) (Approval, error) {
+	var approval Approval
+	var occurredAt, entryUpdatedAt int64
+	var decidedAt sql.NullInt64
+	err := scanner.Scan(&approval.ID, &occurredAt, &approval.KeyID, &approval.KeyLabel, &approval.EntryID, &approval.EntryName,
+		&approval.ActionType, &entryUpdatedAt, &approval.PayloadJSON, &approval.UploadName, &approval.UploadSHA256, &approval.BytesReceived,
+		&approval.Source, &approval.Status, &decidedAt, &approval.DecidedBy, &approval.Result, &approval.RunID, &approval.Message)
+	if err != nil {
+		return Approval{}, err
+	}
+	approval.OccurredAt = time.Unix(occurredAt, 0).UTC()
+	approval.EntryUpdatedAt = time.Unix(entryUpdatedAt, 0).UTC()
+	if decidedAt.Valid {
+		value := time.Unix(decidedAt.Int64, 0).UTC()
+		approval.DecidedAt = &value
+	}
+	return approval, nil
+}
+
+const approvalSelect = `SELECT id, occurred_at, key_id, key_label, entry_id, entry_name, action_type, entry_updated_at,
+	payload_json, upload_name, upload_sha256, bytes_received, source_address, status, decided_at, decided_by, result, run_id, message
+	FROM external_trigger_approvals`
+
+func (manager *Manager) Approval(ctx context.Context, id string) (Approval, error) {
+	return scanApproval(manager.db.QueryRowContext(ctx, approvalSelect+` WHERE id = ?`, id))
+}
+
+func (manager *Manager) ListApprovals(ctx context.Context, status ApprovalStatus, limit int) ([]Approval, error) {
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	rows, err := manager.db.QueryContext(ctx, approvalSelect+` WHERE status = ? ORDER BY occurred_at DESC, id DESC LIMIT ?`, status, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var approvals []Approval
+	for rows.Next() {
+		approval, err := scanApproval(rows)
+		if err != nil {
+			return nil, err
+		}
+		approvals = append(approvals, approval)
+	}
+	return approvals, rows.Err()
+}
+
+func (manager *Manager) ClaimApproval(ctx context.Context, id, decidedBy string) (Approval, error) {
+	transaction, err := manager.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Approval{}, err
+	}
+	defer transaction.Rollback()
+	now := manager.now().UTC()
+	result, err := transaction.ExecContext(ctx, `UPDATE external_trigger_approvals SET status = 'processing', decided_at = ?, decided_by = ? WHERE id = ? AND status = 'pending'`, now.Unix(), decidedBy, id)
+	if err != nil {
+		return Approval{}, err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return Approval{}, ErrApprovalNotPending
+	}
+	approval, err := scanApproval(transaction.QueryRowContext(ctx, approvalSelect+` WHERE id = ?`, id))
+	if err != nil {
+		return Approval{}, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return Approval{}, err
+	}
+	return approval, nil
+}
+
+func (manager *Manager) CompleteApproval(ctx context.Context, id string, status ApprovalStatus, resultText, runID, message string) error {
+	if status != ApprovalApproved && status != ApprovalRejected && status != ApprovalFailed {
+		return fmt.Errorf("%w: approval completion", ErrInvalidInput)
+	}
+	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_approvals SET status = ?, result = ?, run_id = ?, message = ? WHERE id = ? AND status = 'processing'`, status, resultText, runID, message, id)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return ErrApprovalNotPending
+	}
+	return nil
+}
+
+func (manager *Manager) FinalizeApprovalInvocation(ctx context.Context, id string, status ApprovalStatus, resultText string, httpStatus int, bytesReceived int64, runID, message string) error {
+	if status != ApprovalApproved && status != ApprovalRejected && status != ApprovalFailed || httpStatus < 100 || httpStatus > 599 {
+		return fmt.Errorf("%w: approval finalization", ErrInvalidInput)
+	}
+	transaction, err := manager.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	result, err := transaction.ExecContext(ctx, `UPDATE external_trigger_approvals SET status = ?, result = ?, run_id = ?, message = ? WHERE id = ? AND status = 'processing'`, status, resultText, runID, message, id)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return ErrApprovalNotPending
+	}
+	result, err = transaction.ExecContext(ctx, `UPDATE external_trigger_requests SET result = ?, http_status = ?, bytes_received = ?, run_id = ?, message = ? WHERE id = ? AND result = 'pending_approval'`, resultText, httpStatus, bytesReceived, runID, message, id)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return ErrApprovalNotPending
+	}
+	return transaction.Commit()
+}
+
+func (manager *Manager) RecoverApprovals(ctx context.Context) error {
+	transaction, err := manager.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	message := "service restarted while approval was executing"
+	if _, err := transaction.ExecContext(ctx, `UPDATE external_trigger_requests
+		SET result = 'unknown', http_status = 500, message = ?
+		WHERE result = 'pending_approval' AND id IN (SELECT id FROM external_trigger_approvals WHERE status = 'processing')`, message); err != nil {
+		return err
+	}
+	if _, err := transaction.ExecContext(ctx, `UPDATE external_trigger_approvals
+		SET status = 'failed', result = 'unknown', message = 'service restarted while approval was executing'
+		WHERE status = 'processing'`); err != nil {
+		return err
+	}
+	return transaction.Commit()
+}
+
+func (manager *Manager) PendingApprovalIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := manager.db.QueryContext(ctx, `SELECT id FROM external_trigger_approvals WHERE status = 'pending'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids[id] = true
+	}
+	return ids, rows.Err()
 }
 
 func (manager *Manager) ListInvocations(ctx context.Context, limit int) ([]Invocation, error) {
@@ -697,8 +918,8 @@ func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput)
 		storedKeyID = input.KeyID
 	}
 	result, err := transaction.ExecContext(ctx, `INSERT INTO external_trigger_entries
-		(id, group_id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, groupID, storedKeyID, input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.RequireSignature, input.Enabled, now.Unix(), now.Unix())
+		(id, group_id, key_id, name, label, action_type, target, config_json, require_signature, require_approval, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, groupID, storedKeyID, input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.RequireSignature, input.RequireApproval, input.Enabled, now.Unix(), now.Unix())
 	if err != nil {
 		if strings.Contains(err.Error(), "external_trigger_entries.key_id") {
 			return Entry{}, "", ErrKeyScopeBound
@@ -722,7 +943,7 @@ func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput)
 	if err := transaction.Commit(); err != nil {
 		return Entry{}, "", err
 	}
-	return Entry{ID: id, GroupID: groupID, KeyID: input.KeyID, Name: input.Name, Label: strings.TrimSpace(input.Label), Type: input.Type, Target: target, ConfigJSON: configJSON, RequireSignature: input.RequireSignature, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}, secret, nil
+	return Entry{ID: id, GroupID: groupID, KeyID: input.KeyID, Name: input.Name, Label: strings.TrimSpace(input.Label), Type: input.Type, Target: target, ConfigJSON: configJSON, RequireSignature: input.RequireSignature, RequireApproval: input.RequireApproval, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}, secret, nil
 }
 
 func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput) (Entry, error) {
@@ -735,8 +956,8 @@ func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput)
 	}
 	now := manager.now().UTC()
 	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_entries SET
-		name = ?, label = ?, action_type = ?, target = ?, config_json = ?, require_signature = ?, enabled = ?, updated_at = ? WHERE id = ?`,
-		input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.RequireSignature, input.Enabled, now.Unix(), input.ID)
+		name = ?, label = ?, action_type = ?, target = ?, config_json = ?, require_signature = ?, require_approval = ?, enabled = ?, updated_at = ? WHERE id = ?`,
+		input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.RequireSignature, input.RequireApproval, input.Enabled, now.Unix(), input.ID)
 	if err != nil {
 		return Entry{}, fmt.Errorf("update external trigger entry: %w", err)
 	}
@@ -883,11 +1104,11 @@ func (manager *Manager) Resolve(ctx context.Context, token, name string) (Key, E
 		return Key{}, Entry{}, ErrInvalidKey
 	}
 	var entry Entry
-	var entryEnabled, requireSignature int
+	var entryEnabled, requireSignature, requireApproval int
 	var entryCreatedAt, entryUpdatedAt int64
-	err = manager.db.QueryRowContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
+	err = manager.db.QueryRowContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, require_approval, enabled, created_at, updated_at
 		FROM external_trigger_entries WHERE group_id = ? AND name = ? AND action_type <> 'website_monitor'`, key.GroupID, name).Scan(
-		&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &entryEnabled, &entryCreatedAt, &entryUpdatedAt)
+		&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &requireApproval, &entryEnabled, &entryCreatedAt, &entryUpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return key, Entry{}, ErrEntryNotFound
 	}
@@ -896,6 +1117,7 @@ func (manager *Manager) Resolve(ctx context.Context, token, name string) (Key, E
 	}
 	entry.Enabled = entryEnabled != 0
 	entry.RequireSignature = requireSignature != 0
+	entry.RequireApproval = requireApproval != 0
 	entry.CreatedAt, entry.UpdatedAt = time.Unix(entryCreatedAt, 0).UTC(), time.Unix(entryUpdatedAt, 0).UTC()
 	if !entry.Enabled {
 		return key, entry, ErrEntryDisabled
@@ -936,15 +1158,16 @@ func (manager *Manager) Key(ctx context.Context, id string) (Key, error) {
 
 func (manager *Manager) Entry(ctx context.Context, id string) (Entry, error) {
 	var entry Entry
-	var enabled, requireSignature int
+	var enabled, requireSignature, requireApproval int
 	var createdAt, updatedAt int64
-	err := manager.db.QueryRowContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
-		FROM external_trigger_entries WHERE id = ? AND action_type <> 'website_monitor'`, id).Scan(&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt)
+	err := manager.db.QueryRowContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, require_approval, enabled, created_at, updated_at
+		FROM external_trigger_entries WHERE id = ? AND action_type <> 'website_monitor'`, id).Scan(&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &requireApproval, &enabled, &createdAt, &updatedAt)
 	if err != nil {
 		return Entry{}, err
 	}
 	entry.Enabled = enabled != 0
 	entry.RequireSignature = requireSignature != 0
+	entry.RequireApproval = requireApproval != 0
 	entry.CreatedAt, entry.UpdatedAt = time.Unix(createdAt, 0).UTC(), time.Unix(updatedAt, 0).UTC()
 	return entry, nil
 }
@@ -992,7 +1215,7 @@ func (manager *Manager) entriesForKey(ctx context.Context, keyID string) ([]Entr
 }
 
 func (manager *Manager) entriesForGroup(ctx context.Context, groupID string) ([]Entry, error) {
-	rows, err := manager.db.QueryContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
+	rows, err := manager.db.QueryContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, require_approval, enabled, created_at, updated_at
 		FROM external_trigger_entries WHERE group_id = ? AND action_type <> 'website_monitor' ORDER BY created_at, id`, groupID)
 	if err != nil {
 		return nil, err
@@ -1001,13 +1224,14 @@ func (manager *Manager) entriesForGroup(ctx context.Context, groupID string) ([]
 	var entries []Entry
 	for rows.Next() {
 		var entry Entry
-		var enabled, requireSignature int
+		var enabled, requireSignature, requireApproval int
 		var createdAt, updatedAt int64
-		if err := rows.Scan(&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &requireApproval, &enabled, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		entry.Enabled = enabled != 0
 		entry.RequireSignature = requireSignature != 0
+		entry.RequireApproval = requireApproval != 0
 		entry.CreatedAt, entry.UpdatedAt = time.Unix(createdAt, 0).UTC(), time.Unix(updatedAt, 0).UTC()
 		entries = append(entries, entry)
 	}

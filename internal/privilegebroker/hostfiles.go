@@ -68,6 +68,8 @@ type hostFilesWireRequest struct {
 	Replace           bool                   `json:"replace,omitempty"`
 	DirectoryPrepare  bool                   `json:"directory_prepare,omitempty"`
 	Record            string                 `json:"record,omitempty"`
+	Rotate            bool                   `json:"rotate,omitempty"`
+	MaxBackups        int                    `json:"max_backups,omitempty"`
 	Cursor            string                 `json:"cursor,omitempty"`
 	OperationID       string                 `json:"operation_id,omitempty"`
 	ExternalToken     string                 `json:"external_token,omitempty"`
@@ -98,7 +100,8 @@ type hostFilesWireResponse struct {
 }
 
 type hostFilesUploadBatchManifest struct {
-	Files []hostFilesUploadBatchFile `json:"files"`
+	Files                []hostFilesUploadBatchFile `json:"files"`
+	SynchronizeQuickRuns bool                       `json:"synchronize_quick_runs,omitempty"`
 }
 
 type hostFilesUploadBatchFile struct {
@@ -474,8 +477,34 @@ func (service *brokerHostFilesService) UploadBatch(ctx context.Context, manifest
 		inputs = append(inputs, hostfiles.UploadBatchInput{Name: entry.Name, Source: file, MaxBytes: entry.MaxBytes, StoredName: entry.StoredName})
 	}
 	results, err := service.files.UploadBatch(directory, inputs, replace)
-	if err != nil || service.db == nil {
+	if err != nil {
 		return results, err
+	}
+	if manifest.SynchronizeQuickRuns && service.db == nil {
+		return nil, errors.Join(errors.New("Quick Run synchronization database is unavailable"), service.files.RollbackUploadBatch(results))
+	}
+	// Keep the broker-side file transaction recoverable until every referenced
+	// Quick Run has the digest of the newly committed script.
+	if manifest.SynchronizeQuickRuns {
+		for index := range results {
+			if results[index].Trashed == nil {
+				continue
+			}
+			var references int
+			if err := service.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM quick_runs WHERE script_path_key = ?", hostfiles.ComparisonKey(results[index].Path)).Scan(&references); err != nil {
+				return nil, errors.Join(err, service.files.RollbackUploadBatch(results))
+			}
+			if references > 0 {
+				prepared, prepareErr := service.files.PrepareScript(results[index].Path)
+				if prepareErr != nil {
+					return nil, errors.Join(prepareErr, service.files.RollbackUploadBatch(results))
+				}
+				results[index].ScriptSHA256 = prepared.Digest
+			}
+		}
+	}
+	if service.db == nil {
+		return results, nil
 	}
 	transaction, err := service.db.BeginTx(ctx, nil)
 	if err == nil {
@@ -491,6 +520,19 @@ func (service *brokerHostFilesService) UploadBatch(ctx context.Context, manifest
 			if err != nil {
 				break
 			}
+		}
+		for index := range results {
+			if err != nil || results[index].ScriptSHA256 == "" {
+				continue
+			}
+			updated, updateErr := transaction.ExecContext(ctx, `UPDATE quick_runs
+				SET script_sha256 = ?, revision = revision + 1, updated_at = ?
+				WHERE script_path_key = ?`, results[index].ScriptSHA256, time.Now().UTC().Unix(), hostfiles.ComparisonKey(results[index].Path))
+			if updateErr != nil {
+				err = updateErr
+				break
+			}
+			results[index].QuickRunsSynchronized, _ = updated.RowsAffected()
 		}
 	}
 	if err == nil {
@@ -548,6 +590,12 @@ func (service *brokerHostFilesService) AppendText(_ context.Context, path, recor
 	service.mutationMu.Lock()
 	defer service.mutationMu.Unlock()
 	return service.files.AppendText(path, record)
+}
+
+func (service *brokerHostFilesService) AppendRotatingText(_ context.Context, path, record string, maxBytes int64, maxBackups int) error {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	return service.files.AppendRotatingText(path, record, maxBytes, maxBackups)
 }
 
 func (service *brokerHostFilesService) PrepareAppend(_ context.Context, path string) (string, error) {
@@ -709,7 +757,11 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 		same, err = server.hostFiles.SameFilesystem(ctx, payload.Path, payload.Destination)
 		result.SameFilesystem = &same
 	case operationHostFilesAppend:
-		err = server.hostFiles.AppendText(ctx, payload.Path, payload.Record)
+		if payload.Rotate {
+			err = server.hostFiles.AppendRotatingText(ctx, payload.Path, payload.Record, payload.MaxBytes, payload.MaxBackups)
+		} else {
+			err = server.hostFiles.AppendText(ctx, payload.Path, payload.Record)
+		}
 	case operationHostFilesLogOpen:
 		var metadata logstream.Metadata
 		result.Handle, metadata, err = server.hostFiles.OpenLog(ctx, actor.UserID, payload.Path)
@@ -955,7 +1007,7 @@ func validateHostFilesRequest(request wireRequest) error {
 			return errors.New("Host Files prepare request is invalid")
 		}
 	case operationHostFilesAppend:
-		if !isAbsoluteHostFilePath(payload.Path) || payload.Record == "" {
+		if !isAbsoluteHostFilePath(payload.Path) || payload.Record == "" || (payload.Rotate && (payload.MaxBytes <= 0 || payload.MaxBackups <= 0)) || (!payload.Rotate && (payload.MaxBytes != 0 || payload.MaxBackups != 0)) {
 			return errors.New("Host Files append request is invalid")
 		}
 	case operationHostFilesLogHistory, operationHostFilesLogFollow:
@@ -1041,7 +1093,7 @@ func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) ho
 	case operationHostFilesPrepare:
 		return hostFilesWireRequest{Path: payload.Path, DirectoryPrepare: payload.DirectoryPrepare}
 	case operationHostFilesAppend:
-		return hostFilesWireRequest{Path: payload.Path, Record: payload.Record}
+		return hostFilesWireRequest{Path: payload.Path, Record: payload.Record, Rotate: payload.Rotate, MaxBytes: payload.MaxBytes, MaxBackups: payload.MaxBackups}
 	case operationHostFilesLogHistory, operationHostFilesLogFollow:
 		return hostFilesWireRequest{Handle: payload.Handle, Cursor: payload.Cursor}
 	case operationHostFilesLogClose:
@@ -1347,8 +1399,8 @@ func (backend *HostFilesBackend) Upload(ctx context.Context, directory, name str
 	return value.Trashed, err
 }
 
-func (backend *HostFilesBackend) UploadBatch(ctx context.Context, directory string, inputs []hostfiles.UploadBatchInput, replace bool) ([]hostfiles.UploadBatchResult, error) {
-	manifest := hostFilesUploadBatchManifest{Files: make([]hostFilesUploadBatchFile, 0, len(inputs))}
+func (backend *HostFilesBackend) UploadBatch(ctx context.Context, directory string, inputs []hostfiles.UploadBatchInput, replace, synchronizeQuickRuns bool) ([]hostfiles.UploadBatchResult, error) {
+	manifest := hostFilesUploadBatchManifest{Files: make([]hostFilesUploadBatchFile, 0, len(inputs)), SynchronizeQuickRuns: synchronizeQuickRuns}
 	stagedPaths := make([]string, 0, len(inputs))
 	defer func() {
 		for _, path := range stagedPaths {
@@ -1425,6 +1477,11 @@ func (backend *HostFilesBackend) SameFilesystem(ctx context.Context, source, des
 
 func (backend *HostFilesBackend) AppendText(ctx context.Context, path, record string) error {
 	_, err := backend.call(ctx, operationHostFilesAppend, hostFilesWireRequest{Path: path, Record: record})
+	return err
+}
+
+func (backend *HostFilesBackend) AppendRotatingText(ctx context.Context, path, record string, maxBytes int64, maxBackups int) error {
+	_, err := backend.call(ctx, operationHostFilesAppend, hostFilesWireRequest{Path: path, Record: record, Rotate: true, MaxBytes: maxBytes, MaxBackups: maxBackups})
 	return err
 }
 

@@ -216,7 +216,7 @@ func TestOneTimeRunKeepsImmutableSourceSnapshotAndUsesSelectedWorkdir(t *testing
 	}
 	runPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{location + "/source", "<code>" + workdir + "</code>", "View source"} {
+	for _, expected := range []string{location + "/source", location + "/rerun", "<code>" + workdir + "</code>", "View source", "Run again"} {
 		if !bytes.Contains(runPage, []byte(expected)) {
 			t.Fatalf("Run detail is missing %q: %s", expected, runPage)
 		}
@@ -233,6 +233,16 @@ func TestOneTimeRunKeepsImmutableSourceSnapshotAndUsesSelectedWorkdir(t *testing
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK || !bytes.Contains(sourcePage, []byte(source)) {
 		t.Fatalf("source view status=%d body=%s", response.StatusCode, sourcePage)
+	}
+
+	runPageToken := formToken(t, runPage)
+	response, err = client.PostForm(serverURL+location+"/rerun", url.Values{"csrf_token": {runPageToken}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), runPrefix) || response.Header.Get("Location") == location {
+		t.Fatalf("rerun status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 }
 

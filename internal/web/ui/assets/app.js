@@ -4128,6 +4128,12 @@
     const oneLabel = disclosure.querySelector("[data-file-quick-one-label]");
     const manyLabel = disclosure.querySelector("[data-file-quick-many-label]");
 	const status = disclosure.querySelector("[data-file-quick-status]");
+    const drawerHost = root.querySelector("[data-file-quick-edit-drawer]");
+    const drawer = drawerHost?.querySelector(".file-quick-edit-drawer");
+    const editForm = drawerHost?.querySelector("[data-file-quick-edit-form]");
+    const editPath = drawerHost?.querySelector("[data-file-quick-edit-path]");
+    const editLabel = drawerHost?.querySelector("[data-file-quick-edit-label]");
+    const editTechnical = drawerHost?.querySelector("[data-file-quick-edit-technical]");
     if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel || !status) return;
 	const validationController = new AbortController();
 	cleanups.push(() => validationController.abort());
@@ -4136,10 +4142,11 @@
     const isValidPin = pin => {
       if (!pin || typeof pin.path !== "string" || pin.path.length === 0 ||
         typeof pin.label !== "string" || pin.label.length === 0 ||
-        typeof pin.href !== "string" || !pin.href.startsWith("/")) return false;
+        typeof pin.href !== "string" || !pin.href.startsWith("/") || !["directory", "file"].includes(pin.kind)) return false;
       try {
         const target = new URL(pin.href, location.origin);
-        return target.origin === location.origin && target.pathname === "/resources/files" && target.searchParams.get("path") === pin.path;
+        const targetPath = pin.kind === "file" ? target.searchParams.get("focus_path") : target.searchParams.get("path");
+        return target.origin === location.origin && target.pathname === "/resources/files" && targetPath === pin.path;
       } catch {
         return false;
       }
@@ -4147,7 +4154,7 @@
 	const normalizePins = value => {
 	  if (!Array.isArray(value)) return [];
 	  const paths = new Set();
-	  return value.filter(isValidPin).filter(pin => {
+	  return value.map(pin => pin && typeof pin === "object" && !pin.kind ? { ...pin, kind: "directory" } : pin).filter(isValidPin).filter(pin => {
 		if (paths.has(pin.path)) return false;
 		paths.add(pin.path);
 		return true;
@@ -4164,12 +4171,12 @@
 	  status.textContent = "";
 	  status.hidden = true;
 	};
-	const savePin = async (pin, pinned) => {
+	const savePin = async (action, values = {}) => {
 	  const response = await fetch(disclosure.dataset.pinsUrl, {
 		method: "POST",
 		credentials: "same-origin",
 		headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-		body: new URLSearchParams({ csrf_token: disclosure.dataset.csrfToken, path: pin.path, pinned: String(pinned) }),
+		body: new URLSearchParams({ csrf_token: disclosure.dataset.csrfToken, action, ...values }),
 		signal: validationController.signal,
 	  });
 	  if (!response.ok) throw new Error(`Unable to save Quick access (${response.status})`);
@@ -4187,6 +4194,51 @@
       control.dataset.tooltip = label;
       setControlIcon(control.querySelector("span"), pinned ? "pin-off" : "pin");
     };
+    const closeEditor = () => {
+      if (!drawerHost) return;
+      drawerHost.classList.remove("is-open");
+      drawerHost.setAttribute("aria-hidden", "true");
+      document.body.classList.remove("has-file-quick-edit-drawer");
+    };
+    const openEditor = pin => {
+      if (!drawerHost || !drawer || !editPath || !editLabel || !editTechnical) return;
+      editPath.value = pin.path;
+      editLabel.value = pin.label;
+      editTechnical.textContent = pin.path;
+      drawerHost.classList.add("is-open");
+      drawerHost.setAttribute("aria-hidden", "false");
+      document.body.classList.add("has-file-quick-edit-drawer");
+      requestAnimationFrame(() => { drawer.focus(); editLabel.focus(); editLabel.select(); });
+    };
+    drawerHost?.querySelectorAll("[data-file-quick-edit-close]").forEach(control => control.addEventListener("click", closeEditor));
+    drawerHost?.addEventListener("keydown", event => { if (event.key === "Escape") closeEditor(); });
+    editForm?.addEventListener("submit", async event => {
+      event.preventDefault();
+      const submit = editForm.querySelector('[type="submit"]');
+      if (submit) submit.disabled = true;
+      try {
+        await savePin("rename", { path: editPath.value, label: editLabel.value });
+        closeEditor();
+        render();
+      } catch (error) {
+        if (error?.name !== "AbortError") showSaveError();
+      } finally {
+        if (submit) submit.disabled = false;
+      }
+    });
+    let draggedPath = "";
+    const saveOrder = async () => {
+      await savePin("reorder", { order: JSON.stringify(pins.map(pin => pin.path)) });
+      render();
+    };
+    const movePin = async (path, offset) => {
+      const index = pins.findIndex(pin => pin.path === path);
+      const destination = index + offset;
+      if (index < 0 || destination < 0 || destination >= pins.length) return;
+      [pins[index], pins[destination]] = [pins[destination], pins[index]];
+      render();
+      try { await saveOrder(); } catch (error) { if (error?.name !== "AbortError") showSaveError(); }
+    };
     const render = () => {
       count.textContent = String(pins.length);
       countLabel.textContent = pins.length === 1 ? oneLabel.textContent : manyLabel.textContent;
@@ -4196,12 +4248,42 @@
       pins.forEach(pin => {
         const item = document.createElement("li");
         item.className = "file-quick-row";
+        item.draggable = true;
+        item.dataset.fileQuickPath = pin.path;
+
+        const grip = document.createElement("button");
+        grip.className = "file-quick-row__grip icon-button";
+        grip.type = "button";
+        grip.setAttribute("aria-label", pin.label);
+        grip.append(makeIcon("grip-vertical"));
+        grip.addEventListener("keydown", event => {
+          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+          event.preventDefault();
+          movePin(pin.path, event.key === "ArrowUp" ? -1 : 1);
+        });
+        item.addEventListener("dragstart", event => {
+          draggedPath = pin.path;
+          item.classList.add("is-dragging");
+          event.dataTransfer?.setData("text/plain", pin.path);
+        });
+        item.addEventListener("dragover", event => event.preventDefault());
+        item.addEventListener("drop", async event => {
+          event.preventDefault();
+          const source = pins.findIndex(candidate => candidate.path === draggedPath);
+          const destination = pins.findIndex(candidate => candidate.path === pin.path);
+          if (source < 0 || destination < 0 || source === destination) return;
+          const [moved] = pins.splice(source, 1);
+          pins.splice(destination, 0, moved);
+          render();
+          try { await saveOrder(); } catch (error) { if (error?.name !== "AbortError") showSaveError(); }
+        });
+        item.addEventListener("dragend", () => { draggedPath = ""; item.classList.remove("is-dragging"); });
 
         const link = document.createElement("a");
 		link.setAttribute("aria-disabled", "true");
         const icon = document.createElement("span");
         icon.className = "file-quick-row__icon";
-        icon.append(makeIcon("folder"));
+        icon.append(makeIcon(pin.kind === "file" ? "file" : "folder"));
         const copy = document.createElement("span");
         const label = document.createElement("strong");
         label.textContent = pin.label;
@@ -4232,7 +4314,7 @@
 		remove.addEventListener("click", async () => {
 		  remove.disabled = true;
 		  try {
-			await savePin(pin, false);
+			await savePin("unpin", { path: pin.path });
 			render();
 		  } catch (error) {
 			if (error?.name !== "AbortError") showSaveError();
@@ -4240,7 +4322,14 @@
 			remove.disabled = false;
 		  }
         });
-        item.append(link, remove);
+        const edit = document.createElement("button");
+        edit.className = "icon-button";
+        edit.type = "button";
+        edit.setAttribute("aria-label", `${disclosure.dataset.editLabel}: ${pin.label}`);
+        edit.dataset.tooltip = disclosure.dataset.editLabel;
+        edit.append(makeIcon("pencil"));
+        edit.addEventListener("click", () => openEditor(pin));
+        item.append(grip, link, edit, remove);
         list.append(item);
       });
       pinControls.forEach(renderControl);
@@ -4249,11 +4338,10 @@
     pinControls.forEach(control => {
 	  const onToggle = async () => {
         const path = control.dataset.filePinPath;
-		const pin = { path, label: control.dataset.filePinLabel, href: control.dataset.filePinHref };
-		if (!isValidPin(pin)) return;
+		if (!path) return;
 		control.disabled = true;
 		try {
-		  await savePin(pin, !pins.some(candidate => candidate.path === path));
+		  await savePin(pins.some(candidate => candidate.path === path) ? "unpin" : "pin", { path });
 		  render();
 		} catch (error) {
 		  if (error?.name !== "AbortError") showSaveError();
@@ -4275,7 +4363,7 @@
 		let migrated = true;
 		for (const pin of legacyPins) {
 		  if (pins.some(candidate => candidate.path === pin.path)) continue;
-		  try { await savePin(pin, true); } catch (error) {
+		  try { await savePin("pin", { path: pin.path }); } catch (error) {
 			if (error?.name === "AbortError") return;
 			migrated = false;
 		  }
@@ -4294,6 +4382,8 @@
 	  render();
 	};
 	loadPins();
+    const focusedRow = root.querySelector("[data-file-focus]");
+    if (focusedRow) requestAnimationFrame(() => { focusedRow.focus({ preventScroll: true }); focusedRow.scrollIntoView({ block: "center" }); });
   }
 
   function initFileOperation(cleanups) {
@@ -4378,11 +4468,15 @@
   function initQuickRunReordering(root) {
     if (!root?.dataset.quickRunReorderUrl) return () => {};
     const status = root.querySelector("[data-quick-run-reorder-status]");
+    const guidance = root.querySelector("[data-quick-run-reorder-guidance]");
+    const toggle = root.querySelector("[data-quick-run-reorder-toggle]");
     const finish = root.querySelector("[data-quick-run-reorder-finish]");
     const cancel = root.querySelector("[data-quick-run-reorder-cancel]");
-    const initialItems = new Map([...root.querySelectorAll("[data-quick-run-group]")].map(group => [group.dataset.quickRunGroup, [...group.querySelectorAll("[data-quick-run-id]")].map(item => item.dataset.quickRunId)]));
+    let initialItems = new Map([...root.querySelectorAll("[data-quick-run-group]")].map(group => [group.dataset.quickRunGroup, [...group.querySelectorAll("[data-quick-run-id]")].map(item => item.dataset.quickRunId)]));
+    const initiallyCollapsed = new Set([...root.querySelectorAll("[data-quick-run-group].is-collapsed")].map(group => group.dataset.quickRunGroup));
     let dragged;
     let busy = false;
+    let active = root.dataset.quickRunReorderActive === "true";
     const setBusy = value => {
       busy = value;
       if (finish) finish.disabled = value;
@@ -4398,6 +4492,42 @@
         }
       }
     };
+    const setActive = value => {
+      active = value;
+      root.dataset.quickRunReorderActive = String(value);
+      guidance?.toggleAttribute("hidden", !value);
+      toggle?.setAttribute("aria-expanded", String(value));
+      root.querySelectorAll("[data-quick-run-id]").forEach(item => {
+        item.toggleAttribute("data-quick-run-drag-handle", value);
+        if (value) {
+          item.setAttribute("draggable", "true");
+          item.setAttribute("tabindex", "0");
+          item.setAttribute("aria-label", item.dataset.quickRunDragLabel || "");
+        } else {
+          item.removeAttribute("draggable");
+          item.removeAttribute("tabindex");
+          item.removeAttribute("aria-label");
+        }
+      });
+      root.querySelectorAll("[data-quick-run-group]").forEach(group => {
+        const groupToggle = group.querySelector("[data-group-toggle]");
+        const body = group.querySelector("[data-group-body]");
+        if (groupToggle) groupToggle.disabled = value;
+        if (value) {
+          group.classList.remove("is-collapsed");
+          groupToggle?.setAttribute("aria-expanded", "true");
+          if (body) body.hidden = false;
+        } else if (initiallyCollapsed.has(group.dataset.quickRunGroup)) {
+          group.classList.add("is-collapsed");
+          groupToggle?.setAttribute("aria-expanded", "false");
+          if (body) body.hidden = true;
+        }
+      });
+      const url = new URL(window.location.href);
+      if (value) url.searchParams.set("reorder", "1");
+      else url.searchParams.delete("reorder");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    };
     const save = async () => {
       if (busy) return;
       setBusy(true);
@@ -4410,7 +4540,9 @@
         const response = await fetch(root.dataset.quickRunReorderUrl, { method: "POST", body, headers: { Accept: "text/plain" } });
         if (!response.ok) throw new Error(await response.text());
         if (status) status.textContent = root.dataset.reorderSaved || "Order saved";
-        await navigate("/config/quick-runs", true);
+        initialItems = new Map([...root.querySelectorAll("[data-quick-run-group]")].map(group => [group.dataset.quickRunGroup, [...group.querySelectorAll("[data-quick-run-id]")].map(item => item.dataset.quickRunId)]));
+        setBusy(false);
+        setActive(false);
       } catch (_) {
         restoreOrder();
         if (status) status.textContent = root.dataset.reorderFailed || "Order was not saved. The original order was restored.";
@@ -4418,7 +4550,7 @@
       }
     };
     const onKeyDown = event => {
-      if (busy || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      if (!active || busy || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
       const itemHandle = event.target.closest("[data-quick-run-drag-handle]");
       const direction = ["ArrowUp", "ArrowLeft"].includes(event.key) ? -1 : 1;
       const node = itemHandle?.closest("[data-quick-run-id]");
@@ -4431,7 +4563,7 @@
       if (status) status.textContent = "";
     };
     const onDragStart = event => {
-      if (busy) return;
+      if (!active || busy) return;
       const itemHandle = event.target.closest("[data-quick-run-drag-handle]");
       const node = itemHandle?.closest("[data-quick-run-id]");
       if (!node) return;
@@ -4455,12 +4587,27 @@
     };
     const onDrop = event => { if (dragged) { event.preventDefault(); if (status) status.textContent = ""; } };
     const onDragEnd = () => { dragged?.node.classList.remove("is-dragging"); dragged = undefined; };
-    const onCancel = () => { if (!busy) navigate("/config/quick-runs", true); };
+    const onToggle = event => {
+      event.preventDefault();
+      if (busy || active) return;
+      if (status) status.textContent = "";
+      setActive(true);
+      guidance?.querySelector("button")?.focus();
+    };
+    const onCancel = () => {
+      if (busy) return;
+      restoreOrder();
+      if (status) status.textContent = "";
+      setActive(false);
+      toggle?.focus();
+    };
+    setActive(active);
     root.addEventListener("keydown", onKeyDown);
     root.addEventListener("dragstart", onDragStart);
     root.addEventListener("dragover", onDragOver);
     root.addEventListener("drop", onDrop);
     root.addEventListener("dragend", onDragEnd);
+    toggle?.addEventListener("click", onToggle);
     finish?.addEventListener("click", save);
     cancel?.addEventListener("click", onCancel);
     return () => {
@@ -4469,6 +4616,7 @@
       root.removeEventListener("dragover", onDragOver);
       root.removeEventListener("drop", onDrop);
       root.removeEventListener("dragend", onDragEnd);
+      toggle?.removeEventListener("click", onToggle);
       finish?.removeEventListener("click", save);
       cancel?.removeEventListener("click", onCancel);
     };

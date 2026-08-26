@@ -41,9 +41,11 @@ type UploadBatchInput struct {
 }
 
 type UploadBatchResult struct {
-	Name    string
-	Path    string
-	Trashed *Trashed
+	Name                  string
+	Path                  string
+	Trashed               *Trashed
+	QuickRunsSynchronized int64
+	ScriptSHA256          string
 }
 
 type Script struct {

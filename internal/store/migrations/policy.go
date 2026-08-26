@@ -17,10 +17,20 @@ package migrations
 // MFA enrollment deadline; schema 54 adds managed Redis connections; schema
 // 55 adds opt-in custom dashboard tabs without publishing existing panels. A
 // parallel feature line used schemas 55-56 for custom browser tabs and role
-// visibility; schema 57 reconciles both histories into one upgrade path.
+// visibility; schema 57 reconciles both histories into one upgrade path;
+// schema 58 adds per-function External Interface approval queues; schema 59
+// distinguishes file and directory Quick access targets.
 //
 // The explicit current-version guard forces a deliberate policy update when a
 // future schema is introduced instead of silently promising an untested path.
 func Compatible(current, existing int) bool {
-	return existing == current || current == 57 && existing >= 20 && existing <= 56
+	if existing == current {
+		return true
+	}
+	switch current {
+	case 57, 58, 59:
+		return existing >= 20 && existing < current
+	default:
+		return false
+	}
 }

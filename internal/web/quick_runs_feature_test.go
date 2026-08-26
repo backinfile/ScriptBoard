@@ -154,17 +154,17 @@ func TestQuickRunReorderModeUsesDragHandlesWithoutLegacyMoveActions(t *testing.T
 	createQuickRunFromFile(t, client, serverURL, scriptPath, "Deploy backup", groupID)
 
 	page := getQuickRunsPage(t, client, serverURL)
-	for _, expected := range []string{`href="/config/quick-runs?reorder=` + groupID + `"`, `>Reorder</a>`} {
+	for _, expected := range []string{`href="/config/quick-runs?reorder=1"`, `data-quick-run-reorder-toggle`, `>Reorder</a>`} {
 		if !strings.Contains(string(page), expected) {
 			t.Fatalf("normal page missing reorder entry %q: %s", expected, page)
 		}
 	}
-	groupHeader := regexp.MustCompile(`(?s)data-quick-run-group="` + regexp.QuoteMeta(groupID) + `".*?<header class="quick-run-group__header">(.*?)</header>`).FindSubmatch(page)
-	if len(groupHeader) != 2 || strings.Index(string(groupHeader[1]), `quick-run-group__reorder`) > strings.Index(string(groupHeader[1]), `quick-run-group__menu`) {
-		t.Fatalf("group reorder button must appear before the more-actions menu: %s", page)
+	heading := regexp.MustCompile(`(?s)<div class="heading-actions quick-run-heading-actions">(.*?)</div>`).FindSubmatch(page)
+	if len(heading) != 2 || strings.Index(string(heading[1]), `data-quick-run-reorder-toggle`) > strings.Index(string(heading[1]), `/config/quick-runs/groups/new`) {
+		t.Fatalf("global reorder button must appear before create group: %s", page)
 	}
-	if strings.Contains(string(page), `href="/config/quick-runs?reorder=1"`) {
-		t.Fatalf("page still contains the global reorder entry: %s", page)
+	if strings.Contains(string(page), `quick-run-group__reorder`) || strings.Contains(string(page), `data-quick-run-drag-handle`) {
+		t.Fatalf("normal page still exposes per-group reorder controls or active drag handles: %s", page)
 	}
 	for _, removed := range []string{`action="/config/quick-runs/groups/` + groupID + `/move"`, `action="/config/quick-runs/` + quickRunIDForName(t, page, "Deploy") + `/move"`, `name="direction"`} {
 		if strings.Contains(string(page), removed) {
@@ -172,16 +172,19 @@ func TestQuickRunReorderModeUsesDragHandlesWithoutLegacyMoveActions(t *testing.T
 		}
 	}
 
-	response, err := client.Get(serverURL + "/config/quick-runs?reorder=" + url.QueryEscape(groupID))
+	response, err := client.Get(serverURL + "/config/quick-runs?reorder=1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	reorderPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`data-quick-run-reorder-url="/config/quick-runs/reorder"`, `data-quick-run-active-reorder`, `data-quick-run-drag-handle`, `data-quick-run-reorder-finish`, `aria-live="polite"`, `class="action-menu"`, `class="button button--compact qr__run"`} {
+	for _, expected := range []string{`data-quick-run-reorder-url="/config/quick-runs/reorder"`, `data-quick-run-reorder-active="true"`, `data-quick-run-drag-handle`, `data-quick-run-reorder-finish`, `aria-live="polite"`, `class="action-menu"`, `class="button button--compact qr__run"`} {
 		if !strings.Contains(string(reorderPage), expected) {
 			t.Fatalf("reorder page missing %q: %s", expected, reorderPage)
 		}
+	}
+	if count := strings.Count(string(reorderPage), `data-quick-run-reorder-guidance`); count != 1 {
+		t.Fatalf("reorder page guidance count=%d, want one global guidance block: %s", count, reorderPage)
 	}
 	for _, removed := range []string{`data-quick-run-group-drag-handle`, `class="quick-run-reorder-handle`} {
 		if strings.Contains(string(reorderPage), removed) {
@@ -368,6 +371,10 @@ func TestAdminCanCreateQuickRunInAGroupFromHostFile(t *testing.T) {
 	_ = detailResponse.Body.Close()
 	if !bytes.Contains(detail, []byte("Deployment / Grouped deploy")) || !bytes.Contains(detail, []byte("Back to Quick Runs")) || !bytes.Contains(detail, []byte(`href="/config/quick-runs"`)) {
 		t.Fatalf("Quick Run detail is missing its group source or return link: %s", detail)
+	}
+	if !bytes.Contains(detail, []byte(`<h1>Grouped deploy</h1>`)) || !bytes.Contains(detail, []byte(`action="/config/quick-runs/`+quickRunID+`/start"`)) ||
+		!bytes.Contains(detail, []byte(`data-run-rerun`)) || bytes.Contains(detail, []byte("save-quick-run")) {
+		t.Fatalf("Quick Run detail title or actions are incorrect: %s", detail)
 	}
 }
 

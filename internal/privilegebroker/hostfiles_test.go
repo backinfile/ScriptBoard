@@ -3,8 +3,10 @@ package privilegebroker
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -310,7 +312,7 @@ func TestHostFilesBatchUploadCrossesBrokerAsOneOperation(t *testing.T) {
 	results, err := backend.UploadBatch(ctx, hostRoot, []hostfiles.UploadBatchInput{
 		{Name: "first.txt", Source: strings.NewReader("first"), MaxBytes: 1024, StoredName: "first-old"},
 		{Name: "second.txt", Source: strings.NewReader("second"), MaxBytes: 1024, StoredName: "second-old"},
-	}, false)
+	}, false, false)
 	if err != nil || len(results) != 2 {
 		t.Fatalf("batch results=%+v err=%v", results, err)
 	}
@@ -323,6 +325,56 @@ func TestHostFilesBatchUploadCrossesBrokerAsOneOperation(t *testing.T) {
 	entries, err := os.ReadDir(stagingRoot)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("staging entries=%d error=%v", len(entries), err)
+	}
+}
+
+func TestHostFilesBatchUploadSynchronizesQuickRunsInsideBrokerTransaction(t *testing.T) {
+	root := t.TempDir()
+	hostRoot, stagingRoot := filepath.Join(root, "host"), filepath.Join(root, "exchange")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(hostRoot, "deploy.cmd")
+	original, replacement := []byte("@echo off\r\necho old\r\n"), []byte("@echo off\r\necho new\r\n")
+	if err := os.WriteFile(scriptPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{Topology: fixtureHostFilesTopology{root: hostRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database := openBrokerDatabase(t)
+	for _, statement := range []string{
+		`CREATE TABLE trash_entries (id TEXT PRIMARY KEY, original_path TEXT, original_path_key TEXT, stored_path TEXT, stored_path_key TEXT, deleted_at INTEGER, size INTEGER, is_directory INTEGER)`,
+		`CREATE TABLE quick_runs (id TEXT PRIMARY KEY, script_path_key TEXT, script_sha256 TEXT, revision INTEGER, updated_at INTEGER)`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	originalDigest := fmt.Sprintf("%x", sha256.Sum256(original))
+	if _, err := database.Exec(`INSERT INTO quick_runs VALUES ('broker-quick', ?, ?, 6, 1)`, hostfiles.ComparisonKey(scriptPath), originalDigest); err != nil {
+		t.Fatal(err)
+	}
+	service := newBrokerHostFilesService(manager, stagingRoot, nil, context.Background(), database)
+	backend, closeServer := hostFilesTestBackend(t, service)
+	defer closeServer()
+	backend.stagingRoot = stagingRoot
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "host-files-batch-sync-test"})
+	results, err := backend.UploadBatch(ctx, hostRoot, []hostfiles.UploadBatchInput{{
+		Name: "deploy.cmd", Source: bytes.NewReader(replacement), MaxBytes: 1024, StoredName: "broker-quick-old",
+	}}, true, true)
+	if err != nil || len(results) != 1 || results[0].QuickRunsSynchronized != 1 {
+		t.Fatalf("batch synchronization results=%+v err=%v", results, err)
+	}
+	var digest string
+	var revision int64
+	if err := database.QueryRow(`SELECT script_sha256, revision FROM quick_runs WHERE id = 'broker-quick'`).Scan(&digest, &revision); err != nil {
+		t.Fatal(err)
+	}
+	wantDigest := fmt.Sprintf("%x", sha256.Sum256(replacement))
+	if digest != wantDigest || revision != 7 || results[0].ScriptSHA256 != wantDigest {
+		t.Fatalf("broker-synchronized Quick Run digest=%q revision=%d result=%+v", digest, revision, results[0])
 	}
 }
 

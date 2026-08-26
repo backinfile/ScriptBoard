@@ -209,7 +209,7 @@ func TestExternalKeyRevocationDuringSignedBodyStagingPreventsAction(t *testing.T
 	if _, err := writer.Write(body[:8]); err != nil {
 		t.Fatal(err)
 	}
-	stagingDirectory := filepath.Join(stateRoot, "inbox", "external-bodies")
+	stagingDirectory := filepath.Join(stateRoot, "external-requests", "signed-bodies")
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		entries, readErr := os.ReadDir(stagingDirectory)
