@@ -538,6 +538,7 @@ func (a *App) updateCustomDashboardCard(response http.ResponseWriter, request *h
 func customDashboardCardInput(request *http.Request, preserveRegistryPassword bool) (customdashboard.CardInput, error) {
 	_ = request.ParseForm()
 	refresh, _ := strconv.Atoi(request.FormValue("refresh_seconds"))
+	preservePassword := false
 	headers := map[string]string{}
 	for _, line := range strings.Split(request.FormValue("headers"), "\n") {
 		name, value, ok := strings.Cut(line, ":")
@@ -554,16 +555,20 @@ func customDashboardCardInput(request *http.Request, preserveRegistryPassword bo
 		}
 		config = encoded
 	} else if cardType == customdashboard.CardRegistry {
-		if request.FormValue("registry_auth_mode") == "basic" && strings.TrimSpace(request.FormValue("registry_username")) == "" {
+		authMode := request.FormValue("registry_auth_mode")
+		password := request.FormValue("registry_password")
+		if authMode == "basic" && strings.TrimSpace(request.FormValue("registry_username")) == "" {
 			return customdashboard.CardInput{}, errors.New("用户名不能为空")
 		}
-		if request.FormValue("registry_auth_mode") == "basic" && !preserveRegistryPassword && request.FormValue("registry_password") == "" {
+		if authMode == "basic" && !preserveRegistryPassword && password == "" {
 			return customdashboard.CardInput{}, errors.New("密码或访问令牌不能为空")
 		}
+		// 匿名 Registry 没有可保留的凭据；只有已有的 basic 卡片才能复用空密码。
+		preservePassword = authMode == "basic" && preserveRegistryPassword && password == ""
 		images := strings.FieldsFunc(request.FormValue("registry_images"), func(character rune) bool { return character == '\n' || character == '\r' || character == ',' })
 		encoded, err := json.Marshal(registrymonitor.Config{
 			Endpoint: request.FormValue("registry_endpoint"), Images: images,
-			AuthMode: request.FormValue("registry_auth_mode"), Username: request.FormValue("registry_username"),
+			AuthMode: authMode, Username: request.FormValue("registry_username"),
 		})
 		if err != nil {
 			return customdashboard.CardInput{}, err
@@ -580,7 +585,7 @@ func customDashboardCardInput(request *http.Request, preserveRegistryPassword bo
 		}
 		config = encoded
 	}
-	return customdashboard.CardInput{Name: request.FormValue("name"), Type: cardType, SourceURL: request.FormValue("source_url"), Headers: headers, ValuePath: request.FormValue("value_path"), SecondaryPath: request.FormValue("secondary_path"), Config: config, RefreshSeconds: refresh, RegistryPassword: request.FormValue("registry_password"), PreserveRegistryPassword: preserveRegistryPassword && request.FormValue("registry_password") == ""}, nil
+	return customdashboard.CardInput{Name: request.FormValue("name"), Type: cardType, SourceURL: request.FormValue("source_url"), Headers: headers, ValuePath: request.FormValue("value_path"), SecondaryPath: request.FormValue("secondary_path"), Config: config, RefreshSeconds: refresh, RegistryPassword: request.FormValue("registry_password"), PreserveRegistryPassword: preservePassword}, nil
 }
 
 func formatDashboardValue(value any) string {

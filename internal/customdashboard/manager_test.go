@@ -172,6 +172,64 @@ func TestRegistryCardTreatsEmptyWildcardCatalogAsSuccessful(t *testing.T) {
 	}
 }
 
+func TestAnonymousRegistryCardEditTestDoesNotPreserveMissingCredential(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v2/team/api/tags/list" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"tags":["1.0.0"]}`))
+	}))
+	defer registry.Close()
+
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "镜像", Slug: "anonymous-registry"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, _ := json.Marshal(map[string]any{
+		"endpoint": registry.URL,
+		"images":   []string{"team/api"},
+		"authMode": "anonymous",
+	})
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "公开镜像", Type: CardRegistry, Config: config})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.CredentialConfigured {
+		t.Fatal("anonymous Registry card must not report a configured credential")
+	}
+
+	result, err := manager.TestCard(ctx, CardInput{
+		Name: card.Name, Type: CardRegistry, Config: config, PreserveRegistryPassword: true,
+	}, card.ID)
+	if err != nil || !result.OK || result.Diagnostic.Code != DiagnosticOK {
+		t.Fatalf("anonymous edit test tried to preserve a missing credential: result=%#v err=%v", result, err)
+	}
+}
+
+func TestRegistryCardTestReportsMissingSavedCredentialAsAuth(t *testing.T) {
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "镜像", Slug: "missing-registry-credential"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := json.RawMessage(`{"endpoint":"http://registry.lan:5000","images":["team/api"],"authMode":"basic","username":"robot"}`)
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "私有镜像", Type: CardRegistry, Config: config})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := manager.TestCard(ctx, CardInput{
+		Name: card.Name, Type: CardRegistry, Config: config, PreserveRegistryPassword: true,
+	}, card.ID)
+	if err != nil || result.OK || result.Diagnostic.Code != DiagnosticRegistryAuth || result.Diagnostic.Stage != "registry_auth" {
+		t.Fatalf("missing saved credential was not reported as Registry auth: result=%#v err=%v", result, err)
+	}
+}
+
 func TestRegistryCardImportedWithoutCredentialRequiresOneWhenEdited(t *testing.T) {
 	manager := testManager(t)
 	ctx := context.Background()
