@@ -756,6 +756,7 @@ var webMessages = map[string]localizedMessage{
 	"fleet.all_nodes":                               {"所有机器", "All machines"},
 	"fleet.local_node":                              {"本机", "Local node"},
 	"fleet.add_node":                                {"添加机器", "Add machine"},
+	"fleet.open_remote":                             {"打开远程 ScriptBoard", "Open remote ScriptBoard"},
 	"fleet.edit_node":                               {"编辑机器连接", "Edit machine connection"},
 	"fleet.edit_node_description":                   {"修改名称或 ScriptBoard 地址；访问令牌留空时保留现有令牌，保存前会验证连接。", "Update the name or ScriptBoard address. Leave the access token blank to keep it; the connection is verified before saving."},
 	"fleet.add_node_hint":                           {"连接另一台已安装 ScriptBoard 的机器", "Connect another machine running ScriptBoard"},

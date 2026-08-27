@@ -120,10 +120,13 @@ func TestScriptBoardInstancesShareReadOnlyStatusWithFleetOverview(t *testing.T) 
 	peerDetail, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	peerID := string(peerMatches[1][1])
-	for _, expected := range []string{"Edit", `data-overview-node-edit`, `data-overview-tab="summary"`, `data-metric-card="cpu"`, "ScriptBoard service", `data-overview-drawer`, `data-overview-node-danger`, `action="/monitor/nodes/` + peerID + `/delete"`} {
+	for _, expected := range []string{"Edit", `data-overview-node-edit`, `data-overview-node-open`, `href="` + remoteURL + `" target="_blank" rel="noopener noreferrer"`, `aria-label="Open remote ScriptBoard"`, `data-overview-tab="summary"`, `data-metric-card="cpu"`, "ScriptBoard service", `data-overview-drawer`, `data-overview-node-danger`, `action="/monitor/nodes/` + peerID + `/delete"`} {
 		if !strings.Contains(string(peerDetail), expected) {
 			t.Fatalf("peer detail missing %q: %s", expected, peerDetail)
 		}
+	}
+	if openIndex, editIndex := strings.Index(string(peerDetail), `data-overview-node-open`), strings.Index(string(peerDetail), `data-overview-node-edit`); openIndex < 0 || editIndex < 0 || openIndex > editIndex {
+		t.Fatalf("remote ScriptBoard action must appear before edit: %s", peerDetail)
 	}
 	for _, forbidden := range []string{`tab=details`, `data-overview-range`, `data-metric-chart`, `data-duplex-chart`, `data-active-runs>`, `data-host-detail`, token} {
 		if strings.Contains(string(peerDetail), forbidden) {

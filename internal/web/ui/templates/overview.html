@@ -53,7 +53,7 @@
       <h1>{{t .Locale "overview.title"}}</h1>
       <p class="sub">{{.Facts.Platform}} {{.Facts.PlatformVersion}} · {{.Facts.Architecture}} · {{t .Locale "overview.host_uptime"}} {{localDuration .Locale .HostUptime}}</p>
     </div>
-    {{if and .CanManage .SelectedPeer}}<a class="button" href="/monitor/nodes/{{urlquery .SelectedPeer.ID}}/edit" data-overview-node-edit><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "common.edit"}}</a>{{end}}
+    {{if .SelectedPeer}}<div class="heading-actions"><a class="icon-button" href="{{.SelectedPeer.Endpoint}}" target="_blank" rel="noopener noreferrer" data-native data-overview-node-open aria-label="{{t .Locale "fleet.open_remote"}}" title="{{t .Locale "fleet.open_remote"}}"><span data-lucide="external-link" aria-hidden="true"></span></a>{{if .CanManage}}<a class="button" href="/monitor/nodes/{{urlquery .SelectedPeer.ID}}/edit" data-overview-node-edit><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "common.edit"}}</a>{{end}}</div>{{end}}
   </header>
 
   {{if .LocalDetail}}<nav class="overview-tabs mtabs" aria-label="{{t .Locale "overview.tabs"}}">
