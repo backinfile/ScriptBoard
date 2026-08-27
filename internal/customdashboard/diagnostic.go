@@ -163,7 +163,13 @@ func (m *Manager) runRegistryRequest(ctx context.Context, input CardInput, exist
 	var config registrymonitor.Config
 	_ = json.Unmarshal(input.Config, &config)
 	result := TestResult{Diagnostic: RequestDiagnostic{Code: DiagnosticOK, Stage: "complete", Summary: "请求成功", URL: redactRequestURL(config.Endpoint), AttemptedAt: m.now().UTC()}}
-	images, err := m.registry.Test(ctx, existingCardID, config, input.RegistryPassword, input.PreserveRegistryPassword && input.RegistryPassword == "")
+	preserveCredential := input.PreserveRegistryPassword && input.RegistryPassword == ""
+	testCardID := ""
+	// 修复匿名或新凭据测试携带现有卡片 ID 后被 Broker 协议拒绝：只有复用已保存凭据时才绑定卡片。
+	if preserveCredential {
+		testCardID = existingCardID
+	}
+	images, err := m.registry.Test(ctx, testCardID, config, input.RegistryPassword, preserveCredential)
 	if err != nil {
 		if errors.Is(err, registryconnection.ErrNotFound) || errors.Is(err, registryconnection.ErrInvalidConnection) {
 			return finishRequestFailure(result, started, "registry_auth", DiagnosticRegistryAuth, "Registry 凭据不可用，请重新输入密码或 Token", err), err

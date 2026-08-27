@@ -172,6 +172,42 @@ func TestRegistryCardTreatsEmptyWildcardCatalogAsSuccessful(t *testing.T) {
 	}
 }
 
+func TestRegistryCardOmitsEmptyWildcardRepositoriesWithoutTurningRed(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v2/_catalog":
+			_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{"team/empty", "team/api"}})
+		case "/v2/team/empty/tags/list":
+			_, _ = response.Write([]byte(`{"tags":null}`))
+		case "/v2/team/api/tags/list":
+			_, _ = response.Write([]byte(`{"tags":["0.0.2"]}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer registry.Close()
+
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "镜像", Slug: "mixed-registry"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, _ := json.Marshal(map[string]any{"endpoint": registry.URL, "images": []string{"*"}, "authMode": "anonymous"})
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "全部镜像", Type: CardRegistry, Config: config, RefreshSeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refreshed, err := manager.RefreshCard(ctx, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refreshed.Snapshot.Images) != 1 || refreshed.Snapshot.Images[0].Image != "team/api" || refreshed.Snapshot.Images[0].Tag != "0.0.2" || refreshed.LastError != "" || refreshed.Stale {
+		t.Fatalf("empty repository turned wildcard card red: %#v", refreshed)
+	}
+}
+
 func TestAnonymousRegistryCardEditTestDoesNotPreserveMissingCredential(t *testing.T) {
 	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/v2/team/api/tags/list" {

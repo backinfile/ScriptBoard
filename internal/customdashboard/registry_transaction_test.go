@@ -140,6 +140,29 @@ func TestConcurrentPreserveUpdateCannotResurrectOldPassword(t *testing.T) {
 	}
 }
 
+func TestAnonymousExistingRegistryCardTestOmitsCardID(t *testing.T) {
+	connections := &protocolStrictRegistryConnections{fixtureRegistryConnections: newFixtureRegistryConnections()}
+	manager := testManagerWithRegistry(t, connections)
+	ctx := context.Background()
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "Registry", Slug: "anonymous-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := json.RawMessage(`{"endpoint":"http://registry.example:5000","images":["team/api"],"authMode":"anonymous"}`)
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "Image", Type: CardRegistry, Config: config})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := manager.TestCard(ctx, CardInput{Name: card.Name, Type: CardRegistry, Config: config}, card.ID)
+	if err != nil || !result.OK {
+		t.Fatalf("anonymous existing-card test failed before reaching Registry: result=%#v err=%v", result, err)
+	}
+	if connections.testCardID != "" || connections.testPreserve {
+		t.Fatalf("anonymous test sent card_id=%q preserve=%v", connections.testCardID, connections.testPreserve)
+	}
+}
+
 func testManagerWithRegistry(t *testing.T, connections RegistryConnections) *Manager {
 	t.Helper()
 	database, err := sql.Open("sqlite", "file:"+t.Name()+"?mode=memory&cache=shared")
@@ -167,6 +190,20 @@ type fixtureRegistryConnections struct {
 	commitErr      error
 	acknowledgeErr error
 	commits        int
+}
+
+type protocolStrictRegistryConnections struct {
+	*fixtureRegistryConnections
+	testCardID   string
+	testPreserve bool
+}
+
+func (connections *protocolStrictRegistryConnections) Test(_ context.Context, cardID string, _ registrymonitor.Config, _ string, preserve bool) ([]registrymonitor.ImageResult, error) {
+	connections.testCardID, connections.testPreserve = cardID, preserve
+	if !preserve && cardID != "" {
+		return nil, errors.New("Registry test request is invalid")
+	}
+	return []registrymonitor.ImageResult{{Image: "team/api", Tag: "1.0.0"}}, nil
 }
 
 type fixtureRegistryMutation struct {

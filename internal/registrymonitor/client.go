@@ -161,8 +161,7 @@ func (client *Client) Inspect(ctx context.Context, config Config) ([]ImageResult
 		}
 		result.Tag = latestTag(tags)
 		if result.Tag == "" {
-			result.Error = "仓库没有可用标签"
-			results = append(results, result)
+			// 修复空仓库使整张卡片进入错误状态：无标签仓库不产生可展示的镜像结果。
 			continue
 		}
 		if pushedAt, ok := client.harborPushTime(ctx, config, image, result.Tag); ok {

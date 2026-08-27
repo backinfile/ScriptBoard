@@ -308,6 +308,31 @@ func TestInspectTreatsEmptyCatalogAsSuccessfulEmptyResult(t *testing.T) {
 	}
 }
 
+func TestInspectOmitsRepositoriesWithoutTags(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v2/team/empty/tags/list":
+			_, _ = response.Write([]byte(`{"name":"team/empty","tags":null}`))
+		case "/v2/team/api/tags/list":
+			_, _ = response.Write([]byte(`{"name":"team/api","tags":["0.0.2"]}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer registry.Close()
+
+	results, err := New(registry.Client()).Inspect(context.Background(), Config{
+		Endpoint: registry.URL,
+		Images:   []string{"team/empty", "team/api"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Image != "team/api" || results[0].Tag != "0.0.2" || results[0].Error != "" {
+		t.Fatalf("results=%#v, want only the tagged repository", results)
+	}
+}
+
 func TestInspectRejectsCatalogRedirects(t *testing.T) {
 	redirectedRequests := 0
 	redirectTarget := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
