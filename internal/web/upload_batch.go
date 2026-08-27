@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -78,7 +79,8 @@ func (a *App) uploadBatchFiles(response http.ResponseWriter, request *http.Reque
 		}
 		targetInfo, _, targetErr := a.hostInfo(request.Context(), targetPath)
 		targetExists := targetErr == nil
-		if targetErr != nil && !os.IsNotExist(targetErr) {
+		// Broker-backed Info wraps a missing destination; unwrap it so a new upload target remains valid.
+		if targetErr != nil && !errors.Is(targetErr, os.ErrNotExist) {
 			writeHostFileError(response, "无法检查同名文件", targetErr)
 			return
 		}

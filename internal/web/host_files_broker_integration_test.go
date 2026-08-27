@@ -93,6 +93,48 @@ func TestManagedFilesPageReadsHostThroughBroker(t *testing.T) {
 	}
 }
 
+func TestManagedBatchUploadTreatsBrokerNotFoundAsAvailableDestination(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "broker-host")
+	stagingRoot := filepath.Join(root, "exchange")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	brokerManager, err := hostfiles.Open(hostfiles.Options{Topology: testHostTopology{root: hostRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := privilegebroker.NewBrokerHostFilesService(brokerManager, stagingRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
+		Listener: listener, VerifyPeer: func(net.Conn) error { return nil }, Authorizer: allowHostFilesAuthorizer{},
+		Executor: rejectGenericPrivilegedExecutor{}, HostFiles: service,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Start()
+	t.Cleanup(func() { _ = server.Close() })
+	client := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+	}})
+	httpClient, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(root, "state"), FileTopology: rejectingHostTopology{},
+		HostFilesBackend: privilegebroker.NewHostFilesBackend(client, stagingRoot),
+	})
+	page := getBody(t, httpClient, hostFilesRequestURL(serverURL, hostRoot), http.StatusOK)
+	status, body := postHostUploadBatch(t, httpClient, serverURL, formToken(t, []byte(page)), hostRoot, "skip", map[string]string{"new.txt": "new"})
+	if status != http.StatusOK {
+		t.Fatalf("Broker-backed batch upload status=%d body=%s", status, body)
+	}
+}
+
 func TestQuickCreateTreatsBrokerNotFoundAsAvailableDestination(t *testing.T) {
 	root := t.TempDir()
 	hostRoot := filepath.Join(root, "broker-host")
