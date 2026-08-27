@@ -6033,8 +6033,7 @@
 	  else { ++sqlModeRequest; syncSQLMode(); }
 	};
 	if (sqlForm) {
-	  // SQL results belong to the active connection detail; keep the connection rail and page shell mounted.
-	  sqlForm.removeAttribute("data-native");
+	  // SQL 写模式可能要求再次认证，始终通过异步链路在当前页面显示验证弹窗。
 	  sqlForm.dataset.async = "";
 	  sqlForm.dataset.asyncRefresh = ".database-detail";
 	  syncSQLMode();

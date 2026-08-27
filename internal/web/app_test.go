@@ -972,7 +972,7 @@ func TestInstanceNameSettingsUpdateTheApplicationShell(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`href="/settings/name" aria-current="page"`,
-		`action="/settings/name" data-native`,
+		`action="/settings/name"`,
 		`name="display_name" value="ScriptBoard"`,
 		`maxlength="32"`,
 	} {

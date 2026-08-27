@@ -14,8 +14,42 @@ var (
 	buttonClassPattern     = regexp.MustCompile(`(?i)<(?:a|button)\b[^>]*\bclass="([^"]*)"[^>]*>`)
 	buttonModifierPattern  = regexp.MustCompile(`^button--(?:primary|quiet|danger|compact)$`)
 	nestedHTMLTagPattern   = regexp.MustCompile(`(?s)<[^>]+>`)
+	formTagPattern         = regexp.MustCompile(`(?is)<form\b[^>]*>`)
 	globalButtonRuleMarker = []byte(`.button, button, input[type="submit"]`)
 )
+
+func TestNativePostFormsAreLimitedToNonStepUpTransfers(t *testing.T) {
+	t.Parallel()
+
+	// 原生 POST 只用于无需近期认证的传输操作，避免受保护动作跳转到独立验证页。
+	allowed := []string{
+		`action="/settings/locale"`,
+		`data-file-upload-form`,
+		`action="/monitor/websites/export"`,
+	}
+	templates, err := fs.Glob(webFiles, "ui/templates/*.html")
+	if err != nil {
+		t.Fatalf("list web templates: %v", err)
+	}
+	for _, path := range templates {
+		source, err := webFiles.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		for _, form := range formTagPattern.FindAllString(string(source), -1) {
+			if !strings.Contains(strings.ToLower(form), `method="post"`) || !strings.Contains(form, "data-native") {
+				continue
+			}
+			approved := false
+			for _, marker := range allowed {
+				approved = approved || strings.Contains(form, marker)
+			}
+			if !approved {
+				t.Errorf("%s contains a native POST form that bypasses inline step-up review: %s", path, strings.TrimSpace(form))
+			}
+		}
+	}
+}
 
 func TestWebTemplatesDeclareEveryButtonType(t *testing.T) {
 	t.Parallel()

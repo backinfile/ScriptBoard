@@ -36,6 +36,19 @@ func TestExpiredRecentAuthenticationOffersInlinePasswordChallenge(t *testing.T) 
 	}
 
 	page := getBody(t, client, server.URL+"/settings/name", http.StatusOK)
+	pageHTML := string(page)
+	formStart := strings.Index(pageHTML, `<form class="instance-name-form"`)
+	if formStart < 0 {
+		t.Fatalf("site name form is missing: %s", page)
+	}
+	formEnd := strings.Index(pageHTML[formStart:], `>`)
+	if formEnd < 0 {
+		t.Fatalf("site name form tag is incomplete: %s", page)
+	}
+	// 站点名称修改保持在异步提交链路中，让过期认证通过原页面弹窗完成后自动重试。
+	if formTag := pageHTML[formStart : formStart+formEnd+1]; strings.Contains(formTag, "data-native") {
+		t.Fatalf("site name form bypasses the inline step-up dialog: %s", formTag)
+	}
 	csrfToken := formToken(t, page)
 	form := url.Values{"csrf_token": {csrfToken}, "display_name": {"Inline challenge"}}
 	request, _ := http.NewRequest(http.MethodPost, server.URL+"/settings/name", strings.NewReader(form.Encode()))
