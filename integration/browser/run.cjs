@@ -2391,13 +2391,19 @@ async function assertExternalInterfaces(page, fixture) {
       const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
       return {
         position: getComputedStyle(panel).position,
+        topLayer: panel.matches(":popover-open"),
         opensAbove: panelBounds.bottom < triggerBounds.top,
         insideShellWidth: panelBounds.left >= shellBounds.left && panelBounds.right <= shellBounds.right,
         visible: probe === panel || panel.contains(probe),
       };
     });
-    assert.deepEqual(tableMenuMetrics, {
-      position: "absolute",
+    // New Chromium uses the top-layer popover path; older engines keep the positioned fallback.
+    assert.equal(tableMenuMetrics.position, tableMenuMetrics.topLayer ? "fixed" : "absolute");
+    assert.deepEqual({
+      opensAbove: tableMenuMetrics.opensAbove,
+      insideShellWidth: tableMenuMetrics.insideShellWidth,
+      visible: tableMenuMetrics.visible,
+    }, {
       opensAbove: true,
       insideShellWidth: true,
       visible: true,
