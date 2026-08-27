@@ -1,7 +1,6 @@
 package web_test
 
 import (
-	"database/sql"
 	"errors"
 	"io"
 	"net/http"
@@ -98,11 +97,7 @@ func TestExternalSignedRequestRejectsUnsignedAndReplay(t *testing.T) {
 	if err != nil || strings.Count(string(content), "signed once") != 1 || strings.Contains(string(content), "unsigned") {
 		t.Fatalf("signed action content=%q err=%v", content, err)
 	}
-	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
+	database := openExternalTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 	var rejectedRequests, succeededRequests, rejectedAudits, correlatedAudits int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM external_trigger_requests WHERE entry_name='signed-log' AND result='rejected' AND http_status=401`).Scan(&rejectedRequests); err != nil {
 		t.Fatal(err)
@@ -221,15 +216,11 @@ func TestExternalKeyRevocationDuringSignedBodyStagingPreventsAction(t *testing.T
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Match the application lock-wait policy while the staged request still owns concurrent work.
+	database := openExternalTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 	if _, err := database.Exec(`UPDATE external_trigger_keys SET enabled = 0 WHERE id = ?`, keyID); err != nil {
-		_ = database.Close()
 		t.Fatal(err)
 	}
-	_ = database.Close()
 	if _, err := writer.Write(body[8:]); err != nil {
 		t.Fatal(err)
 	}
