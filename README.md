@@ -20,12 +20,12 @@ ScriptBoard 适合个人服务器、小团队工具机和内部运维主机。�
 - 保存常用任务，并按计划自动运行
 - 查看 CPU、内存、存储、应用和运行历史
 - 查看 Docker、Kubernetes 和网站状态
-- 备份和恢复 MySQL/MariaDB，查看 Redis 数据
+- 在统一数据库工作台中备份和恢复 MySQL/MariaDB，并查看 Redis 数据
 - 管理用户、角色、审计记录和外部调用
 
 <p align="center">
   <img src="./docs/images/readme/files-zh.png" alt="ScriptBoard 文件页面" width="49%">
-  <img src="./docs/images/readme/redis-zh.png" alt="ScriptBoard Redis 页面" width="49%">
+  <img src="./docs/images/readme/redis-zh.png" alt="ScriptBoard 数据库工作台（Redis）" width="49%">
 </p>
 
 界面支持简体中文和美式英语，并适配桌面与移动浏览器。
