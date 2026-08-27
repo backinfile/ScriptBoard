@@ -3,6 +3,7 @@ package auditnotification
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,7 +14,9 @@ import (
 
 func TestPollerBootstrapsWithoutReplayingAndDurablyAdvances(t *testing.T) {
 	root := t.TempDir()
-	db, err := sql.Open("sqlite", "file:poller-test?mode=memory&cache=shared&_pragma=busy_timeout(5000)")
+	// Give repeated test runs distinct shared-memory databases so a delayed SQLite close cannot contaminate the next run.
+	databaseURI := "file:" + filepath.ToSlash(filepath.Join(root, "poller.db")) + "?mode=memory&cache=shared&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", databaseURI)
 	if err != nil {
 		t.Fatal(err)
 	}

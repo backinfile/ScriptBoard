@@ -589,13 +589,13 @@ func replacePrivateState(stateRoot, stageRoot, preservedRoot string) (func() err
 		var rollbackErrors []error
 		for index := len(movedStaged) - 1; index >= 0; index-- {
 			name := movedStaged[index]
-			if err := os.Rename(filepath.Join(stateRoot, name), filepath.Join(stageRoot, name)); err != nil {
+			if err := renamePrivateState(filepath.Join(stateRoot, name), filepath.Join(stageRoot, name)); err != nil {
 				rollbackErrors = append(rollbackErrors, fmt.Errorf("remove restored private state %q: %w", name, err))
 			}
 		}
 		for index := len(movedCurrent) - 1; index >= 0; index-- {
 			name := movedCurrent[index]
-			if err := os.Rename(filepath.Join(preservedRoot, name), filepath.Join(stateRoot, name)); err != nil {
+			if err := renamePrivateState(filepath.Join(preservedRoot, name), filepath.Join(stateRoot, name)); err != nil {
 				rollbackErrors = append(rollbackErrors, fmt.Errorf("restore preserved private state %q: %w", name, err))
 			}
 		}
@@ -615,7 +615,7 @@ func replacePrivateState(stateRoot, stageRoot, preservedRoot string) (func() err
 			_ = rollback()
 			return nil, fmt.Errorf("current private state %q must not be a symbolic link", name)
 		}
-		if err := os.Rename(current, filepath.Join(preservedRoot, name)); err != nil {
+		if err := renamePrivateState(current, filepath.Join(preservedRoot, name)); err != nil {
 			_ = rollback()
 			return nil, fmt.Errorf("preserve current private state %q: %w", name, err)
 		}
@@ -629,7 +629,7 @@ func replacePrivateState(stateRoot, stageRoot, preservedRoot string) (func() err
 			_ = rollback()
 			return nil, fmt.Errorf("inspect staged private state %q: %w", name, err)
 		}
-		if err := os.Rename(staged, filepath.Join(stateRoot, name)); err != nil {
+		if err := renamePrivateState(staged, filepath.Join(stateRoot, name)); err != nil {
 			_ = rollback()
 			return nil, fmt.Errorf("commit restored private state %q: %w", name, err)
 		}
