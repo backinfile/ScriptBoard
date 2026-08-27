@@ -24,7 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"scriptboard/internal/identity"
 	"strconv"
 	"strings"
@@ -3981,35 +3980,6 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 	http.Redirect(response, request, filesURL(destinationParent), http.StatusSeeOther)
 }
 
-func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Request) {
-	if runtime.GOOS != "linux" {
-		http.NotFound(response, request)
-		return
-	}
-	if !validSessionCSRF(request) {
-		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
-		return
-	}
-	path, err := a.hostCanonicalExisting(request.Context(), request.FormValue("path"))
-	if err != nil {
-		writeHostFileError(response, "执行权限目标无效", err)
-		return
-	}
-	release, err := a.acquireFileMutationLease(path)
-	if err != nil {
-		http.Error(response, "条目正在使用中："+err.Error(), http.StatusConflict)
-		return
-	}
-	defer release()
-	if _, err := a.hostToggleOwnerExecute(request.Context(), path); err != nil {
-		writeHostFileError(response, "无法切换所有者执行权限", err)
-		return
-	}
-	a.recordAuditForRequest(request, "toggle_owner_execute", path, "succeeded")
-	parent, _ := hostPathParent(path)
-	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
-}
-
 func (a *App) editTextPage(response http.ResponseWriter, request *http.Request) {
 	relative, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
 	if err != nil {
@@ -4722,12 +4692,12 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	}
 	type fileView struct {
 		hostfiles.Entry
-		Path, BrowseURL, PinURL, DownloadURL, EditURL, PreviewURL, ViewURL, RunURL, QuickRunURL, MoveURL string
-		LogURL                                                                                           string
-		Protection, IconClass                                                                            string
-		Runnable, IsHidden, CanMutate, Focused                                                           bool
-		NameParts                                                                                        []fileNamePart
-		CategoryLabel                                                                                    string
+		Path, BrowseURL, PinURL, DownloadURL, EditURL, PreviewURL, ViewURL, RunURL, QuickRunURL, MoveURL, PermissionsURL string
+		LogURL                                                                                                           string
+		Protection, IconClass                                                                                            string
+		Runnable, IsHidden, CanMutate, Focused                                                                           bool
+		NameParts                                                                                                        []fileNamePart
+		CategoryLabel                                                                                                    string
 	}
 	pageEntries := listing[pagination.Start:pagination.End]
 	views := make([]fileView, 0, pagination.End-pagination.Start)
@@ -4746,6 +4716,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		}
 		if view.CanMutate {
 			view.MoveURL = routeFileURL("/resources/files/move", path)
+			view.PermissionsURL = routeFileURL("/resources/files/permissions", path)
 		}
 		if entry.VolumeType != "" {
 			view.CategoryLabel = webText(locale, "files.volume."+entry.VolumeType)
@@ -4789,33 +4760,32 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	breadcrumbs := buildHostBreadcrumbs(relative, sortField, direction, showHidden)
 	_ = filesTemplate.Execute(response, struct {
-		Entries             []fileView
-		CSRFToken           string
-		CurrentPath         string
-		Query               string
-		SortField           string
-		Direction           string
-		SortSummary         string
-		RootURL             string
-		ClearURL            string
-		SearchURL           string
-		Pagination          paginationView
-		CanToggleExecutable bool
-		CanWrite            bool
-		CanMutateCurrent    bool
-		CanExecute          bool
-		CanManageExecution  bool
-		ParentURL           string
-		Breadcrumbs         []fileBreadcrumbView
-		Locale              webLocale
-		DeferredData        bool
-		ShowHidden          bool
+		Entries            []fileView
+		CSRFToken          string
+		CurrentPath        string
+		Query              string
+		SortField          string
+		Direction          string
+		SortSummary        string
+		RootURL            string
+		ClearURL           string
+		SearchURL          string
+		Pagination         paginationView
+		CanWrite           bool
+		CanMutateCurrent   bool
+		CanExecute         bool
+		CanManageExecution bool
+		ParentURL          string
+		Breadcrumbs        []fileBreadcrumbView
+		Locale             webLocale
+		DeferredData       bool
+		ShowHidden         bool
 	}{
 		Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative,
 		Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
 		RootURL: filesStateURL("", "", sortField, direction, showHidden, 0), ClearURL: filesStateURL(relative, "", sortField, direction, showHidden, 0),
 		SearchURL:  "/resources/files",
-		Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux" && identity.Allows(current.role, identity.PermissionWriteFiles), ParentURL: parentURL,
+		Pagination: pagination, ParentURL: parentURL,
 		CanWrite: identity.Allows(current.role, identity.PermissionWriteFiles), CanMutateCurrent: identity.Allows(current.role, identity.PermissionWriteFiles) && relative != "", CanExecute: identity.Allows(current.role, identity.PermissionExecute),
 		CanManageExecution: identity.Allows(current.role, identity.PermissionManageExecution),
 		Breadcrumbs:        breadcrumbs, Locale: locale, ShowHidden: showHidden,

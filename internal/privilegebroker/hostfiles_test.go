@@ -176,7 +176,8 @@ func TestHostFilesProtocolRejectsGenericAndUnrelatedFields(t *testing.T) {
 func TestHostFilesProtocolRejectsOperationForbiddenFieldsForEveryOperation(t *testing.T) {
 	operations := []string{
 		operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
-		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesToggleExec,
+		operationHostFilesPermissions, operationHostFilesSetPermissions,
+		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir,
 		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
 		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload,
 		operationHostFilesSaveText, operationHostFilesRollback, operationHostFilesRemove, operationHostFilesPrepare,
@@ -194,6 +195,27 @@ func TestHostFilesProtocolRejectsOperationForbiddenFieldsForEveryOperation(t *te
 				t.Fatal("accepted an operation-forbidden field")
 			}
 		})
+	}
+}
+
+func TestHostFilesPermissionProtocolRejectsMixedAndArbitraryRights(t *testing.T) {
+	mode := uint32(0o640)
+	read := hostfiles.WindowsAccessRead
+	arbitrary := uint32(0x80000000)
+	tests := []hostfiles.PermissionChange{
+		{Mode: &mode, Owner: "S-1-5-18"},
+		{Principal: "S-1-5-18", AccessMask: new(uint32)},
+		{Principal: "S-1-5-18", AccessMask: &arbitrary},
+		{AccessMask: &read},
+	}
+	for _, change := range tests {
+		request := wireRequest{
+			Operation: operationHostFilesSetPermissions, SessionToken: strings.Repeat("s", 32),
+			HostFiles: &hostFilesWireRequest{Path: filepath.Join(t.TempDir(), "entry"), Permissions: &change},
+		}
+		if err := validateHostFilesRequest(request); err == nil {
+			t.Fatalf("accepted invalid permission change: %+v", change)
+		}
 	}
 }
 

@@ -100,11 +100,18 @@ func (a *App) hostCreateDirectory(ctx context.Context, directory, name string) e
 	return a.files.CreateDirectory(directory, name)
 }
 
-func (a *App) hostToggleOwnerExecute(ctx context.Context, path string) (bool, error) {
+func (a *App) hostPermissions(ctx context.Context, path string) (hostfiles.Permissions, error) {
 	if a.hostFilesBackend != nil {
-		return a.hostFilesBackend.ToggleOwnerExecute(ctx, path)
+		return a.hostFilesBackend.Permissions(ctx, path)
 	}
-	return a.files.ToggleOwnerExecute(path)
+	return a.files.Permissions(path)
+}
+
+func (a *App) hostSetPermissions(ctx context.Context, path string, change hostfiles.PermissionChange) (hostfiles.Permissions, error) {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.SetPermissions(ctx, path, change)
+	}
+	return a.files.SetPermissions(path, change)
 }
 
 func (a *App) hostMoveToTrash(ctx context.Context, path, storedName string) (hostfiles.Trashed, error) {
