@@ -74,6 +74,24 @@ sudo ./scriptboard-vX.Y.Z-linux-amd64.run
 
 默认情况下，ScriptBoard 仅允许本机访问。如需远程使用，建议通过可信 VPN、零信任网络或 HTTPS 反向代理接入，并限制可访问的用户和网络。
 
+## MCP Agent 接入
+
+ScriptBoard 默认在主服务的 `POST /mcp` 提供 Streamable HTTP MCP，并使用浏览器 OAuth + PKCE 登录，不需要也不接受静态 Token。将支持远程 MCP OAuth 的 Agent 指向：
+
+```text
+http://127.0.0.1:8787/mcp
+```
+
+首次连接会收到 401，Agent 随后发现授权元数据并打开浏览器请求授权。观察员只能读取状态、Quick Run 和 Run 日志；执行员及以上角色可在批准 `scriptboard.execute` 后启动已发布的 Quick Run。MCP 不开放任意文件、源码或系统配置。
+
+可在 YAML 中关闭整组 MCP/OAuth 路由：
+
+```yaml
+mcp_enabled: false
+```
+
+MCP 复用 `listen`、TLS、`allowed_hosts`、`trusted_proxies` 和 `canonical_external_url`。修改 `listen` 使服务监听非回环地址时，MCP 会随主服务一起开放；非回环明文 HTTP 会暴露登录和操作流量，应优先使用 TLS、可信 HTTPS 反向代理或受控专用网络。
+
 ## 常用命令
 
 ```text

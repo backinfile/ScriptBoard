@@ -14,6 +14,9 @@
         <a href="/settings/account/password" data-task-link><span data-lucide="key-round" aria-hidden="true"></span><span><strong>{{t .Locale "account.change_password"}}</strong><small>{{t .Locale "account.change_password_hint"}}</small></span><span data-lucide="chevron-right" aria-hidden="true"></span></a>
 		<a href="/settings/account/mfa" data-task-link><span data-lucide="shield-check" aria-hidden="true"></span><span><strong>{{t .Locale "mfa.title"}}</strong><small>{{if .MFAEnabled}}{{t .Locale "mfa.enabled_hint"}}{{else}}{{t .Locale "mfa.disabled_hint"}}{{end}}</small></span><span data-lucide="chevron-right" aria-hidden="true"></span></a>
       </div></section>
+      <section class="settings-block"><header class="section-heading"><div><p class="section-index">03</p><h3>Agent connections</h3><p>OAuth clients currently authorized to act as this account.</p></div></header>
+        {{if .AgentAuthorizations}}<div class="account-action-list">{{range .AgentAuthorizations}}<div><span data-lucide="bot" aria-hidden="true"></span><span><strong>{{.ClientName}}</strong><small>{{.Scopes}} · {{.ClientID}}</small></span><form method="post" action="/settings/account/agents/{{.ID}}/revoke"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="unlink" aria-hidden="true"></span>Revoke</button></form></div>{{end}}</div>{{else}}<p>No agent connections are authorized.</p>{{end}}
+      </section>
   </section>
 </main>
 </body>

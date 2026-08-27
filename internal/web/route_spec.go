@@ -17,6 +17,7 @@ const (
 	routeAuthPublic   routeAuthMode = "public"
 	routeAuthSession  routeAuthMode = "session"
 	routeAuthExternal routeAuthMode = "external-capability"
+	routeAuthMCP      routeAuthMode = "mcp-oauth"
 )
 
 type routeCSRFPolicy string
@@ -82,6 +83,10 @@ func (mux *declaredRouteMux) External(pattern string, handler http.HandlerFunc) 
 	mux.register(pattern, declaredRouteHandler{auth: routeAuthExternal, maxBody: maximum, handler: handler})
 }
 
+func (mux *declaredRouteMux) MCP(pattern string, handler http.HandlerFunc) {
+	mux.register(pattern, declaredRouteHandler{auth: routeAuthMCP, maxBody: 1 << 20, handler: handler})
+}
+
 func (mux *declaredRouteMux) register(pattern string, declared declaredRouteHandler) {
 	method, path := splitRoutePattern(pattern)
 	csrf := routeCSRFNone
@@ -114,7 +119,7 @@ func enforceRouteRequestPolicy(spec RouteSpec, next http.Handler) http.Handler {
 			request.Body = http.MaxBytesReader(response, request.Body, spec.MaxBodyBytes)
 		}
 		mutating := spec.Method != http.MethodGet && spec.Method != http.MethodHead && spec.Method != http.MethodOptions
-		if mutating && spec.Auth != routeAuthExternal && !validRequestOrigin(request) {
+		if mutating && spec.Auth != routeAuthExternal && spec.Auth != routeAuthMCP && !validRequestOrigin(request) {
 			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 			return
 		}

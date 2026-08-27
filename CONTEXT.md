@@ -8,6 +8,18 @@ ScriptBoard 是面向单机、少量可信用户场景的主机文件与脚本�
 
 ## Language
 
+**OAuth 客户端（OAuth Client）**：
+通过预注册、Client ID Metadata Document 或 Dynamic Client Registration 在当前实例登记的公开 Agent 客户端。客户端只有身份和严格的重定向 URI 元数据，不持有 ScriptBoard 客户端 Secret，也不自动获得 Scope。
+_Avoid_: API Key、服务账号、外部接口密钥
+
+**MCP 授权（MCP Authorization Grant）**：
+某个本地用户对一个 OAuth 客户端批准的 Scope 集合。它受用户当前固定角色、启用状态、`auth_version`、客户端状态和撤销状态持续约束，不是可编辑权限模板。
+_Avoid_: 自定义角色、永久 Token、客户端权限
+
+**MCP Principal**：
+由有效 Access Token 在单次 `/mcp` 请求中解析出的当前用户、客户端、固定角色、Scope 和授权版本快照。工具列举和调用都必须重新构造并验证 Principal。
+_Avoid_: Agent 用户、服务账号、Token 所有者缓存
+
 **Kubernetes 连接（Kubernetes Connection）**：
 ScriptBoard 可访问的一个 Kubernetes 集群配置，拥有稳定 ID、显示名称、主机 kubeconfig 路径、可选 context 和操作模式。快照、指标、版本历史及有限操作都在连接 ID 范围内隔离；连接不是集群生命周期或跨集群编排对象。
 _Avoid_: 集群资源、集群成员、多集群控制面

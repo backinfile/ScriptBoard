@@ -146,6 +146,24 @@ scriptboard audit verify --config CONFIG_PATH
 
 For remote access, prefer a trusted VPN, zero-trust network, or HTTPS reverse proxy. A non-loopback listener requires an explicit Host allowlist; forwarded headers from untrusted proxies are ignored.
 
+## MCP agent access
+
+ScriptBoard serves Streamable HTTP MCP at `POST /mcp` on the main listener by default. Authentication uses browser OAuth with PKCE; static tokens are neither required nor accepted. Point a remote-OAuth-capable agent at:
+
+```text
+http://127.0.0.1:8787/mcp
+```
+
+The first request receives a 401, after which the agent discovers OAuth metadata and opens a browser for authorization. Viewer can inspect status, Quick Runs, Runs, and redacted logs. Operator and higher roles can approve `scriptboard.execute` and start published Quick Runs. MCP does not expose arbitrary files, source text, or system configuration.
+
+Disable the complete MCP/OAuth route set in YAML with:
+
+```yaml
+mcp_enabled: false
+```
+
+MCP inherits `listen`, TLS, `allowed_hosts`, `trusted_proxies`, and `canonical_external_url`. If the main listener is deliberately moved off loopback, MCP becomes reachable under the same policy. Plain HTTP on a non-loopback listener exposes login and operation traffic; prefer TLS, a trusted HTTPS reverse proxy, or a controlled private network.
+
 ## Updates and backups
 
 Administrators can download and install stable releases under System Settings → Updates. Every package is checked against its signature, platform, size, and SHA-256. ScriptBoard will not switch versions while a script is running.

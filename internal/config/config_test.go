@@ -323,6 +323,28 @@ func TestLoadUpdateCheckConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadMCPEnabledDefaultsTrueAndCanBeDisabled(t *testing.T) {
+	t.Parallel()
+	loaded, err := config.Load([]string{"--config", writeEmptyConfig(t)}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.MCPEnabled {
+		t.Fatal("MCP must be enabled by default")
+	}
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("mcp_enabled: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = config.Load([]string{"--config", configPath}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.MCPEnabled {
+		t.Fatal("mcp_enabled: false was ignored")
+	}
+}
+
 func writeEmptyConfig(t *testing.T) string {
 	t.Helper()
 

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>MCP · ScriptBoard</title></head>
+<body><main class="workspace settings-workspace">
+  <header class="page-heading"><div><p class="page-eyebrow">Agent access</p><h1>MCP OAuth</h1><p>Manage public OAuth clients. Registration never grants a scope.</p></div></header>
+  {{template "settings-navigation" .SettingsNavigation}}
+  <section class="settings-content">
+    <section class="settings-block"><header class="section-heading"><div><p class="section-index">01</p><h2>Pre-register client</h2><p>Creating a client requires recent authentication.</p></div></header>
+      <form method="post" action="/settings/mcp/clients" class="stack"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>Client ID<input name="client_id" maxlength="256" required></label><label>Name<input name="name" maxlength="128" required></label><label>Redirect URIs<textarea name="redirect_uris" rows="4" required></textarea></label><button class="button button--primary" type="submit"><span data-lucide="plus" aria-hidden="true"></span>Create client</button></form>
+    </section>
+    <section class="settings-block"><header class="section-heading"><div><p class="section-index">02</p><h2>Clients</h2></div></header>
+      {{if .Clients}}<div class="account-action-list">{{range .Clients}}<div><span data-lucide="bot" aria-hidden="true"></span><span><strong>{{.Name}}</strong><small>{{.RegistrationType}} · {{.ClientID}}{{if .Revoked}} · revoked{{end}}</small></span>{{if not .Revoked}}<form method="post" action="/settings/mcp/clients/{{.ID}}/revoke"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="ban" aria-hidden="true"></span>Revoke</button></form>{{end}}</div>{{end}}</div>{{else}}<p>No OAuth clients are registered.</p>{{end}}
+    </section>
+    <section class="settings-block"><header class="section-heading"><div><p class="section-index">03</p><h2>Authorizations</h2><p>Current user-to-client grants.</p></div></header>
+      {{if .Authorizations}}<div class="account-action-list">{{range .Authorizations}}<div><span data-lucide="user-round-check" aria-hidden="true"></span><span><strong>{{.Username}} → {{.ClientName}}</strong><small>{{.Scopes}}</small></span><form method="post" action="/settings/mcp/authorizations/{{.ID}}/revoke"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="unlink" aria-hidden="true"></span>Revoke</button></form></div>{{end}}</div>{{else}}<p>No active authorizations.</p>{{end}}
+    </section>
+  </section>
+</main></body></html>
