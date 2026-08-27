@@ -35,6 +35,12 @@ func (m *Manager) AcquireLease(id string, paths ...string) error {
 		return nil
 	}
 	for owner, heldPaths := range m.leases {
+		// Runs that execute the same immutable publication share a read lease.
+		// Each Run retains its own lease so file mutations remain blocked until
+		// the final overlapping Run has finished.
+		if sharedRunLease(owner, heldPaths, id, canonical) {
+			continue
+		}
 		for _, held := range heldPaths {
 			for _, candidate := range canonical {
 				if pathContains(held, candidate) || pathContains(candidate, held) {
@@ -45,6 +51,18 @@ func (m *Manager) AcquireLease(id string, paths ...string) error {
 	}
 	m.leases[id] = canonical
 	return nil
+}
+
+func sharedRunLease(firstID string, firstPaths []string, secondID string, secondPaths []string) bool {
+	if !strings.HasPrefix(firstID, "run:") || !strings.HasPrefix(secondID, "run:") || len(firstPaths) != len(secondPaths) {
+		return false
+	}
+	for index := range firstPaths {
+		if ComparisonKey(firstPaths[index]) != ComparisonKey(secondPaths[index]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) ReleaseLease(id string) {

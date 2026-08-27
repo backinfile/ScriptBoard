@@ -53,6 +53,8 @@ import (
 	"scriptboard/internal/instancelock"
 	"scriptboard/internal/kubeconfigmanager"
 	"scriptboard/internal/logstream"
+	"scriptboard/internal/mcpaccess"
+	"scriptboard/internal/mcpserver"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
@@ -60,6 +62,7 @@ import (
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/redismanager"
 	"scriptboard/internal/registryconnection"
+	"scriptboard/internal/runcontrol"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
 	"scriptboard/internal/secretredaction"
@@ -353,6 +356,7 @@ const (
 	sessionCookieName        = "scriptboard_session"
 	loginCSRFCookieName      = "scriptboard_login_csrf"
 	loginChallengeCookieName = "scriptboard_login_challenge"
+	oauthReturnCookieName     = "scriptboard_oauth_return"
 )
 
 type contextKey string
@@ -378,6 +382,7 @@ type Config struct {
 	TrustedProxies                  []string
 	AllowedHosts                    []string
 	CanonicalExternalURL            string
+	MCPEnabled                      *bool
 	WebsiteMonitorOptions           websitemonitor.Options
 	CustomDashboardClient           *http.Client
 	UpdateCheck                     bool
@@ -509,6 +514,7 @@ type App struct {
 	fileOperationStop     context.CancelFunc
 	fileOperationWG       sync.WaitGroup
 	runs                  *runmanager.Manager
+	runControl            *runcontrol.Controller
 	scheduler             *scheduler.Manager
 	hostStatus            *hoststatus.Monitor
 	fleetStatus           *fleetstatus.Manager
@@ -559,6 +565,12 @@ type App struct {
 	trustedProxies        []*net.IPNet
 	allowedHosts          map[string]struct{}
 	canonicalExternalURL  string
+	mcpEnabled            bool
+	mcpHTTP               *mcpaccess.HTTPBoundary
+	mcpStore              *mcpaccess.Store
+	mcpOAuth              *mcpaccess.OAuthHTTP
+	mcpProtocol           http.Handler
+	mcpIdempotencyMu      sync.Mutex
 	updates               *updatepkg.Manager
 	requestRestart        func() error
 	instanceID            string
@@ -672,11 +684,16 @@ func Open(config Config) (*App, error) {
 			hostSecurityService = hostsecurity.NewManager(hostsecurity.Options{})
 		}
 	}
+	mcpEnabled := true
+	if config.MCPEnabled != nil {
+		mcpEnabled = *config.MCPEnabled
+	}
 	application := &App{
 		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, stateBackups: config.StateBackups, approvalUploads: approvalUploads, instanceLock: instanceLock, mfa: mfaStore,
 		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(), loginChallenges: newLoginChallengeStore(),
 		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
+		mcpEnabled: mcpEnabled, mcpHTTP: mcpaccess.NewHTTPBoundary(config.CanonicalExternalURL),
 		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake:   make(chan struct{}, 1),
@@ -811,6 +828,12 @@ func Open(config Config) (*App, error) {
 		timeoutGrace = 30 * time.Second
 	}
 	application.runs = runmanager.NewWithLauncher(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains, config.RunnerProcessLauncher, application.auditLog)
+	application.runControl = runcontrol.New(runcontrol.Options{DB: db, Runs: application.runs, PrepareScript: application.hostPrepareScript, PrepareDirectory: application.hostPrepareDirectory, LoadVariables: application.loadVariables})
+	application.mcpStore = mcpaccess.NewStore(db, time.Now)
+	application.mcpStore.SetLifecycleObserver(func(event mcpaccess.LifecycleEvent){var username string;var role identity.Role;if event.UserID!=""{_ = db.QueryRow(`SELECT username,role FROM users WHERE id=?`,event.UserID).Scan(&username,&role)};application.recordAuditWithActor(event.Action,event.Target,event.Result,"oauth",event.UserID,username,role)})
+	application.mcpOAuth = &mcpaccess.OAuthHTTP{Store: application.mcpStore, CanonicalExternalURL: config.CanonicalExternalURL, Limiter: mcpaccess.NewLimiter(60, 8)}
+	resource := strings.TrimRight(config.CanonicalExternalURL, "/") + "/mcp"
+	application.mcpProtocol = mcpserver.New(application.mcpStore, application, resource)
 	if application.fileMoves != nil {
 		if err := application.fileMoves.Recover(context.Background()); err != nil {
 			application.runs.Close()
@@ -2893,45 +2916,33 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	quick, err := a.loadQuickRun(request.PathValue("id"))
-	if err != nil {
+	current := request.Context().Value(sessionContextKey).(session)
+	started, err := a.runControl.Start(request.Context(), runcontrol.StartRequest{QuickRunID: request.PathValue("id"), ConfirmOverlap: request.FormValue("confirm_overlap") == "yes", Actor: runcontrol.Actor{UserID: current.userID, Username: current.username, Role: current.role}})
+	if errors.Is(err, runcontrol.ErrNotFound) {
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
-	prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
-	if err != nil || quick.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
+	if errors.Is(err, runcontrol.ErrPublicationChanged) {
 		http.Error(response, "快捷执行脚本已变化，请由管理员重新发布", http.StatusConflict)
 		return
 	}
-	preparedDirectory, err := a.hostPrepareDirectory(request.Context(), prepared.Directory)
-	if err != nil {
+	if errors.Is(err, runcontrol.ErrWorkingDirectory) {
 		http.Error(response, "快捷执行工作目录不可用", http.StatusConflict)
 		return
 	}
-	if a.runs.IsActiveScript(quick.ScriptPath) && request.FormValue("confirm_overlap") != "yes" {
-		current := request.Context().Value(sessionContextKey).(session)
-		response.WriteHeader(http.StatusConflict)
-		_ = overlapTemplate.Execute(response, overlapView{Action: "/config/quick-runs/" + url.PathEscape(quick.ID) + "/start", Script: quick.ScriptPath, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request)})
-		return
-	}
-	variables, err := a.loadVariables()
-	if err != nil {
-		http.Error(response, "无法读取变量", http.StatusInternalServerError)
-		return
-	}
-	current := request.Context().Value(sessionContextKey).(session)
-	id, err := a.runs.Start(runmanager.StartRequest{
-		ScriptPath: quick.ScriptPath, ExpectedDigest: quick.ScriptSHA256, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds,
-		SourceType: "admin/quick-run", SourceName: a.quickRunSourceSnapshot(quick), SourceID: quick.ID, Variables: variables,
-		InitiatorUserID: current.userID, InitiatorUsername: current.username,
-		PreparedScript: &prepared, PreparedDirectory: &preparedDirectory,
-	})
+	if errors.Is(err,runcontrol.ErrVariablesUnavailable){http.Error(response,"无法读取变量",http.StatusInternalServerError);return}
 	if err != nil {
 		http.Error(response, "无法启动快捷执行："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordQuickRunAuditForRequest(request, "start_quick_run", quick.ID, "accepted")
-	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
+	if started.Conflict != "" {
+		current := request.Context().Value(sessionContextKey).(session)
+		response.WriteHeader(http.StatusConflict)
+		_ = overlapTemplate.Execute(response, overlapView{Action: "/config/quick-runs/" + url.PathEscape(request.PathValue("id")) + "/start", Script: started.ScriptPath, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request)})
+		return
+	}
+	a.recordQuickRunAuditForRequest(request, "start_quick_run", request.PathValue("id"), "accepted")
+	http.Redirect(response, request, "/history/runs/"+url.PathEscape(started.RunID), http.StatusSeeOther)
 }
 
 func (a *App) deleteQuickRun(response http.ResponseWriter, request *http.Request) {
@@ -3335,18 +3346,13 @@ func (a *App) stopRun(response http.ResponseWriter, request *http.Request) {
 	}
 	id := request.PathValue("id")
 	current := request.Context().Value(sessionContextKey).(session)
-	if current.role == identity.RoleOperator {
-		run, err := a.runs.GetMetadata(id)
-		if err != nil {
-			http.Error(response, "无法读取运行："+err.Error(), http.StatusNotFound)
-			return
-		}
-		if run.InitiatorUserID == "" || run.InitiatorUserID != current.userID {
-			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
-			return
-		}
+	_, err := a.runControl.Stop(request.Context(), runcontrol.Actor{UserID: current.userID, Username: current.username, Role: current.role}, id)
+	if errors.Is(err,runcontrol.ErrRunNotFound){http.Error(response,"无法读取运行",http.StatusNotFound);return}
+	if errors.Is(err, runcontrol.ErrForbidden) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
 	}
-	if err := a.runs.Stop(id); err != nil {
+	if err != nil {
 		http.Error(response, "无法停止运行："+err.Error(), http.StatusConflict)
 		return
 	}
@@ -5337,7 +5343,14 @@ func (a *App) finishLogin(response http.ResponseWriter, request *http.Request, u
 	auditSession := session{userID: userID, username: username, role: role, authVersion: authVersion, authenticationAssurance: authenticationAssurance, reauthenticatedAt: now.Unix()}
 	auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, auditSession))
 	a.recordAuditWithRequestActor(auditRequest, "login", username, "succeeded", request.RemoteAddr, userID, username, role)
-	completeLogin(response, request, "/monitor")
+	destination := "/monitor"
+	if cookie, err := request.Cookie(oauthReturnCookieName); err == nil {
+		if decoded, decodeErr := base64.RawURLEncoding.DecodeString(cookie.Value); decodeErr == nil && strings.HasPrefix(string(decoded), "/oauth/authorize?") && len(decoded) <= 4096 {
+			destination = string(decoded)
+		}
+	}
+	http.SetCookie(response, &http.Cookie{Name: oauthReturnCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
+	completeLogin(response, request, destination)
 }
 
 func (a *App) pendingLoginChallenge(request *http.Request) (string, loginChallenge, bool) {

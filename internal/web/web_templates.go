@@ -46,6 +46,7 @@ var (
 	fileOperationTemplate             = mustWebTemplate("file-operation")
 	filesTemplate                     = mustWebTemplate("files")
 	mfaTemplate                       = mustWebTemplate("mfa")
+	mcpSettingsTemplate               = mustWebTemplate("mcp-settings")
 	loginTemplate                     = mustWebTemplate("login")
 	notificationsTemplate             = mustWebTemplate("notifications")
 	stateBackupsTemplate              = mustWebTemplate("state-backups")

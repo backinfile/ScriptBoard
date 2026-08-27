@@ -6,10 +6,21 @@ import (
 	"strings"
 
 	"scriptboard/internal/identity"
+	"scriptboard/internal/mcpaccess"
 )
 
 func (a *App) routes() http.Handler {
 	mux := newDeclaredRouteMux()
+	if a.mcpEnabled {
+		mux.Public("GET /.well-known/oauth-protected-resource", a.mcpHTTP.ProtectedResourceMetadata)
+		mux.Public("GET /.well-known/oauth-authorization-server", a.mcpOAuth.AuthorizationServerMetadata)
+		mux.Public("GET /oauth/authorize", a.oauthAuthorize)
+		mux.Handle("POST /oauth/authorize", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.oauthAuthorize)))
+		mux.MCP("POST /oauth/token", a.mcpOAuth.Token)
+		mux.MCP("POST /oauth/register", a.mcpOAuth.Register)
+		mux.MCP("POST /oauth/revoke", a.mcpOAuth.Revoke)
+		mux.MCP("POST /mcp", a.mcpProtocol.ServeHTTP)
+	}
 	mux.Public("GET /assets/app-v2.css", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/css; charset=utf-8", appCSS)
 	})
@@ -191,6 +202,11 @@ func (a *App) routes() http.Handler {
 			http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
 			return
 		}
+		agentAuthorizations, err := a.mcpStore.Authorizations(request.Context(), current.userID)
+		if err != nil {
+			http.Error(response, "Unable to load agent connections", http.StatusInternalServerError)
+			return
+		}
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = accountTemplate.Execute(response, struct {
 			Username, CSRFToken string
@@ -199,14 +215,17 @@ func (a *App) routes() http.Handler {
 			MFAEnabled          bool
 			Locale              webLocale
 			SettingsNavigation  settingsNavigationData
+			AgentAuthorizations []mcpaccess.AuthorizationView
 		}{
 			Username: current.username, CSRFToken: current.csrfToken,
 			CredentialOverride: a.credentialOverride && current.role == identity.RoleAdministrator,
 			CanRename:          current.role == identity.RoleAdministrator, MFAEnabled: mfaStatus.Enabled || len(passkeyUser.Credentials) > 0, Locale: resolveWebLocale(request),
-			SettingsNavigation: newSettingsNavigation(current, resolveWebLocale(request), "account"),
+			SettingsNavigation:  newSettingsNavigation(current, resolveWebLocale(request), "account"),
+			AgentAuthorizations: agentAuthorizations,
 		})
 	})))
 	mux.Handle("POST /settings/account", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.changePassword)))
+	mux.Handle("POST /settings/account/agents/{id}/revoke", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.revokeOwnAgentAuthorization)))
 	mux.Handle("GET /settings/account/username", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.accountUsernameTask)))
 	mux.Handle("POST /settings/account/username", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.changeUsername)))
 	mux.Handle("GET /settings/account/password", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.accountPasswordTask)))
@@ -218,6 +237,10 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/account/passkeys/register/options", a.requireStepUp(identity.PermissionObserve, http.HandlerFunc(a.beginPasskeyRegistration)))
 	mux.Handle("POST /settings/account/passkeys/register/finish", a.requireStepUp(identity.PermissionObserve, http.HandlerFunc(a.finishPasskeyRegistration)))
 	mux.Handle("POST /settings/account/passkeys/{id}/delete", a.requireStepUp(identity.PermissionObserve, http.HandlerFunc(a.deletePasskey)))
+	mux.Handle("GET /settings/mcp", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.mcpSettingsPage)))
+	mux.Handle("POST /settings/mcp/clients", a.requireStepUp(identity.PermissionManageExecution, http.HandlerFunc(a.createMCPClient)))
+	mux.Handle("POST /settings/mcp/clients/{id}/revoke", a.requireStepUp(identity.PermissionManageExecution, http.HandlerFunc(a.revokeMCPClient)))
+	mux.Handle("POST /settings/mcp/authorizations/{id}/revoke", a.requireStepUp(identity.PermissionManageExecution, http.HandlerFunc(a.revokeMCPAuthorization)))
 	mux.Handle("GET /settings/users", a.requirePermission(identity.PermissionManageUsers, http.HandlerFunc(a.usersPage)))
 	mux.Handle("GET /settings/users/create", a.requirePermission(identity.PermissionManageUsers, http.HandlerFunc(a.createUserTask)))
 	mux.Handle("POST /settings/users", a.requireStepUp(identity.PermissionManageUsers, http.HandlerFunc(a.createUser)))

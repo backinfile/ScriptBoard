@@ -32,6 +32,7 @@ type Config struct {
 	TrustedProxies                     []string            `yaml:"trusted_proxies"`
 	AllowedHosts                       []string            `yaml:"allowed_hosts"`
 	CanonicalExternalURL               string              `yaml:"canonical_external_url"`
+	MCPEnabled                         bool                `yaml:"mcp_enabled"`
 	SecurityEventEndpoint              string              `yaml:"security_event_endpoint"`
 	SecurityEventTokenFile             string              `yaml:"security_event_token_file"`
 	SecurityEventAllowPrivate          bool                `yaml:"security_event_allow_private"`
@@ -57,6 +58,7 @@ type yamlConfig struct {
 	TrustedProxies                     []string            `yaml:"trusted_proxies"`
 	AllowedHosts                       []string            `yaml:"allowed_hosts"`
 	CanonicalExternalURL               string              `yaml:"canonical_external_url"`
+	MCPEnabled                         *bool               `yaml:"mcp_enabled"`
 	SecurityEventEndpoint              string              `yaml:"security_event_endpoint"`
 	SecurityEventTokenFile             string              `yaml:"security_event_token_file"`
 	SecurityEventAllowPrivate          *bool               `yaml:"security_event_allow_private"`
@@ -152,6 +154,7 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 		return nil
 	})
 	flags.StringVar(&result.CanonicalExternalURL, "canonical-external-url", result.CanonicalExternalURL, "对外访问的规范 URL")
+	flags.BoolVar(&result.MCPEnabled, "mcp-enabled", result.MCPEnabled, "启用 MCP Streamable HTTP 与 OAuth 路由")
 	flags.StringVar(&result.SecurityEventEndpoint, "security-event-endpoint", result.SecurityEventEndpoint, "HTTPS security event receiver")
 	flags.StringVar(&result.SecurityEventTokenFile, "security-event-token-file", result.SecurityEventTokenFile, "absolute path to the receiver bearer token")
 	flags.BoolVar(&result.SecurityEventAllowPrivate, "security-event-allow-private", result.SecurityEventAllowPrivate, "allow an explicitly configured private receiver address")
@@ -252,6 +255,7 @@ func defaults() Config {
 			TrustedProxies:     nil,
 			RunTimeoutGrace:    30 * time.Second,
 			UpdateCheck:        true,
+			MCPEnabled:         true,
 			UpdateInterval:     6 * time.Hour,
 			ConfigPath:         filepath.Join(base, "config.yaml"),
 		}
@@ -263,6 +267,7 @@ func defaults() Config {
 		TrustedProxies:     nil,
 		RunTimeoutGrace:    30 * time.Second,
 		UpdateCheck:        true,
+		MCPEnabled:         true,
 		UpdateInterval:     6 * time.Hour,
 		ConfigPath:         "/etc/scriptboard/config.yaml",
 	}
@@ -320,6 +325,9 @@ func applyYAML(result *Config, values yamlConfig) {
 	if values.CanonicalExternalURL != "" {
 		result.CanonicalExternalURL = values.CanonicalExternalURL
 	}
+	if values.MCPEnabled != nil {
+		result.MCPEnabled = *values.MCPEnabled
+	}
 	if values.SecurityEventEndpoint != "" {
 		result.SecurityEventEndpoint = strings.TrimSpace(values.SecurityEventEndpoint)
 	}
@@ -353,6 +361,11 @@ func applyYAML(result *Config, values yamlConfig) {
 }
 
 func applyEnvironment(result *Config, getenv func(string) string) {
+	if value := getenv("SCRIPTBOARD_MCP_ENABLED"); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			result.MCPEnabled = enabled
+		}
+	}
 	if value := getenv("SCRIPTBOARD_STATE_ROOT"); value != "" {
 		result.StateRoot = value
 	}

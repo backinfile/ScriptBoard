@@ -12,6 +12,7 @@ import (
 	"scriptboard/internal/customtab"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/fleetstatus"
+	"scriptboard/internal/mcpaccess"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/redismanager"
 	storesqlite "scriptboard/internal/store/sqlite"
@@ -52,6 +53,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		{name: "custom dashboard SQLite", statements: customdashboard.SchemaStatements},
 		{name: "custom tab SQLite", statements: customtab.SchemaStatements},
 		{name: "Kubernetes monitoring SQLite", statements: clusterstatus.SchemaStatements},
+		{name: "MCP OAuth SQLite", statements: mcpaccess.SchemaStatements},
 	}
 	for _, schema := range schemas {
 		for _, statement := range schema.statements {
