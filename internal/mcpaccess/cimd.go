@@ -7,11 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"scriptboard/internal/outboundpolicy"
 )
 
 type cimdDocument struct {
@@ -26,37 +27,16 @@ func (store *Store) resolveCIMD(ctx context.Context, rawURL string) (Client, err
 	if err != nil || target.Scheme != "https" || target.Host == "" || target.User != nil || target.Fragment != "" {
 		return Client{}, ErrInvalidClient
 	}
+	if port := target.Port(); port != "" && port != "443" {
+		return Client{}, ErrInvalidClient
+	}
 	host := target.Hostname()
 	if strings.EqualFold(host, "localhost") {
 		return Client{}, ErrInvalidClient
 	}
-	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil || len(addresses) == 0 {
-		return Client{}, ErrInvalidClient
-	}
-	verified := make([]net.IP, 0, len(addresses))
-	for _, address := range addresses {
-		if !publicIP(address.IP) {
-			return Client{}, ErrInvalidClient
-		}
-		verified = append(verified, address.IP)
-	}
-	port := target.Port()
-	if port == "" {
-		port = "443"
-	}
-	dialer := &net.Dialer{Timeout: 3 * time.Second}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: host}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		var last error
-		for _, ip := range verified {
-			connection, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-			if err == nil {
-				return connection, nil
-			}
-			last = err
-		}
-		return nil, last
-	}}
+	// 修复 CIMD 独立地址分类遗漏保留网段：复用全产品唯一的出站解析与固定拨号策略。
+	transport := outboundpolicy.Policy{Resolver: store.cimdResolver}.Transport()
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("CIMD redirects are disabled") }}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
@@ -92,8 +72,4 @@ func (store *Store) resolveCIMD(ctx context.Context, rawURL string) (Client, err
 		return Client{}, fmt.Errorf("register CIMD: %w", err)
 	}
 	return clientRecord, nil
-}
-
-func publicIP(ip net.IP) bool {
-	return ip != nil && !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsUnspecified() && !ip.IsMulticast() && !ip.IsLinkLocalMulticast() && !ip.IsLinkLocalUnicast()
 }

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"scriptboard/internal/identity"
+	"scriptboard/internal/outboundpolicy"
 )
 
 var (
@@ -54,9 +55,11 @@ type TokenSet struct {
 	ExpiresIn                        int
 }
 type Store struct {
-	db        *sql.DB
-	now       func() time.Time
-	lifecycle func(LifecycleEvent)
+	db           *sql.DB
+	now          func() time.Time
+	random       func(int) (string, error)
+	lifecycle    func(LifecycleEvent)
+	cimdResolver outboundpolicy.Resolver
 }
 type LifecycleEvent struct{ Action, Target, Result, UserID, ClientID string }
 
@@ -71,7 +74,7 @@ func NewStore(db *sql.DB, now func() time.Time) *Store {
 	if now == nil {
 		now = time.Now
 	}
-	return &Store{db: db, now: now}
+	return &Store{db: db, now: now, random: randomValue}
 }
 
 func randomValue(bytes int) (string, error) {
@@ -98,6 +101,16 @@ func parseScopes(value string) map[string]bool {
 		result[scope] = true
 	}
 	return result
+}
+
+func scopesWithin(candidate, current string) bool {
+	allowed := parseScopes(current)
+	for scope := range parseScopes(candidate) {
+		if !allowed[scope] {
+			return false
+		}
+	}
+	return true
 }
 
 func NormalizeScopes(role string, requested []string) ([]string, error) {
@@ -151,7 +164,7 @@ func (store *Store) RegisterClient(ctx context.Context, name string, redirects [
 			return Client{}, ErrInvalidClient
 		}
 	}
-	id, err := randomValue(18)
+	id, err := store.random(18)
 	if err != nil {
 		return Client{}, err
 	}
@@ -179,7 +192,7 @@ func (store *Store) RegisterPredefinedClient(ctx context.Context, clientID, name
 			return Client{}, ErrInvalidClient
 		}
 	}
-	id, err := randomValue(18)
+	id, err := store.random(18)
 	if err != nil {
 		return Client{}, err
 	}
@@ -211,16 +224,26 @@ func (store *Store) Clients(ctx context.Context) ([]ClientView, error) {
 }
 func (store *Store) RevokeClient(ctx context.Context, id string) error {
 	now := store.now().UTC().UnixNano()
-	result, err := store.db.ExecContext(ctx, `UPDATE mcp_oauth_clients SET revoked_at=?,updated_at=? WHERE id=? AND revoked_at IS NULL`, now, now, id)
+	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	changed, _ := result.RowsAffected()
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_clients SET revoked_at=?,updated_at=? WHERE id=? AND revoked_at IS NULL`, now, now, id)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if changed != 1 {
 		return ErrInvalidClient
 	}
-	_, _ = store.db.ExecContext(ctx, `UPDATE mcp_oauth_authorizations SET revoked_at=?,updated_at=? WHERE client_id=(SELECT client_id FROM mcp_oauth_clients WHERE id=?) AND revoked_at IS NULL`, now, now, id)
-	return nil
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_authorizations SET revoked_at=?,updated_at=? WHERE client_id=(SELECT client_id FROM mcp_oauth_clients WHERE id=?) AND revoked_at IS NULL`, now, now, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (store *Store) Client(ctx context.Context, clientID string) (Client, error) {
@@ -278,7 +301,14 @@ func (store *Store) IssueCode(ctx context.Context, userID, clientID, redirectURI
 	}
 	scope := scopesString(scopes)
 	now := store.now().UTC()
-	authorizationID, _ := randomValue(18)
+	authorizationID, err := store.random(18)
+	if err != nil {
+		return "", err
+	}
+	code, err := store.random(32)
+	if err != nil {
+		return "", err
+	}
 	_, err = store.db.ExecContext(ctx, `INSERT INTO mcp_oauth_authorizations(id,user_id,client_id,scopes,auth_version,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,client_id) DO UPDATE SET scopes=excluded.scopes,auth_version=excluded.auth_version,updated_at=excluded.updated_at,revoked_at=NULL`, authorizationID, userID, clientID, scope, authVersion, now.UnixNano(), now.UnixNano())
 	if err != nil {
 		return "", err
@@ -286,7 +316,6 @@ func (store *Store) IssueCode(ctx context.Context, userID, clientID, redirectURI
 	if err := store.db.QueryRowContext(ctx, `SELECT id FROM mcp_oauth_authorizations WHERE user_id=? AND client_id=?`, userID, clientID).Scan(&authorizationID); err != nil {
 		return "", err
 	}
-	code, _ := randomValue(32)
 	_, err = store.db.ExecContext(ctx, `INSERT INTO mcp_oauth_codes(token_hash,authorization_id,client_id,redirect_uri,resource,code_challenge,scopes,expires_at) VALUES(?,?,?,?,?,?,?,?)`, tokenHash(code), authorizationID, clientID, redirectURI, resource, challenge, scope, now.Add(5*time.Minute).UnixNano())
 	if err == nil {
 		store.observe(LifecycleEvent{Action: "mcp_oauth_code_issue", Target: clientID, Result: "succeeded", UserID: userID, ClientID: clientID})
@@ -319,19 +348,21 @@ func (store *Store) ExchangeCode(ctx context.Context, code, clientID, redirectUR
 	}
 	if result, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_codes SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL`, now.UnixNano(), tokenHash(code)); err != nil {
 		return TokenSet{}, err
-	} else if n, _ := result.RowsAffected(); n != 1 {
+	} else if n, rowsErr := result.RowsAffected(); rowsErr != nil {
+		return TokenSet{}, rowsErr
+	} else if n != 1 {
 		return TokenSet{}, ErrInvalidGrant
 	}
-	var userID, role string
+	var userID, role, currentScope string
 	var authVersion, currentVersion int
 	var enabled bool
-	if err := tx.QueryRowContext(ctx, `SELECT a.user_id,a.auth_version,u.auth_version,u.role,u.enabled FROM mcp_oauth_authorizations a JOIN users u ON u.id=a.user_id JOIN mcp_oauth_clients c ON c.client_id=a.client_id WHERE a.id=? AND a.revoked_at IS NULL AND c.revoked_at IS NULL`, authorizationID).Scan(&userID, &authVersion, &currentVersion, &role, &enabled); err != nil || !enabled || authVersion != currentVersion {
+	if err := tx.QueryRowContext(ctx, `SELECT a.user_id,a.auth_version,u.auth_version,u.role,u.enabled,a.scopes FROM mcp_oauth_authorizations a JOIN users u ON u.id=a.user_id JOIN mcp_oauth_clients c ON c.client_id=a.client_id WHERE a.id=? AND a.revoked_at IS NULL AND c.revoked_at IS NULL`, authorizationID).Scan(&userID, &authVersion, &currentVersion, &role, &enabled, &currentScope); err != nil || !enabled || authVersion != currentVersion || !scopesWithin(scope, currentScope) {
 		return TokenSet{}, ErrInvalidGrant
 	}
 	if _, err := NormalizeScopes(role, strings.Fields(scope)); err != nil {
 		return TokenSet{}, ErrInvalidGrant
 	}
-	set, err := issueTokens(ctx, tx, now, authorizationID, userID, clientID, scope, resource, authVersion, "")
+	set, err := store.issueTokens(ctx, tx, now, authorizationID, userID, clientID, scope, resource, authVersion, "")
 	if err != nil {
 		return TokenSet{}, err
 	}
@@ -342,16 +373,29 @@ func (store *Store) ExchangeCode(ctx context.Context, code, clientID, redirectUR
 	return set, nil
 }
 
-func issueTokens(ctx context.Context, tx *sql.Tx, now time.Time, authorizationID, userID, clientID, scope, resource string, authVersion int, familyID string) (TokenSet, error) {
-	if familyID == "" {
-		familyID, _ = randomValue(18)
-		_, err := tx.ExecContext(ctx, `INSERT INTO mcp_oauth_token_families(id,authorization_id,client_id,absolute_expires_at,created_at) VALUES(?,?,?,?,?)`, familyID, authorizationID, clientID, now.Add(30*24*time.Hour).UnixNano(), now.UnixNano())
+func (store *Store) issueTokens(ctx context.Context, tx *sql.Tx, now time.Time, authorizationID, userID, clientID, scope, resource string, authVersion int, familyID string) (TokenSet, error) {
+	var err error
+	newFamily := familyID == ""
+	if newFamily {
+		familyID, err = store.random(18)
 		if err != nil {
 			return TokenSet{}, err
 		}
 	}
-	access, _ := randomValue(32)
-	refresh, _ := randomValue(40)
+	// 修复熵源失败时继续写入空凭据：完整生成 family、Access 和 Refresh 值后才开始持久化。
+	access, err := store.random(32)
+	if err != nil {
+		return TokenSet{}, err
+	}
+	refresh, err := store.random(40)
+	if err != nil {
+		return TokenSet{}, err
+	}
+	if newFamily {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mcp_oauth_token_families(id,authorization_id,client_id,absolute_expires_at,created_at) VALUES(?,?,?,?,?)`, familyID, authorizationID, clientID, now.Add(30*24*time.Hour).UnixNano(), now.UnixNano()); err != nil {
+			return TokenSet{}, err
+		}
+	}
 	accessExpiry := now.Add(10 * time.Minute)
 	refreshExpiry := now.Add(30 * 24 * time.Hour)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO mcp_oauth_access_tokens(token_hash,token_hint,family_id,user_id,client_id,scopes,resource,auth_version,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, tokenHash(access), tokenHint(access), familyID, userID, clientID, scope, resource, authVersion, accessExpiry.UnixNano(), now.UnixNano()); err != nil {
@@ -366,13 +410,14 @@ func issueTokens(ctx context.Context, tx *sql.Tx, now time.Time, authorizationID
 func (store *Store) Authenticate(ctx context.Context, token, resource string) (Principal, error) {
 	now := store.now().UTC().UnixNano()
 	var p Principal
-	var scope, storedResource string
+	var scope, storedResource, currentScope string
 	var tokenAuth, userAuth int
 	var expires int64
 	var tokenRevoked, familyRevoked, authRevoked, clientRevoked sql.NullInt64
 	var enabled bool
-	err := store.db.QueryRowContext(ctx, `SELECT t.user_id,u.username,t.client_id,u.role,t.scopes,t.resource,t.auth_version,u.auth_version,t.expires_at,t.revoked_at,f.revoked_at,a.revoked_at,c.revoked_at,u.enabled FROM mcp_oauth_access_tokens t JOIN mcp_oauth_token_families f ON f.id=t.family_id JOIN mcp_oauth_authorizations a ON a.id=f.authorization_id JOIN mcp_oauth_clients c ON c.client_id=t.client_id JOIN users u ON u.id=t.user_id WHERE t.token_hash=?`, tokenHash(token)).Scan(&p.UserID, &p.Username, &p.ClientID, &p.Role, &scope, &storedResource, &tokenAuth, &userAuth, &expires, &tokenRevoked, &familyRevoked, &authRevoked, &clientRevoked, &enabled)
-	if err != nil || !enabled || now >= expires || resource != storedResource || tokenAuth != userAuth || tokenRevoked.Valid || familyRevoked.Valid || authRevoked.Valid || clientRevoked.Valid {
+	err := store.db.QueryRowContext(ctx, `SELECT t.user_id,u.username,t.client_id,u.role,t.scopes,t.resource,t.auth_version,u.auth_version,t.expires_at,t.revoked_at,f.revoked_at,a.revoked_at,c.revoked_at,u.enabled,a.scopes FROM mcp_oauth_access_tokens t JOIN mcp_oauth_token_families f ON f.id=t.family_id JOIN mcp_oauth_authorizations a ON a.id=f.authorization_id JOIN mcp_oauth_clients c ON c.client_id=t.client_id JOIN users u ON u.id=t.user_id WHERE t.token_hash=?`, tokenHash(token)).Scan(&p.UserID, &p.Username, &p.ClientID, &p.Role, &scope, &storedResource, &tokenAuth, &userAuth, &expires, &tokenRevoked, &familyRevoked, &authRevoked, &clientRevoked, &enabled, &currentScope)
+	// 修复授权已缩小但旧令牌仍保留 Execute：每次认证都以当前 Grant Scope 为上限。
+	if err != nil || !enabled || now >= expires || resource != storedResource || tokenAuth != userAuth || tokenRevoked.Valid || familyRevoked.Valid || authRevoked.Valid || clientRevoked.Valid || !scopesWithin(scope, currentScope) {
 		return Principal{}, ErrInvalidToken
 	}
 	p.AuthVersion = userAuth
@@ -400,16 +445,20 @@ func (store *Store) Refresh(ctx context.Context, refresh, clientID, resource str
 		return TokenSet{}, ErrInvalidGrant
 	}
 	if consumed.Valid {
-		_, _ = tx.ExecContext(ctx, `UPDATE mcp_oauth_token_families SET revoked_at=? WHERE id=?`, now.UnixNano(), familyID)
-		_ = tx.Commit()
+		if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_token_families SET revoked_at=? WHERE id=?`, now.UnixNano(), familyID); err != nil {
+			return TokenSet{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return TokenSet{}, err
+		}
 		store.observe(LifecycleEvent{Action: "mcp_oauth_refresh_reuse", Target: storedClient, Result: "blocked", UserID: userID, ClientID: storedClient})
 		return TokenSet{}, ErrInvalidGrant
 	}
 	if familyRevoked.Valid || now.UnixNano() >= expires || now.UnixNano() >= absolute || storedClient != clientID || storedResource != resource {
 		return TokenSet{}, ErrInvalidGrant
 	}
-	var activeGrant int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM mcp_oauth_token_families f JOIN mcp_oauth_authorizations a ON a.id=f.authorization_id JOIN mcp_oauth_clients c ON c.client_id=f.client_id WHERE f.id=? AND f.revoked_at IS NULL AND a.revoked_at IS NULL AND c.revoked_at IS NULL`, familyID).Scan(&activeGrant); err != nil || activeGrant != 1 {
+	var currentScope string
+	if err := tx.QueryRowContext(ctx, `SELECT a.scopes FROM mcp_oauth_token_families f JOIN mcp_oauth_authorizations a ON a.id=f.authorization_id JOIN mcp_oauth_clients c ON c.client_id=f.client_id WHERE f.id=? AND f.revoked_at IS NULL AND a.revoked_at IS NULL AND c.revoked_at IS NULL`, familyID).Scan(&currentScope); err != nil || !scopesWithin(scope, currentScope) {
 		return TokenSet{}, ErrInvalidGrant
 	}
 	var currentVersion int
@@ -421,14 +470,22 @@ func (store *Store) Refresh(ctx context.Context, refresh, clientID, resource str
 	if _, err := NormalizeScopes(role, strings.Fields(scope)); err != nil {
 		return TokenSet{}, ErrInvalidGrant
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_refresh_tokens SET consumed_at=? WHERE token_hash=?`, now.UnixNano(), tokenHash(refresh)); err != nil {
+	consumedResult, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_refresh_tokens SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL`, now.UnixNano(), tokenHash(refresh))
+	if err != nil {
 		return TokenSet{}, err
+	}
+	consumedRows, err := consumedResult.RowsAffected()
+	if err != nil {
+		return TokenSet{}, err
+	}
+	if consumedRows != 1 {
+		return TokenSet{}, ErrInvalidGrant
 	}
 	var authorizationID string
 	if err := tx.QueryRowContext(ctx, `SELECT authorization_id FROM mcp_oauth_token_families WHERE id=?`, familyID).Scan(&authorizationID); err != nil {
 		return TokenSet{}, err
 	}
-	set, err := issueTokens(ctx, tx, now, authorizationID, userID, clientID, scope, resource, currentVersion, familyID)
+	set, err := store.issueTokens(ctx, tx, now, authorizationID, userID, clientID, scope, resource, currentVersion, familyID)
 	if err != nil {
 		return TokenSet{}, err
 	}
@@ -442,9 +499,19 @@ func (store *Store) Refresh(ctx context.Context, refresh, clientID, resource str
 func (store *Store) Revoke(ctx context.Context, token string) error {
 	now := store.now().UTC().UnixNano()
 	hash := tokenHash(token)
-	_, _ = store.db.ExecContext(ctx, `UPDATE mcp_oauth_access_tokens SET revoked_at=? WHERE token_hash=?`, now, hash)
-	_, _ = store.db.ExecContext(ctx, `UPDATE mcp_oauth_token_families SET revoked_at=? WHERE id IN (SELECT family_id FROM mcp_oauth_refresh_tokens WHERE token_hash=?)`, now, hash)
-	return nil
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// 修复数据库写入失败仍报告撤销成功：访问令牌和刷新令牌族在同一事务中 fail closed。
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_access_tokens SET revoked_at=? WHERE token_hash=?`, now, hash); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_token_families SET revoked_at=? WHERE id IN (SELECT family_id FROM mcp_oauth_refresh_tokens WHERE token_hash=?)`, now, hash); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (store *Store) RecordInvocation(ctx context.Context, p Principal, tool, target, digest, result, requestID string) error {
@@ -472,16 +539,26 @@ func (store *Store) Authorizations(ctx context.Context, userID string) ([]Author
 }
 func (store *Store) RevokeAuthorization(ctx context.Context, userID, id string) error {
 	now := store.now().UTC().UnixNano()
-	result, err := store.db.ExecContext(ctx, `UPDATE mcp_oauth_authorizations SET revoked_at=?,updated_at=? WHERE id=? AND user_id=? AND revoked_at IS NULL`, now, now, id, userID)
+	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	changed, _ := result.RowsAffected()
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_authorizations SET revoked_at=?,updated_at=? WHERE id=? AND user_id=? AND revoked_at IS NULL`, now, now, id, userID)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if changed != 1 {
 		return ErrInvalidGrant
 	}
-	_, _ = store.db.ExecContext(ctx, `UPDATE mcp_oauth_token_families SET revoked_at=? WHERE authorization_id=?`, now, id)
-	return nil
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_token_families SET revoked_at=? WHERE authorization_id=?`, now, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (store *Store) AllAuthorizations(ctx context.Context) ([]AuthorizationView, error) {
@@ -505,16 +582,26 @@ func (store *Store) AllAuthorizations(ctx context.Context) ([]AuthorizationView,
 
 func (store *Store) RevokeAuthorizationByID(ctx context.Context, id string) error {
 	now := store.now().UTC().UnixNano()
-	result, err := store.db.ExecContext(ctx, `UPDATE mcp_oauth_authorizations SET revoked_at=?,updated_at=? WHERE id=? AND revoked_at IS NULL`, now, now, id)
+	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	changed, _ := result.RowsAffected()
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_authorizations SET revoked_at=?,updated_at=? WHERE id=? AND revoked_at IS NULL`, now, now, id)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if changed != 1 {
 		return ErrInvalidGrant
 	}
-	_, _ = store.db.ExecContext(ctx, `UPDATE mcp_oauth_token_families SET revoked_at=? WHERE authorization_id=?`, now, id)
-	return nil
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_token_families SET revoked_at=? WHERE authorization_id=?`, now, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func ParameterDigest(value []byte) string {

@@ -7,19 +7,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
-
-	"golang.org/x/sys/windows/svc"
 
 	"scriptboard/internal/config"
-	"scriptboard/internal/secretredaction"
+	"scriptboard/internal/platform/windowsservice"
 )
 
 func runAsWindowsService(arguments []string) (bool, error) {
-	isService, err := svc.IsWindowsService()
-	if err != nil || !isService {
-		return false, err
-	}
+	return windowsservice.Run(windowsservice.Configuration{
+		Name: "ScriptBoard", Arguments: arguments, Prepare: prepareWindowsService,
+		Run: func(ctx context.Context, arguments []string) error {
+			return serveContext(ctx, serviceConfigArguments(arguments))
+		},
+	})
+}
+
+func prepareWindowsService(arguments []string) {
 	loaded, loadErr := config.Load(serviceConfigArguments(arguments), os.Getenv)
 	if loadErr == nil {
 		logRoot := filepath.Join(loaded.StateRoot, "logs")
@@ -31,7 +33,6 @@ func runAsWindowsService(arguments []string) (bool, error) {
 			}
 		}
 	}
-	return true, svc.Run("ScriptBoard", serviceHandler{arguments: arguments})
 }
 
 func rotateServiceLog(path string, maxBytes int64, generations int) {
@@ -51,42 +52,4 @@ func serviceConfigArguments(arguments []string) []string {
 		return arguments[1:]
 	}
 	return arguments
-}
-
-type serviceHandler struct{ arguments []string }
-
-func (handler serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, statuses chan<- svc.Status) (bool, uint32) {
-	statuses <- svc.Status{State: svc.StartPending}
-	runContext, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- serveContext(runContext, serviceConfigArguments(handler.arguments)) }()
-	statuses <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
-	for {
-		select {
-		case err := <-done:
-			if err != nil {
-				fmt.Fprintln(os.Stderr, secretredaction.String(err.Error()))
-				return true, 1
-			}
-			return false, 0
-		case request := <-requests:
-			switch request.Cmd {
-			case svc.Interrogate:
-				statuses <- request.CurrentStatus
-			case svc.Stop, svc.Shutdown:
-				statuses <- svc.Status{State: svc.StopPending}
-				cancel()
-				select {
-				case err := <-done:
-					if err != nil {
-						return true, 1
-					}
-				case <-time.After(35 * time.Second):
-					return true, 2
-				}
-				return false, 0
-			}
-		}
-	}
 }

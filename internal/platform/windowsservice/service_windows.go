@@ -17,12 +17,22 @@ import (
 
 type RunFunc func(context.Context, []string) error
 
-func Run(name string, arguments []string, run RunFunc) (bool, error) {
+type Configuration struct {
+	Name      string
+	Arguments []string
+	Prepare   func([]string)
+	Run       RunFunc
+}
+
+func Run(configuration Configuration) (bool, error) {
 	isService, err := svc.IsWindowsService()
 	if err != nil || !isService {
 		return false, err
 	}
-	return true, svc.Run(name, handler{name: name, arguments: arguments, run: run})
+	if configuration.Prepare != nil {
+		configuration.Prepare(configuration.Arguments)
+	}
+	return true, svc.Run(configuration.Name, handler{name: configuration.Name, arguments: configuration.Arguments, run: configuration.Run})
 }
 
 type handler struct {

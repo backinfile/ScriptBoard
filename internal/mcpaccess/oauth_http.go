@@ -132,7 +132,10 @@ func (oauth *OAuthHTTP) Revoke(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	_ = oauth.Store.Revoke(r.Context(), r.Form.Get("token"))
+	if err := oauth.Store.Revoke(r.Context(), r.Form.Get("token")); err != nil {
+		oauthError(w, http.StatusInternalServerError, "server_error")
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 }

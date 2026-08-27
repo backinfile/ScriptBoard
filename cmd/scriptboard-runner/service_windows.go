@@ -5,5 +5,5 @@ package main
 import "scriptboard/internal/platform/windowsservice"
 
 func runAsWindowsService(arguments []string) (bool, error) {
-	return windowsservice.Run("ScriptBoardRunner", arguments, runContext)
+	return windowsservice.Run(windowsservice.Configuration{Name: "ScriptBoardRunner", Arguments: arguments, Run: runContext})
 }

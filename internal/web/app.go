@@ -54,6 +54,7 @@ import (
 	"scriptboard/internal/kubeconfigmanager"
 	"scriptboard/internal/logstream"
 	"scriptboard/internal/mcpaccess"
+	"scriptboard/internal/mcpcommand"
 	"scriptboard/internal/mcpserver"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
@@ -570,7 +571,7 @@ type App struct {
 	mcpStore              *mcpaccess.Store
 	mcpOAuth              *mcpaccess.OAuthHTTP
 	mcpProtocol           http.Handler
-	mcpIdempotencyMu      sync.Mutex
+	mcpCommands           *mcpcommand.Ledger
 	updates               *updatepkg.Manager
 	requestRestart        func() error
 	instanceID            string
@@ -830,6 +831,7 @@ func Open(config Config) (*App, error) {
 	application.runs = runmanager.NewWithLauncher(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains, config.RunnerProcessLauncher, application.auditLog)
 	application.runControl = runcontrol.New(runcontrol.Options{DB: db, Runs: application.runs, PrepareScript: application.hostPrepareScript, PrepareDirectory: application.hostPrepareDirectory, LoadVariables: application.loadVariables})
 	application.mcpStore = mcpaccess.NewStore(db, time.Now)
+	application.mcpCommands = mcpcommand.NewLedger(db, time.Now)
 	application.mcpStore.SetLifecycleObserver(func(event mcpaccess.LifecycleEvent){var username string;var role identity.Role;if event.UserID!=""{_ = db.QueryRow(`SELECT username,role FROM users WHERE id=?`,event.UserID).Scan(&username,&role)};application.recordAuditWithActor(event.Action,event.Target,event.Result,"oauth",event.UserID,username,role)})
 	application.mcpOAuth = &mcpaccess.OAuthHTTP{Store: application.mcpStore, CanonicalExternalURL: config.CanonicalExternalURL, Limiter: mcpaccess.NewLimiter(60, 8)}
 	resource := strings.TrimRight(config.CanonicalExternalURL, "/") + "/mcp"
