@@ -1469,6 +1469,7 @@
     if (quickRunReorder) cleanups.push(initQuickRunReordering(quickRunReorder));
     initExternalEntryForm(main, cleanups);
 	initVariableForm(main, cleanups);
+	initFilePermissionsForm(main, cleanups);
 	initCopyControls(main, cleanups);
     const websiteForm = main.querySelector("[data-website-monitor-form]");
     if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
@@ -1484,6 +1485,63 @@
       ? main
       : main.querySelector("[data-website-config-transfer]");
     if (websiteConfigTransfer) cleanups.push(initWebsiteConfigTransfer(websiteConfigTransfer));
+  }
+
+  function initFilePermissionsForm(root = document, cleanups = []) {
+    const form = root.querySelector("[data-file-permissions-form]");
+    if (!form || form.dataset.permissionsReady) return;
+    form.dataset.permissionsReady = "true";
+    const listeners = [];
+    const listen = (node, type, handler) => {
+      if (!node) return;
+      node.addEventListener(type, handler);
+      listeners.push(() => node.removeEventListener(type, handler));
+    };
+
+    if (form.dataset.platform === "linux") {
+      const inputs = [...form.querySelectorAll("[data-permission-bit]")];
+      const octal = form.querySelector("[data-permission-octal]");
+      const symbolic = form.querySelector("[data-permission-symbolic]");
+      const refresh = () => {
+        const mode = inputs.reduce((value, input) => value + (input.checked ? Number(input.dataset.permissionBit) : 0), 0);
+        if (octal) octal.textContent = `0${mode.toString(8).padStart(3, "0")}`;
+        if (symbolic) {
+          const letters = "rwxrwxrwx";
+          const bits = [256, 128, 64, 32, 16, 8, 4, 2, 1];
+          symbolic.textContent = bits.map((bit, index) => mode & bit ? letters[index] : "-").join("");
+        }
+      };
+      inputs.forEach(input => listen(input, "change", refresh));
+      refresh();
+    } else {
+      const editor = form.querySelector("[data-permission-rule-editor]");
+      const principal = form.querySelector("[data-permission-principal]");
+      const rights = Object.fromEntries([...form.querySelectorAll("[data-permission-right]")].map(input => [input.dataset.permissionRight, input]));
+      const remove = form.querySelector("[data-permission-remove]");
+      const selectRule = rule => {
+        form.querySelectorAll("[data-permission-rule]").forEach(item => item.classList.toggle("is-selected", item === rule));
+        if (principal) principal.value = rule.dataset.principal || "";
+        Object.entries(rights).forEach(([name, input]) => { input.checked = rule.dataset[name] === "true"; });
+        if (remove) remove.checked = false;
+        if (editor) editor.open = true;
+        principal?.focus();
+      };
+      form.querySelectorAll("[data-permission-rule]:not(:disabled)").forEach(rule => listen(rule, "click", () => selectRule(rule)));
+      const refreshRights = event => {
+        if (event?.target === rights.full && rights.full.checked) {
+          [rights.modify, rights.read, rights.write, rights.execute].forEach(input => { if (input) input.checked = true; });
+        }
+        if (event?.target === rights.modify && rights.modify.checked) {
+          [rights.read, rights.write, rights.execute].forEach(input => { if (input) input.checked = true; });
+        }
+        const removed = Boolean(remove?.checked);
+        Object.values(rights).forEach(input => { input.disabled = removed; });
+      };
+      Object.values(rights).forEach(input => listen(input, "change", refreshRights));
+      listen(remove, "change", refreshRights);
+      refreshRights();
+    }
+    cleanups.push(() => listeners.forEach(dispose => dispose()));
   }
 
   function initExternalEntryForm(root = document, cleanups = []) {

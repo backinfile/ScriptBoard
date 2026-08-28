@@ -157,6 +157,68 @@ func TestFilesPageOffersAnAbsolutePathMoveTask(t *testing.T) {
 	}
 }
 
+func TestFilesPageOffersPlatformPermissionTasksForFilesAndDirectories(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "host")
+	directoryPath := filepath.Join(hostRoot, "reports")
+	filePath := filepath.Join(hostRoot, "daily.txt")
+	if err := os.MkdirAll(directoryPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte("report"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	for _, path := range []string{directoryPath, filePath} {
+		permissionURL := hostFileHref("/resources/files/permissions", path)
+		if !bytes.Contains(listing, []byte(`href="`+permissionURL+`" data-task-link`)) {
+			t.Fatalf("files page does not offer permission task %q: %s", permissionURL, listing)
+		}
+	}
+
+	permissionURL := hostFileHref("/resources/files/permissions", directoryPath)
+	response, err = client.Get(serverURL + permissionURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK ||
+		!bytes.Contains(task, []byte(`data-task-kind="file-permissions"`)) ||
+		!bytes.Contains(task, []byte(`name="path" value="`+html.EscapeString(directoryPath)+`"`)) ||
+		!bytes.Contains(task, []byte(`data-platform="`+runtime.GOOS+`"`)) {
+		t.Fatalf("permission task status=%d body=%s", response.StatusCode, task)
+	}
+	if runtime.GOOS == "windows" {
+		if !bytes.Contains(task, []byte(`<details class="permission-owner-editor">`)) {
+			t.Fatalf("Windows permission task does not include the owner editor: %s", task)
+		}
+		if bytes.Contains(task, []byte(`<details class="permission-owner-editor" open`)) {
+			t.Fatalf("Windows owner editor must be collapsed by default: %s", task)
+		}
+		for _, expected := range []string{`name="owner"`, `name="principal"`, `name="inheritance_enabled"`} {
+			if !bytes.Contains(task, []byte(expected)) {
+				t.Fatalf("Windows permission task does not contain %q: %s", expected, task)
+			}
+		}
+	} else if runtime.GOOS == "linux" {
+		for _, expected := range []string{`name="owner_read"`, `name="group_write"`, `name="other_execute"`, `name="recursive"`} {
+			if !bytes.Contains(task, []byte(expected)) {
+				t.Fatalf("Linux permission task does not contain %q: %s", expected, task)
+			}
+		}
+	}
+}
+
 func TestFilesPageMovesDirectoryAndExcludesItsTreeFromDestinationPicker(t *testing.T) {
 	t.Parallel()
 

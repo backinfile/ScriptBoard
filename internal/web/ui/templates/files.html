@@ -184,7 +184,7 @@
                   {{if .LogURL}}<a href="{{.LogURL}}"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t $.Locale "logs.follow"}}</a>{{end}}
                   {{if and $.CanWrite .EditURL}}<a href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
                   {{if .DownloadURL}}<a href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t $.Locale "common.download"}}</a>{{end}}
-                  {{if and $.CanToggleExecutable (eq .Kind "regular")}}<form method="post" action="/resources/files/toggle-executable" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="path" value="{{.Path}}"><span data-lucide="file-cog" aria-hidden="true"></span>{{t $.Locale "files.executable"}}</button></form>{{end}}
+                  {{if and $.CanWrite .PermissionsURL}}<a href="{{.PermissionsURL}}" data-task-link><span data-lucide="shield" aria-hidden="true"></span>{{t $.Locale "files.permissions.action"}}</a>{{end}}
                   {{if and $.CanWrite .CanMutate}}<a href="{{.MoveURL}}" data-task-link><span data-lucide="folder-input" aria-hidden="true"></span>{{t $.Locale "files.move"}}</a><form method="post" action="/resources/files/delete" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="path" value="{{.Path}}"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "files.move_to_trash"}}</button></form>{{end}}
                 </div>
               </details>

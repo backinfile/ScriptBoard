@@ -49,34 +49,35 @@ type HostFileInfo struct {
 }
 
 type hostFilesWireRequest struct {
-	Path              string                 `json:"path,omitempty"`
-	Directory         string                 `json:"directory,omitempty"`
-	Name              string                 `json:"name,omitempty"`
-	Destination       string                 `json:"destination,omitempty"`
-	StoredPath        string                 `json:"stored_path,omitempty"`
-	StoredName        string                 `json:"stored_name,omitempty"`
-	CanonicalKind     hostFilesCanonicalKind `json:"canonical_kind,omitempty"`
-	RestoreAvailable  bool                   `json:"restore_available,omitempty"`
-	MaxBytes          int64                  `json:"max_bytes,omitempty"`
-	Offset            int                    `json:"offset,omitempty"`
-	Limit             int                    `json:"limit,omitempty"`
-	ByteOffset        int64                  `json:"byte_offset,omitempty"`
-	ByteLimit         int                    `json:"byte_limit,omitempty"`
-	Handle            string                 `json:"handle,omitempty"`
-	StagingPath       string                 `json:"staging_path,omitempty"`
-	ExpectedDigest    string                 `json:"expected_digest,omitempty"`
-	Replace           bool                   `json:"replace,omitempty"`
-	DirectoryPrepare  bool                   `json:"directory_prepare,omitempty"`
-	Record            string                 `json:"record,omitempty"`
-	Rotate            bool                   `json:"rotate,omitempty"`
-	MaxBackups        int                    `json:"max_backups,omitempty"`
-	Cursor            string                 `json:"cursor,omitempty"`
-	OperationID       string                 `json:"operation_id,omitempty"`
-	ExternalToken     string                 `json:"external_token,omitempty"`
-	ExternalEntryID   string                 `json:"external_entry_id,omitempty"`
-	ExternalEntryName string                 `json:"external_entry_name,omitempty"`
-	ExternalMessage   string                 `json:"external_message,omitempty"`
-	ScheduleID        string                 `json:"schedule_id,omitempty"`
+	Path              string                      `json:"path,omitempty"`
+	Directory         string                      `json:"directory,omitempty"`
+	Name              string                      `json:"name,omitempty"`
+	Destination       string                      `json:"destination,omitempty"`
+	StoredPath        string                      `json:"stored_path,omitempty"`
+	StoredName        string                      `json:"stored_name,omitempty"`
+	CanonicalKind     hostFilesCanonicalKind      `json:"canonical_kind,omitempty"`
+	RestoreAvailable  bool                        `json:"restore_available,omitempty"`
+	MaxBytes          int64                       `json:"max_bytes,omitempty"`
+	Offset            int                         `json:"offset,omitempty"`
+	Limit             int                         `json:"limit,omitempty"`
+	ByteOffset        int64                       `json:"byte_offset,omitempty"`
+	ByteLimit         int                         `json:"byte_limit,omitempty"`
+	Handle            string                      `json:"handle,omitempty"`
+	StagingPath       string                      `json:"staging_path,omitempty"`
+	ExpectedDigest    string                      `json:"expected_digest,omitempty"`
+	Replace           bool                        `json:"replace,omitempty"`
+	DirectoryPrepare  bool                        `json:"directory_prepare,omitempty"`
+	Record            string                      `json:"record,omitempty"`
+	Rotate            bool                        `json:"rotate,omitempty"`
+	MaxBackups        int                         `json:"max_backups,omitempty"`
+	Cursor            string                      `json:"cursor,omitempty"`
+	OperationID       string                      `json:"operation_id,omitempty"`
+	ExternalToken     string                      `json:"external_token,omitempty"`
+	ExternalEntryID   string                      `json:"external_entry_id,omitempty"`
+	ExternalEntryName string                      `json:"external_entry_name,omitempty"`
+	ExternalMessage   string                      `json:"external_message,omitempty"`
+	ScheduleID        string                      `json:"schedule_id,omitempty"`
+	Permissions       *hostfiles.PermissionChange `json:"permissions,omitempty"`
 }
 
 type hostFilesWireResponse struct {
@@ -85,7 +86,6 @@ type hostFilesWireResponse struct {
 	Document       *hostfiles.TextDocument       `json:"document,omitempty"`
 	CanonicalPath  string                        `json:"canonical_path,omitempty"`
 	AvailableName  string                        `json:"available_name,omitempty"`
-	Execute        *bool                         `json:"execute,omitempty"`
 	Trashed        *hostfiles.Trashed            `json:"trashed,omitempty"`
 	Batch          []hostfiles.UploadBatchResult `json:"batch,omitempty"`
 	NextOffset     int                           `json:"next_offset,omitempty"`
@@ -97,6 +97,7 @@ type hostFilesWireResponse struct {
 	Page           *logstream.Page               `json:"page,omitempty"`
 	Events         []logstream.Event             `json:"events,omitempty"`
 	Operation      *hostfiles.FileOperation      `json:"operation,omitempty"`
+	Permissions    *hostfiles.Permissions        `json:"permissions,omitempty"`
 }
 
 type hostFilesUploadBatchManifest struct {
@@ -215,10 +216,14 @@ func (service *brokerHostFilesService) CreateDirectory(_ context.Context, direct
 	return service.files.CreateDirectory(directory, name)
 }
 
-func (service *brokerHostFilesService) ToggleOwnerExecute(_ context.Context, path string) (bool, error) {
+func (service *brokerHostFilesService) Permissions(_ context.Context, path string) (hostfiles.Permissions, error) {
+	return service.files.Permissions(path)
+}
+
+func (service *brokerHostFilesService) SetPermissions(_ context.Context, path string, change hostfiles.PermissionChange) (hostfiles.Permissions, error) {
 	service.mutationMu.Lock()
 	defer service.mutationMu.Unlock()
-	return service.files.ToggleOwnerExecute(path)
+	return service.files.SetPermissions(path, change)
 }
 
 func (service *brokerHostFilesService) MoveToTrash(_ context.Context, path, storedName string) (hostfiles.Trashed, error) {
@@ -714,10 +719,18 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 		result.AvailableName, err = server.hostFiles.AvailableName(ctx, payload.Directory, payload.Name)
 	case operationHostFilesMkdir:
 		err = server.hostFiles.CreateDirectory(ctx, payload.Directory, payload.Name)
-	case operationHostFilesToggleExec:
-		var enabled bool
-		enabled, err = server.hostFiles.ToggleOwnerExecute(ctx, payload.Path)
-		result.Execute = &enabled
+	case operationHostFilesPermissions:
+		var value hostfiles.Permissions
+		value, err = server.hostFiles.Permissions(ctx, payload.Path)
+		result.Permissions = &value
+	case operationHostFilesSetPermissions:
+		var value hostfiles.Permissions
+		if payload.Permissions == nil {
+			err = errors.New("permission change is required")
+		} else {
+			value, err = server.hostFiles.SetPermissions(ctx, payload.Path, *payload.Permissions)
+			result.Permissions = &value
+		}
 	case operationHostFilesTrash:
 		var value hostfiles.Trashed
 		value, err = server.hostFiles.MoveToTrash(ctx, payload.Path, payload.StoredName)
@@ -872,10 +885,12 @@ func hostFilesAction(operation string) (Action, bool) {
 	switch operation {
 	case operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge:
 		// The trash lifecycle follows normal WriteFiles authorization; path moves
-		// and executable changes below remain explicit recent-step-up operations.
+		// while path moves below remain explicit recent-step-up operations.
 		return ActionHostFilesDelete, false
-	case operationHostFilesMove, operationHostFilesToggleExec, operationHostFilesCrossMove:
+	case operationHostFilesMove, operationHostFilesCrossMove:
 		return ActionHostFilesMove, true
+	case operationHostFilesSetPermissions:
+		return ActionHostFilesWrite, true
 	case operationHostFilesMkdir, operationHostFilesUpload, operationHostFilesUploadBatch, operationHostFilesSaveText, operationHostFilesRollback,
 		operationHostFilesRemove, operationHostFilesAppend:
 		return ActionHostFilesWrite, false
@@ -925,9 +940,13 @@ func validateHostFilesRequest(request wireRequest) error {
 		if !isAbsoluteHostFilePath(payload.Path) {
 			return errors.New("Host Files info request is invalid")
 		}
-	case operationHostFilesToggleExec:
-		if !isAbsoluteHostFilePath(payload.Path) {
-			return errors.New("Host Files execute-bit request is invalid")
+	case operationHostFilesPermissions:
+		if !isAbsoluteHostFilePath(payload.Path) || payload.Permissions != nil {
+			return errors.New("Host Files permissions request is invalid")
+		}
+	case operationHostFilesSetPermissions:
+		if !isAbsoluteHostFilePath(payload.Path) || payload.Permissions == nil || !validPermissionChange(*payload.Permissions) {
+			return errors.New("Host Files permission change request is invalid")
 		}
 	case operationHostFilesOpenRead:
 		if !isAbsoluteHostFilePath(payload.Path) {
@@ -1030,6 +1049,28 @@ func isAbsoluteHostFilePath(path string) bool {
 	return path != "" && filepath.IsAbs(path)
 }
 
+func validPermissionChange(change hostfiles.PermissionChange) bool {
+	if len(change.Owner) > 512 || len(change.Principal) > 512 || strings.ContainsAny(change.Owner+change.Principal, "\r\n\x00") {
+		return false
+	}
+	if change.Mode != nil && *change.Mode > 0o777 {
+		return false
+	}
+	if change.Mode != nil && (change.Owner != "" || change.Principal != "" || change.InheritanceEnabled != nil) {
+		return false
+	}
+	if (change.RemoveRule && change.Principal == "") || (change.AccessMask != nil && change.Principal == "") {
+		return false
+	}
+	if change.AccessMask != nil && (*change.AccessMask == 0 || *change.AccessMask & ^hostfiles.WindowsAccessFull != 0) {
+		return false
+	}
+	if (change.ReplaceChildOwners && change.Owner == "") || (change.ApplyRuleToChildren && change.Principal == "") {
+		return false
+	}
+	return change.Mode != nil || change.Owner != "" || change.Principal != "" || change.InheritanceEnabled != nil
+}
+
 func validateExternalHostFilesLogRequest(request wireRequest) error {
 	if request.HostFiles == nil || request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil {
 		return errors.New("External Host Files log request contains unrelated fields")
@@ -1062,8 +1103,12 @@ func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) ho
 		return hostFilesWireRequest{}
 	case operationHostFilesList:
 		return hostFilesWireRequest{Path: payload.Path, Offset: payload.Offset, Limit: payload.Limit}
-	case operationHostFilesInfo, operationHostFilesToggleExec, operationHostFilesOpenRead, operationHostFilesRemove, operationHostFilesLogOpen, operationHostFilesPrepareAppend:
+	case operationHostFilesInfo, operationHostFilesOpenRead, operationHostFilesRemove, operationHostFilesLogOpen, operationHostFilesPrepareAppend:
 		return hostFilesWireRequest{Path: payload.Path}
+	case operationHostFilesPermissions:
+		return hostFilesWireRequest{Path: payload.Path}
+	case operationHostFilesSetPermissions:
+		return hostFilesWireRequest{Path: payload.Path, Permissions: payload.Permissions}
 	case operationHostFilesReadText:
 		return hostFilesWireRequest{Path: payload.Path, MaxBytes: payload.MaxBytes}
 	case operationHostFilesCanonical:
@@ -1108,7 +1153,7 @@ func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) ho
 func isHostFilesOperation(operation string) bool {
 	switch operation {
 	case operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
-		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesToggleExec,
+		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesPermissions, operationHostFilesSetPermissions,
 		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
 		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload, operationHostFilesUploadBatch,
 		operationHostFilesSaveText, operationHostFilesRollback, operationHostFilesRemove, operationHostFilesPrepare,
@@ -1246,12 +1291,20 @@ func (backend *HostFilesBackend) CreateDirectory(ctx context.Context, directory,
 	return err
 }
 
-func (backend *HostFilesBackend) ToggleOwnerExecute(ctx context.Context, path string) (bool, error) {
-	value, err := backend.call(ctx, operationHostFilesToggleExec, hostFilesWireRequest{Path: path})
-	if value.Execute == nil {
-		return false, errors.Join(err, errors.New("privileged Broker returned no execute-bit state"))
+func (backend *HostFilesBackend) Permissions(ctx context.Context, path string) (hostfiles.Permissions, error) {
+	value, err := backend.call(ctx, operationHostFilesPermissions, hostFilesWireRequest{Path: path})
+	if value.Permissions == nil {
+		return hostfiles.Permissions{}, errors.Join(err, errors.New("privileged Broker returned no Host Files permissions"))
 	}
-	return *value.Execute, err
+	return *value.Permissions, err
+}
+
+func (backend *HostFilesBackend) SetPermissions(ctx context.Context, path string, change hostfiles.PermissionChange) (hostfiles.Permissions, error) {
+	value, err := backend.call(ctx, operationHostFilesSetPermissions, hostFilesWireRequest{Path: path, Permissions: &change})
+	if value.Permissions == nil {
+		return hostfiles.Permissions{}, errors.Join(err, errors.New("privileged Broker returned no updated Host Files permissions"))
+	}
+	return *value.Permissions, err
 }
 
 func (backend *HostFilesBackend) MoveToTrash(ctx context.Context, path, storedName string) (hostfiles.Trashed, error) {

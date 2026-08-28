@@ -420,30 +420,6 @@ func (m *Manager) Info(path string) (os.FileInfo, error) {
 	return info, err
 }
 
-func (m *Manager) ToggleOwnerExecute(path string) (bool, error) {
-	target, info, err := m.resolveEntry(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return false, fmt.Errorf("only a regular file owner execute bit can be changed")
-	}
-	if err := m.ensureMutationAllowed(target); err != nil {
-		return false, err
-	}
-	if err := diskspace.Require(filepath.Dir(target), diskspace.MinimumWritableBytes); err != nil {
-		return false, err
-	}
-	mode := info.Mode().Perm()
-	enabled := mode&0o100 == 0
-	if enabled {
-		mode |= 0o100
-	} else {
-		mode &^= 0o100
-	}
-	if err := os.Chmod(target, mode); err != nil {
-		return false, err
-	}
-	return enabled, nil
-}
-
 func (m *Manager) MoveToTrash(path, storedName string) (Trashed, error) {
 	if err := ValidateName(storedName); err != nil {
 		return Trashed{}, fmt.Errorf("invalid trash entry ID: %w", err)

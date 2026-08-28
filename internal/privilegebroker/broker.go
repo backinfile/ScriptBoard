@@ -96,7 +96,8 @@ const (
 	operationHostFilesCanonical         = "host_files_canonical"
 	operationHostFilesAvailable         = "host_files_available_name"
 	operationHostFilesMkdir             = "host_files_mkdir"
-	operationHostFilesToggleExec        = "host_files_toggle_execute"
+	operationHostFilesPermissions       = "host_files_permissions"
+	operationHostFilesSetPermissions    = "host_files_set_permissions"
 	operationHostFilesTrash             = "host_files_trash"
 	operationHostFilesRestore           = "host_files_restore"
 	operationHostFilesPurge             = "host_files_purge"
@@ -342,7 +343,8 @@ type HostFilesService interface {
 	Canonical(context.Context, hostFilesCanonicalKind, string, string) (string, error)
 	AvailableName(context.Context, string, string) (string, error)
 	CreateDirectory(context.Context, string, string) error
-	ToggleOwnerExecute(context.Context, string) (bool, error)
+	Permissions(context.Context, string) (hostfiles.Permissions, error)
+	SetPermissions(context.Context, string, hostfiles.PermissionChange) (hostfiles.Permissions, error)
 	MoveToTrash(context.Context, string, string) (hostfiles.Trashed, error)
 	RestoreFromTrash(context.Context, string, string, bool) (string, error)
 	PurgeTrash(context.Context, string) error
@@ -605,7 +607,7 @@ func (server *Server) handle(connection net.Conn) {
 	case operationRedisStore, operationRedisDelete, operationRedisTest, operationRedisOverview, operationRedisScan:
 		response = server.redisOperation(context.Background(), request)
 	case operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
-		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesToggleExec,
+		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesPermissions, operationHostFilesSetPermissions,
 		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
 		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload, operationHostFilesUploadBatch, operationHostFilesSaveText, operationHostFilesRollback,
 		operationHostFilesRemove, operationHostFilesPrepare, operationHostFilesSameFS, operationHostFilesAppend,

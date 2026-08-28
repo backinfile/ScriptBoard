@@ -60,6 +60,7 @@ type taskPageData struct {
 	User               userView
 	DraftChanges       []securityFirewallChange
 	CanApplyDraft      bool
+	Permissions        filePermissionsView
 }
 
 func (a *App) renderTaskPage(response http.ResponseWriter, request *http.Request, data taskPageData) {
