@@ -1934,6 +1934,29 @@ async function assertExternalInterfaces(page, fixture) {
       .some(element => element.dataset.filePinLabel === "automation" && element.getAttribute("aria-pressed") === "true"));
     assert.equal(await automationPin.getAttribute("aria-pressed"), "true");
     assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
+    await quickAccess.getByRole("button", { name: /Edit display name/ }).click();
+    const quickAccessDrawerHost = page.locator("[data-file-quick-edit-drawer].is-open");
+    await quickAccessDrawerHost.waitFor();
+    const quickAccessDrawerBounds = await quickAccessDrawerHost.boundingBox();
+    const quickAccessViewport = await page.evaluate(() => {
+      const body = document.body.getBoundingClientRect();
+      return { left: 0, top: 0, right: Math.round(body.right), bottom: innerHeight };
+    });
+    assert.deepEqual(
+      {
+        parentIsBody: await quickAccessDrawerHost.evaluate(element => element.parentElement === document.body),
+        left: Math.round(quickAccessDrawerBounds.x),
+        top: Math.round(quickAccessDrawerBounds.y),
+        right: Math.round(quickAccessDrawerBounds.x + quickAccessDrawerBounds.width),
+        bottom: Math.round(quickAccessDrawerBounds.y + quickAccessDrawerBounds.height),
+      },
+      { parentIsBody: true, ...quickAccessViewport },
+      "Quick access editor must cover the viewport instead of the animated file browser",
+    );
+    await quickAccessDrawerHost.locator('select[name="group_id"]').selectOption({ label: "Operations" });
+    await quickAccessDrawerHost.locator('button[type="submit"]').click();
+    await quickAccessDrawerHost.waitFor({ state: "detached" });
+    await quickAccess.getByText("Operations", { exact: true }).waitFor();
     const automationQuickLink = quickAccess.getByRole("link", { name: /automation/ });
     await automationQuickLink.waitFor();
     await saveSnapshot(page, "files-quick-access");

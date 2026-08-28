@@ -42,19 +42,27 @@ func (a *App) loadRecordGroups() ([]recordGroup, error) {
 	return groups, rows.Err()
 }
 
-func (a *App) resolveRecordGroupID(value string) (*string, error) {
+type recordGroupQueryRower interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func resolveRecordGroupIDWith(queryer recordGroupQueryRower, value string) (*string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil, nil
 	}
 	var exists int
-	if err := a.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM quick_run_groups WHERE id=?)`, value).Scan(&exists); err != nil {
+	if err := queryer.QueryRow(`SELECT EXISTS(SELECT 1 FROM quick_run_groups WHERE id=?)`, value).Scan(&exists); err != nil {
 		return nil, err
 	}
 	if exists == 0 {
 		return nil, sql.ErrNoRows
 	}
 	return &value, nil
+}
+
+func (a *App) resolveRecordGroupID(value string) (*string, error) {
+	return resolveRecordGroupIDWith(a.db, value)
 }
 
 func recordGroupReturnTo(request *http.Request) string {

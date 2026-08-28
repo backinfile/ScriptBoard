@@ -637,6 +637,8 @@ func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 		`initFileQuickAccess(document, cleanups, options.openFileQuickAccess === true)`,
 		`savePin("rename"`,
 		`savePin("reorder"`,
+		`document.body.append(drawerHost)`,
+		`drawerHost.remove()`,
 		`item.draggable = true`,
 		`focusedRow.scrollIntoView`,
 	} {
@@ -748,10 +750,96 @@ func TestFileQuickAccessPinsPersistGlobally(t *testing.T) {
 }
 
 type fileQuickAccessPinTestView struct {
-	Path  string `json:"path"`
-	Label string `json:"label"`
-	Href  string `json:"href"`
-	Kind  string `json:"kind"`
+	Path    string `json:"path"`
+	Label   string `json:"label"`
+	Href    string `json:"href"`
+	Kind    string `json:"kind"`
+	GroupID string `json:"groupId"`
+}
+
+func TestFileQuickAccessCanMovePinIntoSharedGroup(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	pinnedPath := filepath.Join(hostRoot, "notes.txt")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pinnedPath, []byte("notes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := formToken(t, page)
+
+	response, err = client.PostForm(serverURL+"/config/groups?return_to=%2Fresources%2Ffiles", url.Values{
+		"csrf_token": {token}, "name": {"Operations"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create shared group status=%d", response.StatusCode)
+	}
+	response, err = client.Get(serverURL + "/resources/files/quick-access")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Groups []struct {
+			ID, Name string
+		} `json:"groups"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if len(catalog.Groups) != 1 || catalog.Groups[0].Name != "Operations" {
+		t.Fatalf("shared group catalog = %#v", catalog.Groups)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/files/quick-access", url.Values{
+		"csrf_token": {token}, "action": {"pin"}, "path": {pinnedPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("pin file status=%d", response.StatusCode)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/files/quick-access", url.Values{
+		"csrf_token": {token}, "action": {"rename"}, "path": {pinnedPath},
+		"label": {"Release notes"}, "group_id": {catalog.Groups[0].ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("move file pin status=%d body=%s", response.StatusCode, body)
+	}
+	var result struct {
+		Pins []fileQuickAccessPinTestView `json:"pins"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Pins) != 1 || result.Pins[0].Label != "Release notes" || result.Pins[0].GroupID != catalog.Groups[0].ID {
+		t.Fatalf("grouped Quick access pin = %#v", result.Pins)
+	}
 }
 
 func TestFileQuickAccessSupportsFilesLabelsAndOrdering(t *testing.T) {

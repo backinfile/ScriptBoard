@@ -4280,6 +4280,10 @@
     const editGroup = drawerHost?.querySelector("[data-file-quick-edit-group]");
     const editTechnical = drawerHost?.querySelector("[data-file-quick-edit-technical]");
     if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel || !status) return;
+    // Keep the fixed drawer in the viewport layer because animated workspace
+    // ancestors establish their own containing blocks for fixed descendants.
+    const promotedDrawer = Boolean(drawerHost && drawerHost.parentElement !== document.body);
+    if (promotedDrawer) document.body.append(drawerHost);
 	const validationController = new AbortController();
 	cleanups.push(() => validationController.abort());
 
@@ -4349,6 +4353,10 @@
       drawerHost.setAttribute("aria-hidden", "true");
       document.body.classList.remove("has-file-quick-edit-drawer");
     };
+    if (drawerHost) cleanups.push(() => {
+      closeEditor();
+      if (promotedDrawer) drawerHost.remove();
+    });
     const openEditor = pin => {
       if (!drawerHost || !drawer || !editPath || !editLabel || !editTechnical) return;
       editPath.value = pin.path;

@@ -21,10 +21,10 @@ import (
 const maxFileQuickAccessPins = 30
 
 type fileQuickAccessPin struct {
-	Path  string `json:"path"`
-	Label string `json:"label"`
-	Href  string `json:"href"`
-	Kind  string `json:"kind"`
+	Path    string `json:"path"`
+	Label   string `json:"label"`
+	Href    string `json:"href"`
+	Kind    string `json:"kind"`
 	GroupID string `json:"groupId"`
 }
 
@@ -80,6 +80,8 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 	}
 	pathKey := hostfiles.ComparisonKey(path)
 	var targetKind string
+	var renameLabel string
+	var renameGroupValue string
 	if action == "pin" {
 		canonical, err := a.hostCanonicalExisting(request.Context(), path)
 		if err != nil {
@@ -97,6 +99,13 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 		if info.IsDir() {
 			targetKind = "directory"
 		}
+	} else if action == "rename" {
+		renameLabel = strings.TrimSpace(request.FormValue("label"))
+		if renameLabel == "" || utf8.RuneCountInString(renameLabel) > 128 {
+			http.Error(response, "Display name must be between 1 and 128 characters", http.StatusBadRequest)
+			return
+		}
+		renameGroupValue = request.FormValue("group_id")
 	}
 
 	transaction, err := a.db.Begin()
@@ -127,12 +136,9 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 	case "unpin":
 		_, err = transaction.Exec("DELETE FROM file_quick_access_pins WHERE path_key = ?", pathKey)
 	case "rename":
-		label := strings.TrimSpace(request.FormValue("label"))
-		if label == "" || utf8.RuneCountInString(label) > 128 {
-			http.Error(response, "Display name must be between 1 and 128 characters", http.StatusBadRequest)
-			return
-		}
-		groupID, groupErr := a.resolveRecordGroupID(request.FormValue("group_id"))
+		// Resolve through the transaction so the single-connection SQLite pool
+		// keeps validation and membership update atomic without self-waiting.
+		renameGroupID, groupErr := resolveRecordGroupIDWith(transaction, renameGroupValue)
 		if groupErr != nil {
 			http.Error(response, "Quick access group not found", http.StatusBadRequest)
 			return
@@ -143,13 +149,13 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 			http.Error(response, "Quick access item not found", http.StatusNotFound)
 			return
 		}
-		if currentGroup.String != valueOrEmpty(groupID) {
-			if queryErr := transaction.QueryRow("SELECT COALESCE(MAX(sort_order),0)+1 FROM file_quick_access_pins WHERE group_id IS ?", groupID).Scan(&order); queryErr != nil {
+		if currentGroup.String != valueOrEmpty(renameGroupID) {
+			if queryErr := transaction.QueryRow("SELECT COALESCE(MAX(sort_order),0)+1 FROM file_quick_access_pins WHERE group_id IS ?", renameGroupID).Scan(&order); queryErr != nil {
 				err = queryErr
 				break
 			}
 		}
-		result, updateErr := transaction.Exec("UPDATE file_quick_access_pins SET label = ?, group_id=?, sort_order=? WHERE path_key = ?", label, groupID, order, pathKey)
+		result, updateErr := transaction.Exec("UPDATE file_quick_access_pins SET label = ?, group_id=?, sort_order=? WHERE path_key = ?", renameLabel, renameGroupID, order, pathKey)
 		err = updateErr
 		if err == nil {
 			if changed, _ := result.RowsAffected(); changed != 1 {
