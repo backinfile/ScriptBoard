@@ -90,6 +90,7 @@ type BackupService interface {
 type RestoreService interface {
 	Restore(context.Context, RestoreRequest) (Operation, error)
 	DropDatabase(context.Context, DropDatabaseRequest) (Operation, error)
+	BackupAndClearDatabase(context.Context, BackupAndClearDatabaseRequest) (Operation, error)
 	Operation(context.Context, string) (Operation, error)
 	Operations(context.Context, string) ([]Operation, error)
 	RequestCancel(context.Context, string) error

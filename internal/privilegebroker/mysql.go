@@ -282,6 +282,8 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 		err = server.mysql.ReplaceDatabase(ctx, payload.Instance, payload.Database)
 	case operationMySQLDrop:
 		err = server.mysql.DropDatabase(ctx, payload.Instance, payload.Database)
+	case operationMySQLClear:
+		err = server.mysql.ClearDatabase(ctx, payload.Instance, payload.Database)
 	case operationMySQLDump:
 		var value mysqlmanager.DumpResult
 		value, err = server.mysql.Dump(ctx, payload.Instance, payload.Database, payload.Path)
@@ -368,6 +370,8 @@ func mysqlAction(operation string) (Action, bool) {
 		return ActionMySQLReplace, true
 	case operationMySQLDrop:
 		return ActionMySQLDrop, true
+	case operationMySQLClear:
+		return ActionMySQLClear, true
 	case operationMySQLDump:
 		return ActionMySQLDump, false
 	case operationMySQLImport:
@@ -459,7 +463,7 @@ func validateMySQLRequest(request wireRequest) error {
 		if payload.Password != "" || payload.Database != "" || payload.Path != "" || emptyCreate || !emptyTools {
 			return errors.New("MySQL create request is invalid")
 		}
-	case operationMySQLExists, operationMySQLReplace, operationMySQLDrop:
+	case operationMySQLExists, operationMySQLReplace, operationMySQLDrop, operationMySQLClear:
 		if payload.Password != "" || payload.Database == "" || payload.Path != "" || !emptyCreate || !emptyTools {
 			return errors.New("MySQL database mutation request is invalid")
 		}
@@ -619,6 +623,10 @@ func (backend *MySQLBackend) ReplaceDatabase(ctx context.Context, instance mysql
 }
 func (backend *MySQLBackend) DropDatabase(ctx context.Context, instance mysqlmanager.Instance, database string) error {
 	_, err := backend.call(ctx, operationMySQLDrop, mysqlWireRequest{Instance: instance, Database: database})
+	return err
+}
+func (backend *MySQLBackend) ClearDatabase(ctx context.Context, instance mysqlmanager.Instance, database string) error {
+	_, err := backend.call(ctx, operationMySQLClear, mysqlWireRequest{Instance: instance, Database: database})
 	return err
 }
 func (backend *MySQLBackend) Dump(ctx context.Context, instance mysqlmanager.Instance, database, path string) (mysqlmanager.DumpResult, error) {

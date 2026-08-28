@@ -159,6 +159,7 @@ func (*recordingBackend) CreateDatabase(context.Context, Instance, CreateDatabas
 }
 func (*recordingBackend) ReplaceDatabase(context.Context, Instance, string) error { return nil }
 func (*recordingBackend) DropDatabase(context.Context, Instance, string) error    { return nil }
+func (*recordingBackend) ClearDatabase(context.Context, Instance, string) error   { return nil }
 func (*recordingBackend) Dump(context.Context, Instance, string, string) (DumpResult, error) {
 	return DumpResult{}, nil
 }
@@ -273,9 +274,11 @@ type fakeServer struct {
 	exists       bool
 	replacements int
 	drops        int
+	clears       int
 	testResult   ConnectionTest
 	testErr      error
 	statusErr    error
+	clearErr     error
 }
 
 func (server *fakeServer) Test(context.Context, Instance, string) (ConnectionTest, error) {
@@ -303,6 +306,10 @@ func (server *fakeServer) ReplaceDatabase(context.Context, Instance, string, str
 func (server *fakeServer) DropDatabase(context.Context, Instance, string, string) error {
 	server.drops++
 	return nil
+}
+func (server *fakeServer) ClearDatabase(context.Context, Instance, string, string) error {
+	server.clears++
+	return server.clearErr
 }
 func (server *fakeServer) NonTransactionalTables(context.Context, Instance, string, string) ([]string, error) {
 	return nil, nil
@@ -675,6 +682,153 @@ func TestDropDatabaseRequiresAndKeepsSafetyBackup(t *testing.T) {
 	safety, err := manager.BackupByID(context.Background(), operation.SafetyBackupID)
 	if err != nil || safety.Kind != BackupSafety {
 		t.Fatalf("safety backup=%+v error=%v", safety, err)
+	}
+}
+
+func TestBackupAndClearDatabaseKeepsDatabase(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{exists: true}
+	manager.server = server
+	manager.runner = &recordingRunner{output: "CREATE TABLE before_clear (id INT);\n"}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "Clear", Host: "localhost", Port: 3306, Username: "admin", Password: "secret", TLSMode: TLSPreferred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.BackupAndClearDatabase(context.Background(), BackupAndClearDatabaseRequest{
+		InstanceID: instance.ID, Database: "inventory", Confirmation: "wrong",
+	}); err == nil || server.clears != 0 || server.drops != 0 {
+		t.Fatalf("clear accepted an incorrect confirmation: err=%v clears=%d drops=%d", err, server.clears, server.drops)
+	}
+	operation, err := manager.BackupAndClearDatabase(context.Background(), BackupAndClearDatabaseRequest{
+		InstanceID: instance.ID, Database: "inventory", Confirmation: "inventory",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exists, err := manager.backend.DatabaseExists(context.Background(), instance, "inventory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.Phase != "completed" || operation.SafetyBackupID == "" || server.clears != 1 || server.drops != 0 || !exists {
+		t.Fatalf("clear operation=%+v clears=%d drops=%d exists=%t", operation, server.clears, server.drops, exists)
+	}
+	safety, err := manager.BackupByID(context.Background(), operation.SafetyBackupID)
+	if err != nil || safety.Kind != BackupSafety {
+		t.Fatalf("safety backup=%+v error=%v", safety, err)
+	}
+}
+
+func TestBackupAndClearDatabaseDoesNotClearWhenBackupFails(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{exists: true}
+	manager.server = server
+	manager.runner = &recordingRunner{err: io.ErrUnexpectedEOF}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "Clear", Host: "localhost", Port: 3306, Username: "admin", Password: "secret", TLSMode: TLSPreferred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := manager.BackupAndClearDatabase(context.Background(), BackupAndClearDatabaseRequest{
+		InstanceID: instance.ID, Database: "inventory", Confirmation: "inventory",
+	})
+	if err == nil {
+		t.Fatal("clear continued after the safety backup failed")
+	}
+	if operation.Phase != "failed" || server.clears != 0 || server.drops != 0 {
+		t.Fatalf("failed operation=%+v clears=%d drops=%d", operation, server.clears, server.drops)
+	}
+}
+
+func TestBackupAndClearDatabaseKeepsSafetyBackupWhenClearFails(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{exists: true, clearErr: errors.New("clear interrupted")}
+	manager.server = server
+	manager.runner = &recordingRunner{output: "CREATE TABLE before_clear (id INT);\n"}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "Clear", Host: "localhost", Port: 3306, Username: "admin", Password: "secret", TLSMode: TLSPreferred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := manager.BackupAndClearDatabase(context.Background(), BackupAndClearDatabaseRequest{
+		InstanceID: instance.ID, Database: "inventory", Confirmation: "inventory",
+	})
+	if err == nil {
+		t.Fatal("clear failure was not returned")
+	}
+	if operation.Phase != "failed" || operation.SafetyBackupID == "" || server.clears != 1 || server.drops != 0 {
+		t.Fatalf("failed operation=%+v clears=%d drops=%d", operation, server.clears, server.drops)
+	}
+	if _, err := manager.BackupByID(context.Background(), operation.SafetyBackupID); err != nil {
+		t.Fatalf("safety backup was not retained: %v", err)
+	}
+}
+
+func TestInterruptedBackupAndClearRecoveryDoesNotReplaceDatabase(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{exists: true}
+	manager.server = server
+	manager.runner = &recordingRunner{output: "CREATE TABLE before_clear (id INT);\n"}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "Clear", Host: "localhost", Port: 3306, Username: "admin", Password: "secret", TLSMode: TLSPreferred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := manager.BackupAndClearDatabase(context.Background(), BackupAndClearDatabaseRequest{
+		InstanceID: instance.ID, Database: "inventory", Confirmation: "inventory",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE mysql_operations SET phase='clearing' WHERE id=?", operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	server.clears, server.replacements, server.drops = 0, 0, 0
+	if err := manager.RecoverInterrupted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := manager.Operation(context.Background(), operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Phase != "rolled_back" || server.clears != 1 || server.replacements != 0 || server.drops != 0 {
+		t.Fatalf("recovered operation=%+v clears=%d replacements=%d drops=%d", recovered, server.clears, server.replacements, server.drops)
 	}
 }
 

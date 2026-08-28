@@ -202,6 +202,9 @@ func (*fixtureMySQLService) ReplaceDatabase(context.Context, mysqlmanager.Instan
 func (*fixtureMySQLService) DropDatabase(context.Context, mysqlmanager.Instance, string) error {
 	return nil
 }
+func (*fixtureMySQLService) ClearDatabase(context.Context, mysqlmanager.Instance, string) error {
+	return nil
+}
 func (service *fixtureMySQLService) Dump(ctx context.Context, instance mysqlmanager.Instance, _, path string) (mysqlmanager.DumpResult, error) {
 	service.instance, service.dumps = instance, service.dumps+1
 	if service.blockDump {

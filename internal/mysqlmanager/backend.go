@@ -23,6 +23,7 @@ type Backend interface {
 	CreateDatabase(context.Context, Instance, CreateDatabaseInput) error
 	ReplaceDatabase(context.Context, Instance, string) error
 	DropDatabase(context.Context, Instance, string) error
+	ClearDatabase(context.Context, Instance, string) error
 	Dump(context.Context, Instance, string, string) (DumpResult, error)
 	Import(context.Context, Instance, string, string) error
 	Tools() ToolSettings
@@ -164,6 +165,14 @@ func (backend *localBackend) DropDatabase(ctx context.Context, instance Instance
 		return err
 	}
 	return backend.manager.server.DropDatabase(ctx, instance, password, name)
+}
+
+func (backend *localBackend) ClearDatabase(ctx context.Context, instance Instance, name string) error {
+	password, err := backend.manager.secrets.getForInstance(instance)
+	if err != nil {
+		return err
+	}
+	return backend.manager.server.ClearDatabase(ctx, instance, password, name)
 }
 
 func (backend *localBackend) Dump(ctx context.Context, instance Instance, database, destinationPath string) (DumpResult, error) {

@@ -293,6 +293,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /resources/databases/instances/{id}/databases", a.requirePermission(identity.PermissionManageDatabases, http.HandlerFunc(a.createMySQLDatabase)))
 	mux.Handle("POST /resources/databases/instances/{id}/backup", a.requirePermission(identity.PermissionManageDatabases, http.HandlerFunc(a.startMySQLBackup)))
 	mux.Handle("POST /resources/databases/instances/{id}/backup/batch", a.requirePermission(identity.PermissionManageDatabases, http.HandlerFunc(a.startMySQLBatchBackup)))
+	mux.Handle("POST /resources/databases/instances/{id}/clear", a.requireStepUp(identity.PermissionManageDatabases, http.HandlerFunc(a.startBackupAndClearMySQLDatabase)))
 	mux.Handle("POST /resources/databases/instances/{id}/drop", a.requireStepUp(identity.PermissionManageDatabases, http.HandlerFunc(a.startDropMySQLDatabase)))
 	mux.Handle("POST /resources/databases/instances/{id}/imports", a.requirePermission(identity.PermissionManageDatabases, http.HandlerFunc(a.importMySQLBackup)))
 	mux.Handle("POST /resources/databases/instances/{id}/imports/server", a.requirePermission(identity.PermissionManageDatabases, http.HandlerFunc(a.importMySQLServerBackup)))

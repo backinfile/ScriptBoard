@@ -53,6 +53,7 @@ type databaseServer interface {
 	CreateDatabase(context.Context, Instance, string, CreateDatabaseInput) error
 	ReplaceDatabase(context.Context, Instance, string, string) error
 	DropDatabase(context.Context, Instance, string, string) error
+	ClearDatabase(context.Context, Instance, string, string) error
 	NonTransactionalTables(context.Context, Instance, string, string) ([]string, error)
 }
 
@@ -468,6 +469,74 @@ func (server *mysqlDatabaseServer) DropDatabase(ctx context.Context, instance In
 	defer database.Close()
 	_, err = database.ExecContext(ctx, "DROP DATABASE "+quoteIdentifier(name))
 	return err
+}
+
+func (server *mysqlDatabaseServer) ClearDatabase(ctx context.Context, instance Instance, password, name string) error {
+	if IsSystemDatabase(name) || strings.TrimSpace(name) == "" {
+		return errors.New("system or empty database cannot be cleared")
+	}
+	database, err := server.open(instance, password)
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	connection, err := database.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	if _, err := connection.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS=0"); err != nil {
+		return err
+	}
+	defer connection.ExecContext(context.WithoutCancel(ctx), "SET FOREIGN_KEY_CHECKS=1")
+	objects, err := mysqlSchemaObjects(ctx, connection, name)
+	if err != nil {
+		return err
+	}
+	for _, object := range objects {
+		if _, err := connection.ExecContext(ctx, "DROP "+object.kind+" IF EXISTS "+quoteIdentifier(name)+"."+quoteIdentifier(object.name)); err != nil {
+			return fmt.Errorf("drop %s %s: %w", strings.ToLower(object.kind), object.name, err)
+		}
+	}
+	return nil
+}
+
+type mysqlSchemaObject struct{ kind, name string }
+
+func mysqlSchemaObjects(ctx context.Context, connection *sql.Conn, schema string) ([]mysqlSchemaObject, error) {
+	queries := []struct {
+		query string
+		kind  string
+	}{
+		{`SELECT TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA=? ORDER BY TABLE_NAME`, "VIEW"},
+		{`SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME`, "TABLE"},
+		{`SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=? AND ROUTINE_TYPE='PROCEDURE' ORDER BY ROUTINE_NAME`, "PROCEDURE"},
+		{`SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=? AND ROUTINE_TYPE='FUNCTION' ORDER BY ROUTINE_NAME`, "FUNCTION"},
+		{`SELECT EVENT_NAME FROM information_schema.EVENTS WHERE EVENT_SCHEMA=? ORDER BY EVENT_NAME`, "EVENT"},
+	}
+	var result []mysqlSchemaObject
+	for _, item := range queries {
+		rows, err := connection.QueryContext(ctx, item.query, schema)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			result = append(result, mysqlSchemaObject{kind: item.kind, name: name})
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 func (server *mysqlDatabaseServer) NonTransactionalTables(ctx context.Context, instance Instance, password, name string) ([]string, error) {

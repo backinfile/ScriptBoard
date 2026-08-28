@@ -6257,6 +6257,7 @@
 	}
     const drawers = [...root.querySelectorAll("details.mysql-drawer")];
     const dropDrawer = root.querySelector("[data-mysql-drop-drawer]");
+    const clearDrawer = root.querySelector("[data-mysql-clear-drawer]");
     const backupRestoreDrawer = root.querySelector("[data-mysql-backup-restore-drawer]");
     const backupDeleteDrawer = root.querySelector("[data-mysql-backup-delete-drawer]");
     const planDeleteDrawer = root.querySelector("[data-mysql-plan-delete-drawer]");
@@ -6401,6 +6402,22 @@
         if (databaseName) databaseName.textContent = database;
         if (confirmation) confirmation.value = "";
         dropDrawer.open = true;
+        window.setTimeout(() => confirmation?.focus(), 190);
+        return;
+      }
+      const clearTrigger = event.target.closest("[data-mysql-clear-trigger]");
+      if (clearTrigger && clearDrawer) {
+        event.preventDefault();
+        clearTrigger.closest("details.action-menu")?.removeAttribute("open");
+        returnFocus.set(clearDrawer, clearTrigger);
+        const database = clearTrigger.dataset.database || "";
+        const databaseInput = clearDrawer.querySelector("[data-mysql-clear-database]");
+        const databaseName = clearDrawer.querySelector("[data-mysql-clear-name]");
+        const confirmation = clearDrawer.querySelector("[data-mysql-clear-confirmation]");
+        if (databaseInput) databaseInput.value = database;
+        if (databaseName) databaseName.textContent = database;
+        if (confirmation) confirmation.value = "";
+        clearDrawer.open = true;
         window.setTimeout(() => confirmation?.focus(), 190);
         return;
       }

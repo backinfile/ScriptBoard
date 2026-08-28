@@ -18,6 +18,47 @@ type DropDatabaseRequest struct {
 	Actor                              Actor
 }
 
+type BackupAndClearDatabaseRequest struct {
+	InstanceID, Database, Confirmation string
+	Actor                              Actor
+}
+
+func (m *Manager) BackupAndClearDatabase(ctx context.Context, request BackupAndClearDatabaseRequest) (Operation, error) {
+	request.Database = strings.TrimSpace(request.Database)
+	if request.Database == "" || IsSystemDatabase(request.Database) || request.Confirmation != request.Database {
+		return Operation{}, errors.New("the complete non-system database name is required to confirm clearing")
+	}
+	instance, err := m.Instance(ctx, request.InstanceID)
+	if err != nil {
+		return Operation{}, err
+	}
+	operation, operationContext, release, err := m.beginOperation(ctx, "backup_and_clear_database", instance.ID, request.Database, request.Actor)
+	if err != nil {
+		return Operation{}, err
+	}
+	defer release()
+	ctx = operationContext
+	safety, err := m.runBackup(ctx, operation, instance, BackupRequest{
+		InstanceID: instance.ID, Database: request.Database, Kind: BackupSafety,
+		ActorUserID: request.Actor.UserID, ActorUsername: request.Actor.Username,
+	}, false)
+	if err != nil {
+		result, _ := m.Operation(ctx, operation.ID)
+		return result, err
+	}
+	if _, err := m.db.ExecContext(ctx, "UPDATE mysql_operations SET safety_backup_id=?, target_database=?, phase='clearing', updated_at=? WHERE id=?", safety.ID, request.Database, m.now().UTC().UnixNano(), operation.ID); err != nil {
+		return operation, err
+	}
+	if err := m.backend.ClearDatabase(ctx, instance, request.Database); err != nil {
+		_ = m.failOperation(ctx, operation.ID, err)
+		result, _ := m.Operation(ctx, operation.ID)
+		return result, err
+	}
+	_ = m.updateOperation(ctx, operation.ID, "completed", "", "", safety.SizeBytes, safety.SizeBytes)
+	m.recordAudit(AuditEvent{Action: "mysql_backup_and_clear_database", Target: instance.ID + "/" + request.Database, Result: "succeeded", Actor: request.Actor})
+	return m.Operation(ctx, operation.ID)
+}
+
 func (m *Manager) DropDatabase(ctx context.Context, request DropDatabaseRequest) (Operation, error) {
 	request.Database = strings.TrimSpace(request.Database)
 	if request.Database == "" || IsSystemDatabase(request.Database) || request.Confirmation != request.Database {
