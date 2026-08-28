@@ -2938,6 +2938,8 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 	}
 	if started.Conflict != "" {
 		current := request.Context().Value(sessionContextKey).(session)
+		// 修复可继续的重叠确认被异步前端当成普通 409 错误：明确声明为 HTML 文档。
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		response.WriteHeader(http.StatusConflict)
 		_ = overlapTemplate.Execute(response, overlapView{Action: "/config/quick-runs/" + url.PathEscape(request.PathValue("id")) + "/start", Script: started.ScriptPath, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request)})
 		return
@@ -3368,6 +3370,8 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 	}
 	if a.runs.IsActiveScript(request.FormValue("script")) && request.FormValue("confirm_overlap") != "yes" {
 		current := request.Context().Value(sessionContextKey).(session)
+		// 修复可继续的重叠确认被异步前端当成普通 409 错误：明确声明为 HTML 文档。
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		response.WriteHeader(http.StatusConflict)
 		_ = overlapTemplate.Execute(response, overlapView{
 			Action: "/history/runs/start", Script: request.FormValue("script"), Arguments: request.FormValue("arguments"), Timeout: request.FormValue("timeout_seconds"), CSRFToken: current.csrfToken, Locale: resolveWebLocale(request),
@@ -4694,12 +4698,12 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	}
 	type fileView struct {
 		hostfiles.Entry
-		Path, BrowseURL, PinURL, DownloadURL, EditURL, PreviewURL, ViewURL, RunURL, QuickRunURL, MoveURL, PermissionsURL string
-		LogURL                                                                                                           string
-		Protection, IconClass                                                                                            string
-		Runnable, IsHidden, CanMutate, Focused                                                                           bool
-		NameParts                                                                                                        []fileNamePart
-		CategoryLabel                                                                                                    string
+		Path, BrowseURL, PinURL, DownloadURL, EditURL, PreviewURL, ViewURL, RunURL, QuickRunURL, RenameURL, MoveURL, PermissionsURL string
+		LogURL                                                                                                                      string
+		Protection, IconClass                                                                                                       string
+		Runnable, IsHidden, CanMutate, Focused                                                                                      bool
+		NameParts                                                                                                                   []fileNamePart
+		CategoryLabel                                                                                                               string
 	}
 	pageEntries := listing[pagination.Start:pagination.End]
 	views := make([]fileView, 0, pagination.End-pagination.Start)
@@ -4717,6 +4721,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			IsHidden: entry.Hidden, CanMutate: canMutate, Focused: hostfiles.ComparisonKey(request.URL.Query().Get("focus_path")) == hostfiles.ComparisonKey(path),
 		}
 		if view.CanMutate {
+			view.RenameURL = routeFileURL("/resources/files/rename", path)
 			view.MoveURL = routeFileURL("/resources/files/move", path)
 			view.PermissionsURL = routeFileURL("/resources/files/permissions", path)
 		}

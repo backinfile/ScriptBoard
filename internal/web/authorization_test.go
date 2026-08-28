@@ -64,6 +64,7 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"file log download", http.MethodGet, "/resources/files/log/download?path=C%3A%5Clogs%5Cservice.log", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
 		{"file upload task", http.MethodGet, "/resources/files/upload", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"file move task", http.MethodGet, "/resources/files/move?path=C%3A%5Cscripts%5Cscript.ps1", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"file rename task", http.MethodGet, "/resources/files/rename?path=C%3A%5Cscripts%5Cscript.ps1", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"file permission task", http.MethodGet, "/resources/files/permissions?path=C%3A%5Cscripts%5Cscript.ps1", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"file permission mutation", http.MethodPost, "/resources/files/permissions", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"file mutation", http.MethodPost, "/resources/files/delete", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},

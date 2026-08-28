@@ -307,6 +307,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /resources/databases/operations/{operation_id}/cancel", a.requirePermission(identity.PermissionManageDatabases, http.HandlerFunc(a.cancelMySQLOperation)))
 	mux.Handle("GET /resources/files/new-directory", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.newDirectoryTask)))
 	mux.Handle("GET /resources/files/upload", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.uploadTask)))
+	mux.Handle("GET /resources/files/rename", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.renameFileTask)))
 	mux.Handle("GET /resources/files/move", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.moveFileTask)))
 	mux.Handle("GET /resources/files/permissions", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.filePermissionsTask)))
 	mux.Handle("GET /resources/directories", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.hostDirectories)))

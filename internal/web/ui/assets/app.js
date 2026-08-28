@@ -284,7 +284,9 @@
     fallback.style.left = "-9999px";
     fallback.style.top = "0";
     fallback.style.opacity = "0";
-    document.body.append(fallback);
+    // 修复模态错误弹窗内降级复制无法聚焦：将临时输入框放进当前弹窗，而不是不可交互的弹窗外页面。
+    const fallbackHost = activeElement?.closest("dialog[open]") || document.body;
+    fallbackHost.append(fallback);
     fallback.focus({ preventScroll: true });
     fallback.select();
     fallback.setSelectionRange(0, fallback.value.length);
@@ -1029,6 +1031,13 @@
       } finally {
         copyDetails.removeAttribute("aria-busy");
       }
+    });
+    dialog.addEventListener("copy", event => {
+      const selection = document.getSelection();
+      if (!event.clipboardData || !selection || selection.isCollapsed || !dialog.contains(selection.anchorNode)) return;
+      // 修复手动框选错误弹窗时把关闭按钮和 SVG 碎片一并复制的问题，统一输出结构化详情。
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", copyDetailsText);
     });
     close.addEventListener("click", dismiss);
     closeAction.addEventListener("click", dismiss);
@@ -2095,6 +2104,63 @@
     return true;
   }
 
+  function confirmDocumentAction(main, form, submitter) {
+    const confirmationForm = main?.querySelector("form");
+    const confirmationSubmitter = confirmationForm?.querySelector('button[type="submit"],input[type="submit"]');
+    const heading = main?.querySelector("h1")?.textContent.trim();
+    if (!confirmationForm || !confirmationSubmitter || !heading) return false;
+    const message = [
+      main.querySelector(":scope > p")?.textContent.trim(),
+      main.querySelector(":scope > code")?.textContent.trim(),
+      ...[...main.querySelectorAll("dl > div")].map(fact => {
+        const label = fact.querySelector("dt")?.textContent.trim();
+        const value = fact.querySelector("dd")?.textContent.trim();
+        return label && value ? `${label}: ${value}` : "";
+      }),
+    ].filter(Boolean).join("\n");
+
+    // 修复服务端 409 确认页被误判为网络错误；保留原工作区并按服务端字段显式二次提交。
+    showActionDialog({
+      title: heading,
+      message,
+      confirmLabel: confirmationLabel(confirmationSubmitter),
+      dangerous: confirmationSubmitter.classList.contains("button--danger") || confirmationSubmitter.classList.contains("danger-action"),
+      returnFocus: submitter || form,
+    }).then(confirmed => {
+      if (!confirmed || !form.isConnected) return;
+      const existingNames = new Set([...form.elements]
+        .filter(field => !field.matches('button,input[type="submit"],input[type="image"]'))
+        .map(field => field.name)
+        .filter(Boolean));
+      [...confirmationForm.elements].forEach(field => {
+        if (!field.name || existingNames.has(field.name) || field === confirmationSubmitter) return;
+        const mirror = document.createElement("input");
+        mirror.type = "hidden";
+        mirror.name = field.name;
+        mirror.value = field.value;
+        mirror.dataset.serverConfirmationMirror = "";
+        form.append(mirror);
+        existingNames.add(field.name);
+      });
+      if (confirmationSubmitter.name && !existingNames.has(confirmationSubmitter.name)) {
+        const mirror = document.createElement("input");
+        mirror.type = "hidden";
+        mirror.name = confirmationSubmitter.name;
+        mirror.value = confirmationSubmitter.value;
+        mirror.dataset.serverConfirmationMirror = "";
+        form.append(mirror);
+      }
+      // Let the first request restore the form before starting the explicit second submission.
+      // Server-provided mirrors carry the initiating button's semantic values.
+      window.setTimeout(() => {
+        if (!form.isConnected) return;
+        resetSubmit(form);
+        submitAsync(form, null);
+      }, 0);
+    });
+    return true;
+  }
+
   function chooseUploadConflict(conflicts) {
     closeFileConflictDialog();
     return new Promise(resolve => {
@@ -2403,11 +2469,16 @@
       if (!submittingTaskState && !form.isConnected) return;
       const fileConflict = result.document?.querySelector("main[data-file-conflict]");
       if (fileConflict && openDocumentFileConflict(fileConflict)) return;
+      const confirmation = result.response.status === 409
+        ? result.document?.querySelector("main.confirmation-page")
+        : null;
+      if (confirmation && confirmDocumentAction(confirmation, form, submitter)) return;
       const responseMain = result.document?.querySelector("main");
       const refreshSelector = form.dataset.asyncRefresh;
-      const isTaskValidation = result.response.status === 422 && responseMain &&
-        !responseMain.matches(".error-page");
-      if (!result.response.ok && !isTaskValidation) {
+      // 修复快速创建的 409 来源冲突被当作通用错误：可继续操作的任务页应留在抽屉内展示。
+      const isTaskContinuation = (result.response.status === 409 || result.response.status === 422) &&
+        responseMain?.matches("[data-task-page]:not(.error-page)");
+      if (!result.response.ok && !isTaskContinuation) {
         const retryable = form.hasAttribute("data-server-error-retry");
         showServerError(result, {
           url: action,

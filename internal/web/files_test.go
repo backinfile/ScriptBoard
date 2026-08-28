@@ -157,6 +157,75 @@ func TestFilesPageOffersAnAbsolutePathMoveTask(t *testing.T) {
 	}
 }
 
+func TestFilesPageOffersRenameDrawersForFilesAndDirectories(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "host")
+	directoryPath := filepath.Join(hostRoot, "reports")
+	filePath := filepath.Join(hostRoot, "draft.txt")
+	if err := os.MkdirAll(directoryPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte("rename me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+
+	for _, item := range []struct {
+		path, name, renamed string
+	}{
+		{path: filePath, name: "draft.txt", renamed: "final.txt"},
+		{path: directoryPath, name: "reports", renamed: "archive"},
+	} {
+		renameURL := hostFileHref("/resources/files/rename", item.path)
+		if !bytes.Contains(listing, []byte(`href="`+renameURL+`" data-task-link`)) {
+			t.Fatalf("files page does not offer rename task %q: %s", renameURL, listing)
+		}
+		response, err = client.Get(serverURL + renameURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK ||
+			!bytes.Contains(task, []byte(`data-task-kind="rename-file"`)) ||
+			!bytes.Contains(task, []byte(`name="source" value="`+html.EscapeString(item.path)+`"`)) ||
+			!bytes.Contains(task, []byte(`name="working_directory" value="`+html.EscapeString(hostRoot)+`"`)) ||
+			!bytes.Contains(task, []byte(`name="name" value="`+item.name+`"`)) ||
+			bytes.Contains(task, []byte(`data-directory-picker`)) {
+			t.Fatalf("rename task status=%d body=%s", response.StatusCode, task)
+		}
+		response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
+			"csrf_token":        {formToken(t, task)},
+			"source":            {item.path},
+			"working_directory": {hostRoot},
+			"name":              {item.renamed},
+			"conflict_action":   {""},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusSeeOther {
+			t.Fatalf("rename %s status=%d", item.path, response.StatusCode)
+		}
+		if _, err := os.Stat(filepath.Join(hostRoot, item.renamed)); err != nil {
+			t.Fatalf("renamed entry %s is missing: %v", item.renamed, err)
+		}
+		if _, err := os.Stat(item.path); !os.IsNotExist(err) {
+			t.Fatalf("original entry still exists after rename: %s", item.path)
+		}
+	}
+}
+
 func TestFilesPageOffersPlatformPermissionTasksForFilesAndDirectories(t *testing.T) {
 	t.Parallel()
 

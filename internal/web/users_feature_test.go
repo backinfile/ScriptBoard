@@ -625,7 +625,7 @@ func TestRestrictedRolePagesHideUnavailableActions(t *testing.T) {
 	}
 	operatorFiles, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, forbidden := range []string{"/resources/files/upload", "/resources/files/delete", "/resources/files/edit", "/resources/files/move", "/resources/files/quick-run"} {
+	for _, forbidden := range []string{"/resources/files/upload", "/resources/files/delete", "/resources/files/edit", "/resources/files/rename", "/resources/files/move", "/resources/files/quick-run"} {
 		if strings.Contains(string(operatorFiles), forbidden) {
 			t.Errorf("operator file page exposed %q", forbidden)
 		}

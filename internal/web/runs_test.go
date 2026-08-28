@@ -746,6 +746,21 @@ func TestRunningScriptCannotBeDeleted(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
+		"script":     {filepath.Join(hostRoot, scriptName)},
+		"csrf_token": {formToken(t, filesPage)},
+	})
+	if err != nil {
+		t.Fatalf("request overlapping run confirmation: %v", err)
+	}
+	overlapBody, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict ||
+		!strings.HasPrefix(response.Header.Get("Content-Type"), "text/html") ||
+		!strings.Contains(string(overlapBody), `class="workspace confirmation-page"`) ||
+		!strings.Contains(string(overlapBody), `name="confirm_overlap" value="yes"`) {
+		t.Fatalf("overlap confirmation response: status=%d content-type=%q body=%s", response.StatusCode, response.Header.Get("Content-Type"), overlapBody)
+	}
 	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
 		"path":       {filepath.Join(hostRoot, scriptName)},
 		"csrf_token": {formToken(t, filesPage)},

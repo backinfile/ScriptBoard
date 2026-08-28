@@ -143,6 +143,34 @@ func (a *App) moveFileTask(response http.ResponseWriter, request *http.Request) 
 	})
 }
 
+func (a *App) renameFileTask(response http.ResponseWriter, request *http.Request) {
+	path, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
+	if err != nil {
+		writeHostFileError(response, "无法打开重命名任务", err)
+		return
+	}
+	info, canMutate, infoErr := a.hostInfo(request.Context(), path)
+	if infoErr != nil || !canMutate {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	parent, ok := hostPathParent(path)
+	if !ok {
+		http.Error(response, "filesystem roots cannot be renamed", http.StatusBadRequest)
+		return
+	}
+	titleKey, descriptionKey := "task.rename_file.title", "task.rename_file.description"
+	if info.IsDir() {
+		titleKey, descriptionKey = "task.rename_directory.title", "task.rename_directory.description"
+	}
+	a.renderTaskPage(response, request, taskPageData{
+		Kind: "rename-file", Title: webText(resolveWebLocale(request), titleKey),
+		Description: webText(resolveWebLocale(request), descriptionKey), IsDirectory: info.IsDir(),
+		BackURL: filesURL(parent), Action: "/resources/files/move", Path: path,
+		Name: hostfiles.Base(path), WorkingDirectory: parent,
+	})
+}
+
 func (a *App) runFileTask(response http.ResponseWriter, request *http.Request) {
 	relative := request.URL.Query().Get("path")
 	info, _, err := a.hostInfo(request.Context(), relative)
