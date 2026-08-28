@@ -49,3 +49,28 @@ func TestPrimaryNavigationPagesShareHeadingContract(t *testing.T) {
 		}
 	}
 }
+
+func TestFileGroupActionPrecedesNewDirectoryInHeading(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile(filepath.Join("ui", "templates", "files.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	headingEnd := bytes.Index(source, []byte(`</header>`))
+	if headingEnd < 0 {
+		t.Fatal("files heading is missing its closing tag")
+	}
+	heading := source[:headingEnd]
+	groupAction := []byte(`/config/groups/new?return_to=%2Fresources%2Ffiles`)
+	newDirectoryAction := []byte(`/resources/files/new-directory?path=`)
+	groupIndex := bytes.Index(heading, groupAction)
+	newDirectoryIndex := bytes.Index(heading, newDirectoryAction)
+	if groupIndex < 0 || newDirectoryIndex < 0 || groupIndex >= newDirectoryIndex {
+		t.Fatalf("file heading actions must place New group before New directory")
+	}
+	if bytes.Contains(source[headingEnd:], groupAction) {
+		t.Fatal("New group action must not remain inside the Quick access panel")
+	}
+}
