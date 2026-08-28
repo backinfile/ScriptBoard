@@ -20,7 +20,8 @@ package migrations
 // visibility; schema 57 reconciles both histories into one upgrade path;
 // schema 58 adds per-function External Interface approval queues; schema 59
 // distinguishes file and directory Quick access targets; schema 60 adds MCP
-// OAuth clients, grants, opaque-token families and bounded invocation records.
+// OAuth clients, grants, opaque-token families and bounded invocation records;
+// schema 61 adds an opt-in manual-start confirmation for Quick Runs.
 //
 // The explicit current-version guard forces a deliberate policy update when a
 // future schema is introduced instead of silently promising an untested path.
@@ -29,7 +30,7 @@ func Compatible(current, existing int) bool {
 		return true
 	}
 	switch current {
-	case 57, 58, 59, 60:
+	case 57, 58, 59, 60, 61:
 		return existing >= 20 && existing < current
 	default:
 		return false

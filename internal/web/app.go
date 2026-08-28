@@ -2637,21 +2637,22 @@ func (a *App) deleteSchedule(response http.ResponseWriter, request *http.Request
 }
 
 type quickRunView struct {
-	ID                string
-	Name              string
-	ScriptPath        string
-	DirectoryURL      string
-	ArgumentsTemplate string
-	TimeoutSeconds    int
-	GroupID           string
-	Valid             bool
-	Locked            bool
-	RecentRuns        []quickRunHistoryView
-	LastStartedAt     time.Time
-	LastDuration      string
-	HasLastDuration   bool
-	ScriptSHA256      string
-	Revision          int64
+	ID                  string
+	Name                string
+	ScriptPath          string
+	DirectoryURL        string
+	ArgumentsTemplate   string
+	TimeoutSeconds      int
+	GroupID             string
+	Valid               bool
+	Locked              bool
+	RequireConfirmation bool
+	RecentRuns          []quickRunHistoryView
+	LastStartedAt       time.Time
+	LastDuration        string
+	HasLastDuration     bool
+	ScriptSHA256        string
+	Revision            int64
 }
 
 type quickRunHistoryView struct {
@@ -2669,12 +2670,13 @@ type overlapView struct {
 }
 
 type quickRunCreateRequest struct {
-	Name              string
-	ScriptPath        string
-	ArgumentsTemplate string
-	TimeoutSeconds    int
-	SourceRunID       *string
-	GroupID           *string
+	Name                string
+	ScriptPath          string
+	ArgumentsTemplate   string
+	TimeoutSeconds      int
+	SourceRunID         *string
+	GroupID             *string
+	RequireConfirmation bool
 }
 
 func (a *App) createQuickRun(ctx context.Context, values quickRunCreateRequest) (string, error) {
@@ -2697,10 +2699,10 @@ func (a *App) createQuickRun(ctx context.Context, values quickRunCreateRequest) 
 	}
 	now := time.Now().UTC().Unix()
 	if _, err := transaction.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, script_sha256, revision, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
 		id, values.Name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), values.ArgumentsTemplate, values.TimeoutSeconds,
-		values.SourceRunID, sortOrder, now, values.GroupID, prepared.Digest, now,
+		values.SourceRunID, sortOrder, now, values.GroupID, values.RequireConfirmation, prepared.Digest, now,
 	); err != nil {
 		return "", err
 	}
@@ -2737,6 +2739,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 	id, err := a.createQuickRun(request.Context(), quickRunCreateRequest{
 		Name: name, ScriptPath: source.ScriptPath, ArgumentsTemplate: source.ArgumentsTemplate,
 		TimeoutSeconds: source.TimeoutSeconds, SourceRunID: &source.ID, GroupID: groupID,
+		RequireConfirmation: request.FormValue("require_confirmation") == "1",
 	})
 	if err != nil {
 		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
@@ -2797,6 +2800,7 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 	id, err := a.createQuickRun(request.Context(), quickRunCreateRequest{
 		Name: name, ScriptPath: scriptPath, ArgumentsTemplate: argumentsTemplate,
 		TimeoutSeconds: timeoutSeconds, SourceRunID: nil, GroupID: groupID,
+		RequireConfirmation: request.FormValue("require_confirmation") == "1",
 	})
 	if err != nil {
 		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
@@ -2843,7 +2847,7 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "无法读取快捷执行分组", http.StatusInternalServerError)
 		return
 	}
-	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, timeout_seconds, group_id, locked, script_sha256, revision
+	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, timeout_seconds, group_id, locked, require_confirmation, script_sha256, revision
 		FROM quick_runs ORDER BY sort_order, created_at`)
 	if err != nil {
 		http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
@@ -2853,7 +2857,7 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	for rows.Next() {
 		var quick quickRunView
 		var groupID sql.NullString
-		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds, &groupID, &quick.Locked, &quick.ScriptSHA256, &quick.Revision); err != nil {
+		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds, &groupID, &quick.Locked, &quick.RequireConfirmation, &quick.ScriptSHA256, &quick.Revision); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 			return

@@ -125,6 +125,7 @@ var baseSchemaStatements = []string{
 			created_at INTEGER NOT NULL,
 			group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL,
 			locked INTEGER NOT NULL DEFAULT 0,
+			require_confirmation INTEGER NOT NULL DEFAULT 0 CHECK (require_confirmation IN (0, 1)),
 			script_sha256 TEXT NOT NULL DEFAULT '',
 			revision INTEGER NOT NULL DEFAULT 1,
 			updated_at INTEGER NOT NULL DEFAULT 0

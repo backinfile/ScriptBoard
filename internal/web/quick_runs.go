@@ -158,10 +158,10 @@ func (a *App) loadQuickRun(id string) (quickRunRecord, error) {
 	var quick quickRunRecord
 	var groupID sql.NullString
 	err := a.db.QueryRow(`SELECT id, name, script_path, arguments_template, timeout_seconds,
-		source_run_id, sort_order, group_id, locked, script_sha256, revision
+		source_run_id, sort_order, group_id, locked, require_confirmation, script_sha256, revision
 		FROM quick_runs WHERE id = ?`, id).Scan(
 		&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds,
-		&quick.SourceRunID, &quick.SortOrder, &groupID, &quick.Locked, &quick.ScriptSHA256, &quick.Revision,
+		&quick.SourceRunID, &quick.SortOrder, &groupID, &quick.Locked, &quick.RequireConfirmation, &quick.ScriptSHA256, &quick.Revision,
 	)
 	if groupID.Valid {
 		quick.GroupID = groupID.String
@@ -647,15 +647,16 @@ func (a *App) editQuickRunTask(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	a.renderTaskPage(response, request, taskPageData{
-		Kind:           "quick-edit",
-		Title:          webText(resolveWebLocale(request), "task.quick_edit.title"),
-		Description:    webText(resolveWebLocale(request), "task.quick_edit.description"),
-		BackURL:        "/config/quick-runs",
-		Action:         "/config/quick-runs/" + quick.ID + "/update",
-		Path:           quick.ScriptPath,
-		Name:           quick.Name,
-		Arguments:      quick.ArgumentsTemplate,
-		TimeoutSeconds: quick.TimeoutSeconds,
+		Kind:                "quick-edit",
+		Title:               webText(resolveWebLocale(request), "task.quick_edit.title"),
+		Description:         webText(resolveWebLocale(request), "task.quick_edit.description"),
+		BackURL:             "/config/quick-runs",
+		Action:              "/config/quick-runs/" + quick.ID + "/update",
+		Path:                quick.ScriptPath,
+		Name:                quick.Name,
+		Arguments:           quick.ArgumentsTemplate,
+		TimeoutSeconds:      quick.TimeoutSeconds,
+		RequireConfirmation: quick.RequireConfirmation,
 	})
 }
 
@@ -691,11 +692,17 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		return
 	}
 	defer transaction.Rollback()
-	newRevision := quick.Revision + 1
+	requireConfirmation := request.FormValue("require_confirmation") == "1"
+	// Manual confirmation is a UI safety preference, so toggling it does not publish a new executable version.
+	publicationChanged := name != quick.Name || arguments != quick.ArgumentsTemplate || timeoutSeconds != quick.TimeoutSeconds || prepared.Digest != quick.ScriptSHA256
+	newRevision := quick.Revision
+	if publicationChanged {
+		newRevision++
+	}
 	result, err := transaction.ExecContext(request.Context(), `UPDATE quick_runs
-		SET name = ?, arguments_template = ?, timeout_seconds = ?, script_sha256 = ?, revision = ?, updated_at = ?
+		SET name = ?, arguments_template = ?, timeout_seconds = ?, require_confirmation = ?, script_sha256 = ?, revision = ?, updated_at = ?
 		WHERE id = ? AND locked = 0 AND revision = ?`,
-		name, arguments, timeoutSeconds, prepared.Digest, newRevision, now.Unix(), id, quick.Revision)
+		name, arguments, timeoutSeconds, requireConfirmation, prepared.Digest, newRevision, now.Unix(), id, quick.Revision)
 	count := int64(0)
 	if err == nil {
 		count, _ = result.RowsAffected()
@@ -713,7 +720,7 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		return
 	}
 	synchronizeExternal := request.FormValue("sync_external_interfaces") == "1"
-	if synchronizeExternal {
+	if synchronizeExternal && publicationChanged {
 		if _, err = externaltrigger.RebindQuickRunEntries(request.Context(), transaction, id, newRevision, prepared.Digest, now); err != nil {
 			http.Error(response, "无法同步外部接口", http.StatusInternalServerError)
 			return
@@ -724,7 +731,7 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		return
 	}
 	a.recordAuditResourceForRequest(request, "update_quick_run", id, "succeeded", strconv.FormatInt(newRevision, 10), prepared.Digest)
-	if synchronizeExternal {
+	if synchronizeExternal && publicationChanged {
 		a.recordAuditResourceForRequest(request, "sync_quick_run_external_interfaces", id, "succeeded", strconv.FormatInt(newRevision, 10), prepared.Digest)
 	}
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
@@ -756,21 +763,22 @@ func (a *App) copyQuickRunTask(response http.ResponseWriter, request *http.Reque
 	}
 	locale := resolveWebLocale(request)
 	a.renderTaskPage(response, request, taskPageData{
-		Kind:           "quick-copy",
-		Title:          webText(locale, "task.quick_copy.title"),
-		Description:    webText(locale, "task.quick_copy.description"),
-		BackURL:        "/config/quick-runs",
-		Action:         "/config/quick-runs/" + quick.ID + "/copy",
-		Path:           quick.ScriptPath,
-		Name:           quickRunCopyName(quick.Name, locale),
-		Arguments:      quick.ArgumentsTemplate,
-		TimeoutSeconds: quick.TimeoutSeconds,
-		GroupID:        quick.GroupID,
-		Groups:         groups,
+		Kind:                "quick-copy",
+		Title:               webText(locale, "task.quick_copy.title"),
+		Description:         webText(locale, "task.quick_copy.description"),
+		BackURL:             "/config/quick-runs",
+		Action:              "/config/quick-runs/" + quick.ID + "/copy",
+		Path:                quick.ScriptPath,
+		Name:                quickRunCopyName(quick.Name, locale),
+		Arguments:           quick.ArgumentsTemplate,
+		TimeoutSeconds:      quick.TimeoutSeconds,
+		RequireConfirmation: quick.RequireConfirmation,
+		GroupID:             quick.GroupID,
+		Groups:              groups,
 	})
 }
 
-func (a *App) createQuickRunCopy(ctx context.Context, source quickRunRecord, scriptPath, name, arguments string, timeoutSeconds int, groupID *string) (string, error) {
+func (a *App) createQuickRunCopy(ctx context.Context, source quickRunRecord, scriptPath, name, arguments string, timeoutSeconds int, groupID *string, requireConfirmation bool) (string, error) {
 	prepared, err := a.hostPrepareScript(ctx, scriptPath)
 	if err != nil {
 		return "", err
@@ -810,10 +818,10 @@ func (a *App) createQuickRunCopy(ctx context.Context, source quickRunRecord, scr
 	}
 	if _, err = transaction.Exec(`INSERT INTO quick_runs
 		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id,
-		sort_order, created_at, group_id, locked, script_sha256, revision, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?)`,
+		sort_order, created_at, group_id, locked, require_confirmation, script_sha256, revision, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?)`,
 		id, name, scriptPath, hostfiles.ComparisonKey(scriptPath), arguments, timeoutSeconds, sourceRunID,
-		sortOrder, now, targetGroup, prepared.Digest, now); err != nil {
+		sortOrder, now, targetGroup, requireConfirmation, prepared.Digest, now); err != nil {
 		return "", err
 	}
 	if err := transaction.Commit(); err != nil {
@@ -851,7 +859,7 @@ func (a *App) copyQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
 		return
 	}
-	id, err := a.createQuickRunCopy(request.Context(), source, scriptPath, name, arguments, timeoutSeconds, groupID)
+	id, err := a.createQuickRunCopy(request.Context(), source, scriptPath, name, arguments, timeoutSeconds, groupID, request.FormValue("require_confirmation") == "1")
 	if err != nil {
 		http.Error(response, "无法复制快捷执行", http.StatusInternalServerError)
 		return

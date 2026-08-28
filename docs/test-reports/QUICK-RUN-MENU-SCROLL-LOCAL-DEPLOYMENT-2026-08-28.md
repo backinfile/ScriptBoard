@@ -6,7 +6,7 @@
 
 基线提交：`671a575 merge: add cross-platform host file permissions`
 
-结论：**通过（17/17）**。长操作菜单现在可以完整上下滚动；左下角恰好只有一个活动 Run 时直接进入其详情，多个活动 Run 时仍进入运行记录页。
+结论：**通过**。长操作菜单现在可以完整上下滚动；左下角恰好只有一个活动 Run 时直接进入其详情；启用“运行二次确认”的快捷执行在手动运行前会弹窗确认。
 
 ## 1. 部署信息
 
@@ -14,7 +14,7 @@
 | --- | --- |
 | 部署模式 | Windows 便携部署 |
 | 地址 | `http://127.0.0.1:18841` |
-| 进程 | PID `10348`，报告生成时仍在监听 |
+| 进程 | PID `47800`，报告更新时仍在监听 |
 | 部署目录 | `.scratch/local-deploy-quick-run-menu-scroll-671a575` |
 | State Root | `.scratch/local-deploy-quick-run-menu-scroll-671a575/state` |
 | 管理员 | `admin`；一次性密码仅保留在 State Root 的 `secrets/initial-admin-password` |
@@ -81,6 +81,27 @@
 
 ## 6. 保留状态
 
-- 新部署继续监听 `127.0.0.1:18841`，PID 为 `10348`。
+- 新部署继续监听 `127.0.0.1:18841`，PID 为 `47800`。
 - 初始管理员密码未写入报告、日志或版本库，仅保留在部署 State Root 中。
 - 登录审计、浏览器结果、截图和部署日志均保留在部署目录。
+
+## 7. 快捷执行运行二次确认
+
+数据库由 schema 60 原地迁移到 schema 61，已有快捷执行默认保持关闭。外部 Playwright Chromium 使用真实部署创建并保留了开启二次确认的测试快捷执行 `Confirmation probe mtchq2so`。
+
+| # | 测试条目 | 结果 |
+| --- | --- | --- |
+| 1 | 创建表单与编辑表单 | 通过；均提供 bool 开关，默认关闭，保存后可回显 |
+| 2 | 手动点击运行 | 通过；显示 `Confirm running this Quick Run?` 自定义确认弹窗 |
+| 3 | 取消运行 | 通过；停留在 `/config/quick-runs`，未提交启动 |
+| 4 | 确认运行 | 通过；进入新 Run `/history/runs/odBhojSrMI2M5a6sYgTr1568` |
+| 5 | 非 UI 启动契约 | 通过；服务端启动接口不要求额外确认参数，调度与外部接口链路未改动 |
+| 6 | 迁移与版本语义 | 通过；旧数据默认关闭，单独切换确认偏好不会增加快捷执行版本号 |
+| 7 | 自动化回归 | 通过；`go test ./... -count=1` 与完整 Chromium desktop gate 均通过 |
+| 8 | 浏览器运行时 | 通过；无 page error，部署标准错误日志为 0 字节 |
+
+新增保留证据：
+
+- `.scratch/local-deploy-quick-run-menu-scroll-671a575/deployment-quick-run-confirmation-probe.cjs`
+- `.scratch/local-deploy-quick-run-menu-scroll-671a575/deployment-quick-run-confirmation-probe.json`
+- `.scratch/local-deploy-quick-run-menu-scroll-671a575/quick-run-confirmation.png`

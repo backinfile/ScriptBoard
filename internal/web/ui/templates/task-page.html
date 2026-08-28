@@ -288,6 +288,7 @@
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
           <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+          <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "quick_runs.require_confirmation"}}</strong><small>{{t .Locale "quick_runs.require_confirmation_hint"}}</small></span><input class="switch" type="checkbox" name="require_confirmation" value="1" {{if .RequireConfirmation}}checked{{end}}></label>
         </section>
         {{if .Conflict}}
         <section class="page-error" role="alert">
@@ -337,6 +338,7 @@
           <p class="ds-title"><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
           <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" required autofocus></label>
           <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+          <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "quick_runs.require_confirmation"}}</strong><small>{{t .Locale "quick_runs.require_confirmation_hint"}}</small></span><input class="switch" type="checkbox" name="require_confirmation" value="1"></label>
         </section>
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "run_detail.save_quick"}}</button></footer>
@@ -359,6 +361,7 @@
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
           <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+          <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "quick_runs.require_confirmation"}}</strong><small>{{t .Locale "quick_runs.require_confirmation_hint"}}</small></span><input class="switch" type="checkbox" name="require_confirmation" value="1"></label>
         </section>
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t .Locale "run_detail.save_quick"}}</button></footer>
@@ -401,6 +404,7 @@
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
           <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "task.quick_edit.sync_external"}}</strong><small>{{t .Locale "task.quick_edit.sync_external_hint"}}</small></span><input class="switch" type="checkbox" name="sync_external_interfaces" value="1"></label>
+          <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "quick_runs.require_confirmation"}}</strong><small>{{t .Locale "quick_runs.require_confirmation_hint"}}</small></span><input class="switch" type="checkbox" name="require_confirmation" value="1" {{if .RequireConfirmation}}checked{{end}}></label>
         </section>
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
@@ -423,6 +427,7 @@
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
           <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+          <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "quick_runs.require_confirmation"}}</strong><small>{{t .Locale "quick_runs.require_confirmation_hint"}}</small></span><input class="switch" type="checkbox" name="require_confirmation" value="1" {{if .RequireConfirmation}}checked{{end}}></label>
         </section>
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="copy" aria-hidden="true"></span>{{t .Locale "quick_runs.copy"}}</button></footer>
