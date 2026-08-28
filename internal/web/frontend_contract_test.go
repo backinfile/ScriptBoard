@@ -284,11 +284,82 @@ func TestApplicationShellAndStatusEndpointShareFiveSecondSnapshot(t *testing.T) 
 	}
 }
 
+func TestSingleActiveRunUsesDirectShellDestination(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "host")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	application, err := app.Open(app.Config{
+		StateRoot:             stateRoot,
+		FileTopology:          testHostTopology{root: hostRoot},
+		CustomDashboardClient: &http.Client{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(hostRoot, "only-active.cmd")
+	if _, err := db.Exec(`INSERT INTO runs
+		(id, script_path, script_path_key, script_sha256, arguments_template, arguments_json, executor, source_type, status, created_at, error, log_path)
+		VALUES ('only-active-run', ?, ?, 'digest', '', '[]', 'cmd.exe', 'manual', 'running', 1, '', '')`,
+		scriptPath, hostfiles.ComparisonKey(scriptPath)); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	passwordBytes, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	login(t, client, server.URL, strings.TrimSpace(string(passwordBytes)), http.StatusSeeOther)
+
+	pageResponse, err := client.Get(server.URL + "/resources/variables")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(pageResponse.Body)
+	_ = pageResponse.Body.Close()
+	if pageResponse.StatusCode != http.StatusOK || !strings.Contains(string(page), `href="/history/runs/only-active-run" data-shell-attention-item="runs"`) {
+		t.Fatalf("single active Run shell destination: status=%d body=%s", pageResponse.StatusCode, page)
+	}
+
+	statusResponse, err := client.Get(server.URL + "/monitor/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusResponse.Body.Close()
+	var status shellStatusPayload
+	if err := json.NewDecoder(statusResponse.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status.ActiveRuns != 1 || status.ActiveRunID != "only-active-run" {
+		t.Fatalf("single active Run status=%+v", status)
+	}
+}
+
 type shellStatusPayload struct {
 	State       string `json:"state"`
 	CollectedAt string `json:"collectedAt"`
 	IssueCount  int    `json:"issueCount"`
 	ActiveRuns  int    `json:"activeRuns"`
+	ActiveRunID string `json:"activeRunId"`
 }
 
 func TestAuthenticatedNavigationUsesGroupedMonitorRoute(t *testing.T) {
