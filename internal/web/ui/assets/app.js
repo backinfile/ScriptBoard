@@ -2475,10 +2475,15 @@
       if (confirmation && confirmDocumentAction(confirmation, form, submitter)) return;
       const responseMain = result.document?.querySelector("main");
       const refreshSelector = form.dataset.asyncRefresh;
+      const isTaskValidation = result.response.status === 422 && responseMain &&
+        !responseMain.matches(".error-page");
       // 修复快速创建的 409 来源冲突被当作通用错误：可继续操作的任务页应留在抽屉内展示。
-      const isTaskContinuation = (result.response.status === 409 || result.response.status === 422) &&
+      const isTaskContinuation = result.response.status === 409 &&
         responseMain?.matches("[data-task-page]:not(.error-page)");
-      if (!result.response.ok && !isTaskContinuation) {
+      if (!result.response.ok && !isTaskValidation) {
+        if (isTaskContinuation) {
+          // Continue below so the task panel can render the recoverable conflict.
+        } else {
         const retryable = form.hasAttribute("data-server-error-retry");
         showServerError(result, {
           url: action,
@@ -2494,6 +2499,7 @@
             : () => navigate(location.href, false),
         });
         return;
+        }
       }
       if (result.response.redirected && result.response.ok) {
         const destination = result.response.url;
