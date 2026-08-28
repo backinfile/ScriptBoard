@@ -1934,7 +1934,14 @@ async function assertExternalInterfaces(page, fixture) {
       .some(element => element.dataset.filePinLabel === "automation" && element.getAttribute("aria-pressed") === "true"));
     assert.equal(await automationPin.getAttribute("aria-pressed"), "true");
     assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
-    await quickAccess.getByRole("button", { name: /Edit display name/ }).click();
+    await page.locator('.sidebar-nav a[href="/monitor"]').click();
+    await page.locator("[data-host-overview]").waitFor();
+    await page.locator('.sidebar-nav a[href="/resources/files"]').click();
+    await page.waitForURL(url => new URL(url).pathname === "/resources/files");
+    await quickAccess.waitFor({ state: "visible" });
+    await quickAccess.locator(".file-quick-row").first().waitFor({ state: "attached" });
+    if ((await quickAccess.getAttribute("open")) === null) await quickAccess.locator("summary").click();
+    await quickAccess.locator("[data-file-quick-edit]").click();
     const quickAccessDrawerHost = page.locator("[data-file-quick-edit-drawer].is-open");
     await quickAccessDrawerHost.waitFor();
     const quickAccessDrawerBounds = await quickAccessDrawerHost.boundingBox();

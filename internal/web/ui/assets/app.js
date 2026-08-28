@@ -4282,6 +4282,8 @@
     if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel || !status) return;
     // Keep the fixed drawer in the viewport layer because animated workspace
     // ancestors establish their own containing blocks for fixed descendants.
+    const drawerOriginParent = drawerHost?.parentElement;
+    const drawerOriginNextSibling = drawerHost?.nextSibling;
     const promotedDrawer = Boolean(drawerHost && drawerHost.parentElement !== document.body);
     if (promotedDrawer) document.body.append(drawerHost);
 	const validationController = new AbortController();
@@ -4355,7 +4357,14 @@
     };
     if (drawerHost) cleanups.push(() => {
       closeEditor();
-      if (promotedDrawer) drawerHost.remove();
+      // Return the drawer before PJAX cleanup so deferred file data can
+      // initialize it again while full page swaps discard it with the old page.
+      if (promotedDrawer && drawerOriginParent?.isConnected) {
+        const anchor = drawerOriginNextSibling?.parentElement === drawerOriginParent ? drawerOriginNextSibling : null;
+        drawerOriginParent.insertBefore(drawerHost, anchor);
+      } else if (promotedDrawer) {
+        drawerHost.remove();
+      }
     });
     const openEditor = pin => {
       if (!drawerHost || !drawer || !editPath || !editLabel || !editTechnical) return;
@@ -4542,6 +4551,7 @@
         edit.className = "icon-button";
         edit.type = "button";
         edit.setAttribute("aria-label", `${disclosure.dataset.editLabel}: ${pin.label}`);
+        edit.dataset.fileQuickEdit = "";
         edit.dataset.tooltip = disclosure.dataset.editLabel;
         edit.append(makeIcon("pencil"));
         edit.addEventListener("click", () => openEditor(pin));

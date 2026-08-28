@@ -638,7 +638,9 @@ func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 		`savePin("rename"`,
 		`savePin("reorder"`,
 		`document.body.append(drawerHost)`,
+		`drawerOriginParent.insertBefore(drawerHost, anchor)`,
 		`drawerHost.remove()`,
+		`edit.dataset.fileQuickEdit = ""`,
 		`item.draggable = true`,
 		`focusedRow.scrollIntoView`,
 	} {
