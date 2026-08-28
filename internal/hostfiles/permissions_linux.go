@@ -39,7 +39,7 @@ func linuxPrincipal(id string, owner bool) Principal {
 }
 
 func (m *Manager) setPlatformPermissions(target string, _ os.FileInfo, change PermissionChange) error {
-	if change.Owner != "" || change.ReplaceChildOwners || change.Principal != "" || change.AccessMask != nil || change.RemoveRule || change.ApplyRuleToChildren || change.InheritanceEnabled != nil {
+	if change.Owner != "" || change.ReplaceChildOwners || change.Principal != "" || change.AccessMask != nil || change.RemoveRule || change.ApplyRuleToChildren || change.RuleAppliesTo != "" || change.InheritanceEnabled != nil {
 		return fmt.Errorf("Windows ownership and ACL fields are not valid on Linux")
 	}
 	if change.Mode == nil {

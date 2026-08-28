@@ -54,6 +54,7 @@ type PermissionChange struct {
 	AccessMask          *uint32 `json:"access_mask,omitempty"`
 	RemoveRule          bool    `json:"remove_rule,omitempty"`
 	ApplyRuleToChildren bool    `json:"apply_rule_to_children,omitempty"`
+	RuleAppliesTo       string  `json:"rule_applies_to,omitempty"`
 	InheritanceEnabled  *bool   `json:"inheritance_enabled,omitempty"`
 }
 

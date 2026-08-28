@@ -279,6 +279,9 @@ func TestFilesPageOffersPlatformPermissionTasksForFilesAndDirectories(t *testing
 				t.Fatalf("Windows permission task does not contain %q: %s", expected, task)
 			}
 		}
+		if count := bytes.Count(task, []byte(`name="inheritance_enabled"`)); count != 1 {
+			t.Fatalf("Windows permission task contains %d inheritance fields, want one: %s", count, task)
+		}
 	} else if runtime.GOOS == "linux" {
 		for _, expected := range []string{`name="owner_read"`, `name="group_write"`, `name="other_execute"`, `name="recursive"`} {
 			if !bytes.Contains(task, []byte(expected)) {

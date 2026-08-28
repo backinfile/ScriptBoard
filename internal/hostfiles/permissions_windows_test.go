@@ -61,3 +61,32 @@ func TestWindowsPermissionChangeRejectsPOSIXMode(t *testing.T) {
 		t.Fatal("Windows accepted a POSIX mode")
 	}
 }
+
+func TestWindowsPermissionChangePreservesFileOnlyChildScope(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reports")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := Open(Options{ProtectedPaths: []string{t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := manager.Permissions(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mask := uint32(windows.FILE_GENERIC_READ)
+	after, err := manager.SetPermissions(path, PermissionChange{
+		Principal: before.Owner.ID, AccessMask: &mask,
+		ApplyRuleToChildren: true, RuleAppliesTo: "files",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range after.Rules {
+		if rule.Principal.ID == before.Owner.ID && !rule.Inherited && rule.Kind == "allow" && rule.AppliesTo == "files" {
+			return
+		}
+	}
+	t.Fatalf("file-only explicit rule missing: %+v", after.Rules)
+}

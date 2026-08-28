@@ -117,3 +117,31 @@ func TestConcurrentRequestCannotExecuteWhileClaimIsActive(t *testing.T) {
 		t.Fatalf("executions=%d, want 1", executions.Load())
 	}
 }
+
+func TestUncachedOutcomeReleasesRequestForAConfirmedRetry(t *testing.T) {
+	db := openLedgerTestDB(t)
+	ledger := NewLedger(db, time.Now)
+	key := Key{UserID: "u1", ClientID: "c1", Tool: "start", RequestID: "request-conflict"}
+	executions := 0
+
+	first, err := ledger.Execute(context.Background(), key, func() (any, error) {
+		executions++
+		return Uncached(map[string]any{"conflict": "active run"}), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ledger.Execute(context.Background(), key, func() (any, error) {
+		executions++
+		return map[string]any{"run_id": "confirmed"}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executions != 2 {
+		t.Fatalf("executions=%d, want conflict and confirmed retry", executions)
+	}
+	if first.(map[string]any)["conflict"] != "active run" || second.(map[string]any)["run_id"] != "confirmed" {
+		t.Fatalf("results=(%#v, %#v)", first, second)
+	}
+}

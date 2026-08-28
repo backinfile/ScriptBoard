@@ -1595,14 +1595,14 @@ async function assertExternalInterfaces(page, fixture) {
     await page.setViewportSize({ width: 1440, height: 1000 });
 
     await page.goto(`${fixture.baseURL}/config/schedules`);
-    const scheduleCreateGroupControl = page.locator('a[href="/config/schedules/groups/new"]');
+    const scheduleCreateGroupControl = page.locator('a[href="/config/groups/new?return_to=%2Fconfig%2Fschedules"]');
     const scheduleCreateGroupContract = await scheduleCreateGroupControl.evaluate(element => ({
       classes: [...element.classList].sort(),
       insideHeadingActions: Boolean(element.closest(".heading-actions")),
     }));
     assert.deepEqual(scheduleCreateGroupContract, { classes: ["button"], insideHeadingActions: true });
     await scheduleCreateGroupControl.click();
-    const scheduleGroupTask = page.locator('[data-task-panel] [data-task-kind="schedule-group-new"]');
+    const scheduleGroupTask = page.locator('[data-task-panel] [data-task-kind="record-group-new"]');
     await scheduleGroupTask.waitFor();
     await scheduleGroupTask.locator('input[name="name"]').fill("Operations");
     await scheduleGroupTask.getByRole("button", { name: "Create", exact: true }).click();
@@ -1649,7 +1649,7 @@ async function assertExternalInterfaces(page, fixture) {
       }),
     );
     assert.ok(scheduleMobileActions.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(scheduleMobileActions));
-    const scheduleCreateGroupMobileSize = await page.locator('a[href="/config/schedules/groups/new"]').evaluate(element => {
+    const scheduleCreateGroupMobileSize = await page.locator('a[href="/config/groups/new?return_to=%2Fconfig%2Fschedules"]').evaluate(element => {
       const bounds = element.getBoundingClientRect();
       return { width: Math.round(bounds.width), height: Math.round(bounds.height) };
     });
@@ -1710,7 +1710,7 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(new Set(quickHeadingMetrics.map(metric => metric.height)).size, 1, JSON.stringify(quickHeadingMetrics));
     assert.deepEqual(
       await quickHeadingActions.evaluateAll(actions => actions.map(action => `${new URL(action.href).pathname}${new URL(action.href).search}`)),
-      ["/config/quick-runs?reorder=1", "/config/quick-runs/groups/new", "/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new"],
+      ["/config/quick-runs?reorder=1", "/config/groups/new?return_to=%2Fconfig%2Fquick-runs", "/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new"],
     );
 
     const assertWorkingDirectoryTree = async (href, kind) => {
@@ -1740,16 +1740,16 @@ async function assertExternalInterfaces(page, fixture) {
     await assertWorkingDirectoryTree("/config/quick-runs/one-time/new", "one-time-run");
     await assertWorkingDirectoryTree("/config/quick-runs/from-source/new", "quick-create");
 
-    const quickCreateGroupControl = page.locator('a[href="/config/quick-runs/groups/new"]');
+    const quickCreateGroupControl = page.locator('a[href="/config/groups/new?return_to=%2Fconfig%2Fquick-runs"]');
     const quickCreateGroupContract = await quickCreateGroupControl.evaluate(element => ({
       classes: [...element.classList].sort(),
       insideHeadingActions: Boolean(element.closest(".heading-actions")),
     }));
     assert.deepEqual(quickCreateGroupContract, scheduleCreateGroupContract);
     await quickCreateGroupControl.click();
-    await page.locator('[data-task-panel] [data-task-kind="quick-group-new"]').waitFor();
-    await page.locator('[data-task-panel] input[name="name"]').fill("Operations");
-    await page.locator('[data-task-panel] button[type="submit"]').click();
+    await page.locator('[data-task-panel] [data-task-kind="record-group-new"]').waitFor();
+    // The Schedule flow already created this shared group; verify the Quick Run entry point reuses the same task and catalog.
+    await page.locator("[data-task-panel-close]").click();
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
     const operationsGroup = page.locator('[data-quick-run-group][data-group-name="Operations"]');
     await operationsGroup.waitFor();
@@ -1843,7 +1843,7 @@ async function assertExternalInterfaces(page, fixture) {
       }),
     );
     assert.ok(quickRunMobileActions.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(quickRunMobileActions));
-    const quickCreateGroupMobileSize = await page.locator('a[href="/config/quick-runs/groups/new"]').evaluate(element => {
+    const quickCreateGroupMobileSize = await page.locator('a[href="/config/groups/new?return_to=%2Fconfig%2Fquick-runs"]').evaluate(element => {
       const bounds = element.getBoundingClientRect();
       return { width: Math.round(bounds.width), height: Math.round(bounds.height) };
     });

@@ -31,6 +31,13 @@ type storedResult struct {
 	Result json.RawMessage `json:"result,omitempty"`
 }
 
+type uncachedOutcome struct{ value any }
+
+// Uncached returns an operation outcome without consuming its idempotency key.
+// Use it when no command was executed and the caller may retry after confirming
+// or resolving a transient precondition.
+func Uncached(value any) any { return uncachedOutcome{value: value} }
+
 var processingResult = mustStoredResult(storedResult{State: "processing"})
 
 func NewLedger(db *sql.DB, now func() time.Time) *Ledger {
@@ -52,6 +59,12 @@ func (ledger *Ledger) Execute(ctx context.Context, key Key, operation func() (an
 	if err != nil {
 		ledger.releaseFailedOperation(ctx, key, claimedAt)
 		return nil, err
+	}
+	if outcome, ok := result.(uncachedOutcome); ok {
+		if err := ledger.releaseClaim(ctx, key, claimedAt); err != nil {
+			return nil, fmt.Errorf("release unexecuted MCP request: %w", err)
+		}
+		return outcome.value, nil
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
@@ -141,9 +154,14 @@ func decodeStoredResult(body string) (any, error) {
 }
 
 func (ledger *Ledger) releaseFailedOperation(ctx context.Context, key Key, claimedAt int64) {
-	_, _ = ledger.db.ExecContext(ctx, `DELETE FROM mcp_idempotency
+	_ = ledger.releaseClaim(ctx, key, claimedAt)
+}
+
+func (ledger *Ledger) releaseClaim(ctx context.Context, key Key, claimedAt int64) error {
+	_, err := ledger.db.ExecContext(ctx, `DELETE FROM mcp_idempotency
 		WHERE user_id=? AND client_id=? AND tool_name=? AND request_id=? AND created_at=? AND result_json=?`,
 		key.UserID, key.ClientID, key.Tool, key.RequestID, claimedAt, processingResult)
+	return err
 }
 
 func mustStoredResult(value storedResult) string {

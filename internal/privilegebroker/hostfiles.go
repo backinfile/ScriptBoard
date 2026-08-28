@@ -1050,7 +1050,7 @@ func isAbsoluteHostFilePath(path string) bool {
 }
 
 func validPermissionChange(change hostfiles.PermissionChange) bool {
-	if len(change.Owner) > 512 || len(change.Principal) > 512 || strings.ContainsAny(change.Owner+change.Principal, "\r\n\x00") {
+	if len(change.Owner) > 512 || len(change.Principal) > 512 || len(change.RuleAppliesTo) > 16 || strings.ContainsAny(change.Owner+change.Principal+change.RuleAppliesTo, "\r\n\x00") {
 		return false
 	}
 	if change.Mode != nil && *change.Mode > 0o777 {
@@ -1066,6 +1066,9 @@ func validPermissionChange(change hostfiles.PermissionChange) bool {
 		return false
 	}
 	if (change.ReplaceChildOwners && change.Owner == "") || (change.ApplyRuleToChildren && change.Principal == "") {
+		return false
+	}
+	if change.RuleAppliesTo != "" && (!change.ApplyRuleToChildren || change.RuleAppliesTo != "files" && change.RuleAppliesTo != "folders" && change.RuleAppliesTo != "children") {
 		return false
 	}
 	return change.Mode != nil || change.Owner != "" || change.Principal != "" || change.InheritanceEnabled != nil

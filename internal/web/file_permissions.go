@@ -162,7 +162,24 @@ func parsePermissionChange(request *http.Request, current hostfiles.Permissions)
 		Principal: strings.TrimSpace(request.FormValue("principal")), RemoveRule: request.FormValue("remove_rule") == "1",
 		ApplyRuleToChildren: current.Directory && request.FormValue("apply_rule_to_children") == "1",
 	}
-	inheritance := request.FormValue("inheritance_enabled") == "1"
+	if change.ApplyRuleToChildren {
+		switch scope := request.FormValue("rule_applies_to"); scope {
+		case "", "children":
+			change.RuleAppliesTo = scope
+		case "files", "folders":
+			change.RuleAppliesTo = scope
+		default:
+			return hostfiles.PermissionChange{}, fmt.Errorf("invalid Windows access rule child scope")
+		}
+	}
+	// A checked checkbox may arrive after an unchecked fallback value; accept any explicit true value.
+	inheritance := false
+	for _, value := range request.Form["inheritance_enabled"] {
+		if value == "1" {
+			inheritance = true
+			break
+		}
+	}
 	change.InheritanceEnabled = &inheritance
 	if change.Principal != "" && !change.RemoveRule {
 		mask := uint32(0)
@@ -189,6 +206,7 @@ func parsePermissionChange(request *http.Request, current hostfiles.Permissions)
 	}
 	if change.RemoveRule {
 		change.ApplyRuleToChildren = false
+		change.RuleAppliesTo = ""
 	}
 	if change.Owner == "" && change.Principal == "" && inheritance == current.InheritanceEnabled {
 		return hostfiles.PermissionChange{}, fmt.Errorf("请至少修改一项权限")

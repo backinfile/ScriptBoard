@@ -1527,10 +1527,15 @@
       const principal = form.querySelector("[data-permission-principal]");
       const rights = Object.fromEntries([...form.querySelectorAll("[data-permission-right]")].map(input => [input.dataset.permissionRight, input]));
       const remove = form.querySelector("[data-permission-remove]");
+      const appliesToChildren = form.querySelector("[data-permission-children]");
+      const ruleScope = form.querySelector("[data-permission-scope]");
       const selectRule = rule => {
         form.querySelectorAll("[data-permission-rule]").forEach(item => item.classList.toggle("is-selected", item === rule));
         if (principal) principal.value = rule.dataset.principal || "";
         Object.entries(rights).forEach(([name, input]) => { input.checked = rule.dataset[name] === "true"; });
+        const appliesTo = rule.dataset.appliesTo || "this_item";
+        if (appliesToChildren) appliesToChildren.checked = appliesTo !== "this_item";
+        if (ruleScope) ruleScope.value = appliesTo === "this_item" ? "" : appliesTo;
         if (remove) remove.checked = false;
         if (editor) editor.open = true;
         principal?.focus();

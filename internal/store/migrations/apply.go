@@ -131,14 +131,14 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 				}
 			}
 		}
+		// Retire the old catalog before copying shared groups so user-controlled
+		// Schedule group names cannot collide with migration placeholders.
 		if _, err := migration.Exec(`
-			UPDATE schedule_groups SET name = '__legacy__' || id;
+			UPDATE schedules SET group_id = NULL,
+				group_name = CASE WHEN deleted = 0 THEN '' ELSE group_name END;
+			DELETE FROM schedule_groups;
 			INSERT INTO schedule_groups (id, name, sort_order, created_at, updated_at)
-			SELECT id, name, sort_order, created_at, updated_at FROM quick_run_groups WHERE true
-			ON CONFLICT(id) DO UPDATE SET name=excluded.name, sort_order=excluded.sort_order,
-				created_at=excluded.created_at, updated_at=excluded.updated_at;
-			UPDATE schedules SET group_id = NULL, group_name = '' WHERE deleted = 0;
-			DELETE FROM schedule_groups WHERE id NOT IN (SELECT id FROM quick_run_groups);
+			SELECT id, name, sort_order, created_at, updated_at FROM quick_run_groups;
 			UPDATE variables SET sort_order = (
 				SELECT COUNT(*) FROM variables AS earlier WHERE earlier.name <= variables.name
 			);

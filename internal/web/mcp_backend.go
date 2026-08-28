@@ -121,7 +121,7 @@ func (a *App) StartQuickRun(ctx context.Context, p mcpaccess.Principal, input mc
 		}
 		result := any(started)
 		if started.Conflict != "" {
-			return result, nil
+			return mcpcommand.Uncached(result), nil
 		}
 		a.recordAuditWithActor("mcp_start_quick_run", input.QuickRunID, "accepted", "mcp:"+p.ClientID, p.UserID, p.Username, identity.Role(p.Role))
 		_ = a.mcpStore.RecordInvocation(ctx, p, tool, input.QuickRunID, mcpaccess.ParameterDigest([]byte(fmt.Sprintf("%s:%t", input.QuickRunID, input.ConfirmOverlap))), "accepted", input.RequestID)

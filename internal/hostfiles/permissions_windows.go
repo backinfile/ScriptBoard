@@ -141,6 +141,9 @@ func (m *Manager) setPlatformPermissions(target string, info os.FileInfo, change
 	if change.ApplyRuleToChildren && (!info.IsDir() || strings.TrimSpace(change.Principal) == "") {
 		return fmt.Errorf("applying an access rule to children requires a directory and an account")
 	}
+	if change.RuleAppliesTo != "" && !change.ApplyRuleToChildren {
+		return fmt.Errorf("Windows access rule child scope requires child propagation")
+	}
 	descriptor, err := windows.GetNamedSecurityInfo(target, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil || descriptor == nil {
@@ -212,7 +215,18 @@ func (m *Manager) setPlatformPermissions(target string, info os.FileInfo, change
 			}
 			inheritance := uint32(windows.NO_INHERITANCE)
 			if change.ApplyRuleToChildren {
-				inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
+				// Keep the original native child scope when an existing ACE is edited.
+				switch change.RuleAppliesTo {
+				case "files":
+					inheritance = windows.OBJECT_INHERIT_ACE
+				case "folders":
+					inheritance = windows.CONTAINER_INHERIT_ACE
+				case "", "children":
+					inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
+				default:
+					rollbackRoot()
+					return fmt.Errorf("Windows access rule child scope is invalid")
+				}
 			}
 			var pinner runtime.Pinner
 			pinner.Pin(principalSID)
