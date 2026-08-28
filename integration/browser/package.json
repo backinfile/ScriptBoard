@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Chromium regression gate and security inventory for ScriptBoard's vendored browser assets.",
   "scripts": {
-    "test": "node clipboard-fallback-contract.cjs && node custom-dashboard-drawer-contract.cjs && node custom-tabs-contract.cjs && node custom-dialog-contract.cjs && node failure-dialog-contract.cjs && node kubernetes-connection-delete-contract.cjs && node kubernetes-local-contract.cjs && node kubernetes-workload-node-contract.cjs && node action-menu-layer-contract.cjs && node icon-tooltip-layer-contract.cjs && node run.cjs"
+    "test": "node clipboard-fallback-contract.cjs && node custom-dashboard-drawer-contract.cjs && node custom-tabs-contract.cjs && node custom-dialog-contract.cjs && node failure-dialog-contract.cjs && node kubernetes-connection-delete-contract.cjs && node kubernetes-local-contract.cjs && node kubernetes-workload-node-contract.cjs && node action-menu-layer-contract.cjs && node shell-active-run-link-contract.cjs && node icon-tooltip-layer-contract.cjs && node run.cjs"
   },
   "devDependencies": {
     "dompurify": "3.4.12",

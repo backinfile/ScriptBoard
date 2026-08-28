@@ -702,6 +702,84 @@ func TestAdminCanEditQuickRunWithoutChangingItsScript(t *testing.T) {
 	}
 }
 
+func TestQuickRunConfirmationOnlyGuardsManualListStarts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptName, scriptContent := "confirmable.sh", "printf 'confirmable\\n'\n"
+	if runtime.GOOS == "windows" {
+		scriptName, scriptContent = "confirmable.cmd", "@echo off\r\necho confirmable\r\n"
+	}
+	scriptPath := filepath.Join(hostRoot, scriptName)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	createQuickRunFromFile(t, client, serverURL, scriptPath, "Confirmable", "")
+	page := getQuickRunsPage(t, client, serverURL)
+	quickRunID := quickRunIDForName(t, page, "Confirmable")
+	startForm := `action="/config/quick-runs/` + quickRunID + `/start"`
+	if strings.Contains(string(page), startForm+` data-confirm=`) {
+		t.Fatalf("new Quick Run unexpectedly requires confirmation: %s", page)
+	}
+
+	response, err := client.Get(serverURL + "/config/quick-runs/" + quickRunID + "/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	editPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !strings.Contains(string(editPage), `name="require_confirmation" value="1"`) {
+		t.Fatalf("edit task is missing the run confirmation setting: %s", editPage)
+	}
+	response, err = client.PostForm(serverURL+"/config/quick-runs/"+quickRunID+"/update", url.Values{
+		"csrf_token":           {formToken(t, editPage)},
+		"name":                 {"Confirmable"},
+		"require_confirmation": {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("enable Quick Run confirmation status=%d", response.StatusCode)
+	}
+
+	page = getQuickRunsPage(t, client, serverURL)
+	if !strings.Contains(string(page), startForm+` data-confirm="Confirm running this Quick Run?"`) {
+		t.Fatalf("manual Quick Run start is missing confirmation: %s", page)
+	}
+	if !strings.Contains(string(page), `data-quick-run-id="`+quickRunID+`" data-locked="false" data-quick-run-version="1"`) {
+		t.Fatalf("confirmation-only edit unexpectedly published a new Quick Run version: %s", page)
+	}
+	response, err = client.Get(serverURL + "/config/quick-runs/" + quickRunID + "/copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !strings.Contains(string(copyPage), `name="require_confirmation" value="1" checked`) {
+		t.Fatalf("copy task did not preserve the confirmation setting: %s", copyPage)
+	}
+
+	// Confirmation is a browser affordance; direct starts and non-UI callers keep the existing endpoint contract.
+	response, err = client.PostForm(serverURL+"/config/quick-runs/"+quickRunID+"/start", url.Values{
+		"csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/history/runs/") {
+		t.Fatalf("direct Quick Run start status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+}
+
 func TestAdminCanCopyQuickRunNextToItsSource(t *testing.T) {
 	t.Parallel()
 

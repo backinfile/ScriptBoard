@@ -222,6 +222,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		a.renderQuickCreateConflict(response, request, quickCreateValues{
 			WorkingDirectory: workingDirectory, Language: language.ID, FileName: quickrun.FileStem(fileName, language.Extension),
 			Source: source, Name: name, Arguments: argumentsTemplate, TimeoutSeconds: timeoutSeconds, GroupID: request.FormValue("group_id"),
+			RequireConfirmation: request.FormValue("require_confirmation") == "1",
 		}, targetPath, quickrun.FileStem(suggested, language.Extension), targetInfo.Mode().IsRegular() && !a.runs.ConflictsPath(targetPath))
 		return
 	}
@@ -320,9 +321,9 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 	now := time.Now().UTC().Unix()
 	if err == nil {
 		_, err = transaction.Exec(`INSERT INTO quick_runs
-			(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, script_sha256, revision, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 1, ?)`,
-			id, name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), argumentsTemplate, timeoutSeconds, sortOrder, now, groupID, prepared.Digest, now)
+			(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 1, ?)`,
+			id, name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), argumentsTemplate, timeoutSeconds, sortOrder, now, groupID, request.FormValue("require_confirmation") == "1", prepared.Digest, now)
 	}
 	if err == nil {
 		err = transaction.Commit()
@@ -337,14 +338,15 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 }
 
 type quickCreateValues struct {
-	WorkingDirectory string
-	Language         string
-	FileName         string
-	Source           string
-	Name             string
-	Arguments        string
-	TimeoutSeconds   int
-	GroupID          string
+	WorkingDirectory    string
+	Language            string
+	FileName            string
+	Source              string
+	Name                string
+	Arguments           string
+	TimeoutSeconds      int
+	GroupID             string
+	RequireConfirmation bool
 }
 
 func (a *App) renderQuickCreateConflict(response http.ResponseWriter, request *http.Request, values quickCreateValues, targetPath, suggestedName string, canOverwrite bool) {
@@ -368,7 +370,8 @@ func (a *App) renderQuickCreateConflict(response http.ResponseWriter, request *h
 		BackURL:     "/config/quick-runs", Action: "/config/quick-runs/from-source", Languages: quickrun.PlatformLanguages(runtime.GOOS),
 		WorkingDirectory: values.WorkingDirectory, FileName: values.FileName, Source: values.Source, Name: values.Name,
 		Arguments: values.Arguments, TimeoutSeconds: values.TimeoutSeconds, GroupID: values.GroupID, Groups: groups, Language: values.Language,
-		Conflict: true, ConflictPath: targetPath, SuggestedName: suggestedName, CanOverwrite: canOverwrite,
+		RequireConfirmation: values.RequireConfirmation,
+		Conflict:            true, ConflictPath: targetPath, SuggestedName: suggestedName, CanOverwrite: canOverwrite,
 		QuickReferences: quickReferences, ScheduleReferences: scheduleReferences,
 	})
 }

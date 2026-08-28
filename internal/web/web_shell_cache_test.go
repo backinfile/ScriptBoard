@@ -165,6 +165,41 @@ func TestApplicationShellShowsOnlyCurrentAttentionItems(t *testing.T) {
 	}
 }
 
+func TestApplicationShellLinksOnlyActiveRunDirectly(t *testing.T) {
+	var rendered bytes.Buffer
+	if err := applicationShellTemplate.Execute(&rendered, applicationShellData{
+		Locale:       localeEnglishUS,
+		StatusState:  "current",
+		ActiveRuns:   1,
+		ActiveRunID:  "run-one",
+		WebsiteState: "up",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	page := rendered.String()
+	if !strings.Contains(page, `href="/history/runs/run-one" data-shell-attention-item="runs"`) {
+		t.Fatalf("single active Run does not link directly to its detail page: %s", page)
+	}
+}
+
+func TestApplicationShellLinksMultipleActiveRunsToHistory(t *testing.T) {
+	var rendered bytes.Buffer
+	if err := applicationShellTemplate.Execute(&rendered, applicationShellData{
+		Locale:       localeEnglishUS,
+		StatusState:  "current",
+		ActiveRuns:   2,
+		WebsiteState: "up",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	page := rendered.String()
+	if !strings.Contains(page, `href="/history/runs" data-shell-attention-item="runs"`) {
+		t.Fatalf("multiple active Runs do not link to Run history: %s", page)
+	}
+}
+
 func TestCollapsedApplicationShellKeepsNavigationTopAlignedAndShowsIssueCount(t *testing.T) {
 	var rendered bytes.Buffer
 	err := applicationShellTemplate.Execute(&rendered, applicationShellData{

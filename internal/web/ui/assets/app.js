@@ -3945,6 +3945,10 @@
         }
         const activeRuns = Math.max(0, Number(data.activeRuns) || 0);
         if (runs) {
+          const activeRunID = typeof data.activeRunId === "string" ? data.activeRunId.trim() : "";
+          runs.href = activeRuns === 1 && activeRunID
+            ? `/history/runs/${encodeURIComponent(activeRunID)}`
+            : "/history/runs";
           const primary = runs.querySelector("[data-shell-runs-primary]");
           if (primary) primary.textContent = `${activeRuns} ${attention.dataset.activeRunsLabel || words().activeRuns}`;
           if (setVisible(runs, activeRuns > 0)) visibleCount += 1;
@@ -7762,7 +7766,9 @@
   window.addEventListener("resize", () => {
     document.querySelectorAll(".action-menu[open]").forEach(positionActionMenu);
   });
-  document.addEventListener("scroll", () => {
+  document.addEventListener("scroll", event => {
+    // 修复菜单自身滚动时反复重算几何位置、打断原生滚动条拖动；仅外层滚动需要重新定位。
+    if (event.target instanceof Element && event.target.matches(".action-menu > div")) return;
     document.querySelectorAll(".action-menu[open]").forEach(positionActionMenu);
   }, true);
 

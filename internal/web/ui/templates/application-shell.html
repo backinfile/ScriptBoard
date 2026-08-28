@@ -35,7 +35,7 @@
         <span><strong data-shell-host-primary>{{.Status}}</strong><small data-shell-host-secondary>{{.Environment}}</small></span>
         <span class="sidebar-status__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
       </a>
-      <a class="sidebar-attention__item" href="/history/runs" data-shell-attention-item="runs" {{if eq .ActiveRuns 0}}hidden{{end}} data-state="running">
+      <a class="sidebar-attention__item" href="{{if and (eq .ActiveRuns 1) .ActiveRunID}}/history/runs/{{pathEscape .ActiveRunID}}{{else}}/history/runs{{end}}" data-shell-attention-item="runs" {{if eq .ActiveRuns 0}}hidden{{end}} data-state="running">
         <span class="status-dot" aria-hidden="true"></span>
         <span><strong data-shell-runs-primary>{{.ActiveRuns}} {{t .Locale "shell.active_runs"}}</strong><small>{{t .Locale "shell.review_runs"}}</small></span>
         <span class="sidebar-status__chevron" data-lucide="chevron-right" aria-hidden="true"></span>

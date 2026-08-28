@@ -62,6 +62,17 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 61 {
+		exists, err := storesqlite.ColumnExists(migration, "quick_runs", "require_confirmation")
+		if err != nil {
+			return fmt.Errorf("inspect Quick Run confirmation migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE quick_runs ADD COLUMN require_confirmation INTEGER NOT NULL DEFAULT 0 CHECK (require_confirmation IN (0, 1))`); err != nil {
+				return fmt.Errorf("add Quick Run confirmation requirement: %w", err)
+			}
+		}
+	}
 	if schemaVersion >= 20 && schemaVersion <= 57 {
 		exists, err := storesqlite.ColumnExists(migration, "external_trigger_entries", "require_approval")
 		if err != nil {

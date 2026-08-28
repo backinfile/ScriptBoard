@@ -22,6 +22,7 @@ type shellStatusResponse struct {
 	CollectedAt               time.Time `json:"collectedAt"`
 	IssueCount                int       `json:"issueCount"`
 	ActiveRuns                int       `json:"activeRuns"`
+	ActiveRunID               string    `json:"activeRunId,omitempty"`
 	WebsiteState              string    `json:"websiteState"`
 	WebsiteDown               int       `json:"websiteDown"`
 	WebsiteVerifying          int       `json:"websiteVerifying"`
@@ -93,8 +94,12 @@ func (a *App) loadShellStatus(ctx context.Context) (shellStatusResponse, error) 
 		return shellStatusResponse{}, err
 	}
 	activeRuns := 0
-	if err := a.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM runs WHERE status IN ('starting', 'running', 'stopping', 'timing_out')").Scan(&activeRuns); err != nil {
+	activeRunID := ""
+	if err := a.db.QueryRowContext(ctx, "SELECT COUNT(*), COALESCE(MIN(id), '') FROM runs WHERE status IN ('starting', 'running', 'stopping', 'timing_out')").Scan(&activeRuns, &activeRunID); err != nil {
 		return shellStatusResponse{}, err
+	}
+	if activeRuns != 1 {
+		activeRunID = ""
 	}
 	websiteMonitors, err := a.websiteMonitor.List(ctx, websitemonitor.Filter{})
 	if err != nil {
@@ -129,6 +134,7 @@ func (a *App) loadShellStatus(ctx context.Context) (shellStatusResponse, error) 
 		CollectedAt:               overview.CollectedAt,
 		IssueCount:                len(overview.Errors),
 		ActiveRuns:                activeRuns,
+		ActiveRunID:               activeRunID,
 		WebsiteState:              websiteState,
 		WebsiteDown:               websiteDown,
 		WebsiteVerifying:          websiteVerifying,
@@ -185,6 +191,7 @@ type applicationShellData struct {
 	Environment, Status, StatusState      string
 	CurrentErrorCount                     int
 	ActiveRuns                            int
+	ActiveRunID                           string
 	WebsiteState                          string
 	WebsiteDown, WebsiteVerifying         int
 	StoppedPinnedApplications             int
@@ -258,7 +265,7 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	_ = applicationShellTemplate.Execute(&shell, applicationShellData{
 		Locale: locale, Username: username, Role: string(current.role), CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(), Version: displayShellVersion(buildinfo.Current().Version),
 		ApplicationName: applicationName,
-		Environment:     environment, Status: status, StatusState: statusState, CurrentErrorCount: currentShellErrorCount(shellStatus), ActiveRuns: shellStatus.ActiveRuns,
+		Environment:     environment, Status: status, StatusState: statusState, CurrentErrorCount: currentShellErrorCount(shellStatus), ActiveRuns: shellStatus.ActiveRuns, ActiveRunID: shellStatus.ActiveRunID,
 		WebsiteState: shellStatus.WebsiteState, WebsiteDown: shellStatus.WebsiteDown, WebsiteVerifying: shellStatus.WebsiteVerifying,
 		StoppedPinnedApplications: shellStatus.StoppedPinnedApplications, ApplicationIssueCount: shellStatus.ApplicationIssueCount,
 		Navigation: navigation, SettingsCurrent: strings.HasPrefix(request.URL.Path, "/settings/"),
