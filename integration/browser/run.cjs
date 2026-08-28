@@ -2200,7 +2200,8 @@ async function assertExternalInterfaces(page, fixture) {
         height: Math.round(element.getBoundingClientRect().height),
       })),
     );
-    assert.equal(fileHeadingActionSizes.length, 2);
+    // The shared-group action now lives beside upload and new-directory in the page heading.
+    assert.equal(fileHeadingActionSizes.length, 3);
     assert.equal(fileHeadingActionSizes[0].width, fileHeadingActionSizes[1].width);
     assert.ok(fileHeadingActionSizes.every(size => size.height >= 44));
     const fileLocationActionSizes = await page.locator(".file-location-actions .icon-button").evaluateAll(elements =>
