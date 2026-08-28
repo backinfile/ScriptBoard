@@ -650,10 +650,12 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	// The retired upload inbox is intentionally removed; External Interface approvals own their isolated payloads now.
-	if err := os.RemoveAll(filepath.Join(stateRoot, "inbox")); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("remove retired upload inbox: %w", err)
+	// Portable Web owns only the retired upload subtree; managed Broker exchange data must survive Web startup.
+	if config.HostFilesBackend == nil {
+		if err := os.RemoveAll(filepath.Join(stateRoot, "inbox", "uploads")); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("remove retired upload inbox: %w", err)
+		}
 	}
 	approvalUploads, err := externalapproval.New(filepath.Join(stateRoot, "approvals", "uploads"))
 	if err != nil {
@@ -3872,7 +3874,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 	}
 	_, _, targetErr := a.hostInfo(request.Context(), destination)
 	targetExists := targetErr == nil
-	if targetErr != nil && !os.IsNotExist(targetErr) {
+	if targetErr != nil && !hostFileNotExist(targetErr) {
 		http.Error(response, "无法检查移动目标："+targetErr.Error(), http.StatusBadRequest)
 		return
 	}
@@ -3931,7 +3933,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 	}()
 	_, _, latestTargetErr := a.hostInfo(request.Context(), destination)
 	latestTargetExists := latestTargetErr == nil
-	if latestTargetErr != nil && !os.IsNotExist(latestTargetErr) {
+	if latestTargetErr != nil && !hostFileNotExist(latestTargetErr) {
 		writeHostFileError(response, "无法重新检查移动目标", latestTargetErr)
 		return
 	}
@@ -4390,7 +4392,7 @@ func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) 
 	}
 	_, _, targetErr := a.hostInfo(request.Context(), destination)
 	targetExists := targetErr == nil
-	if targetErr != nil && !os.IsNotExist(targetErr) {
+	if targetErr != nil && !hostFileNotExist(targetErr) {
 		http.Error(response, "无法检查恢复目标："+targetErr.Error(), http.StatusConflict)
 		return
 	}
@@ -4988,7 +4990,7 @@ func writeHostFileError(response http.ResponseWriter, action string, err error) 
 		status = http.StatusServiceUnavailable
 	case errors.Is(err, hostfiles.ErrProtected), os.IsPermission(err):
 		status = http.StatusForbidden
-	case os.IsNotExist(err):
+	case hostFileNotExist(err):
 		status = http.StatusNotFound
 	}
 	http.Error(response, action+"："+err.Error(), status)

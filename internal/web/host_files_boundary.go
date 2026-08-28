@@ -51,6 +51,11 @@ func (a *App) hostInfo(ctx context.Context, path string) (os.FileInfo, bool, err
 	return value, a.files.CanMutate(path), err
 }
 
+// Broker transport wraps filesystem errors; keep missing paths recognizable at every Web call site.
+func hostFileNotExist(err error) bool {
+	return errors.Is(err, os.ErrNotExist)
+}
+
 func (a *App) hostReadText(ctx context.Context, path string, maxBytes int64) (hostfiles.TextDocument, error) {
 	if a.hostFilesBackend != nil {
 		return a.hostFilesBackend.ReadText(ctx, path, maxBytes)

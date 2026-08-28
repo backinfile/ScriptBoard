@@ -135,6 +135,114 @@ func TestManagedBatchUploadTreatsBrokerNotFoundAsAvailableDestination(t *testing
 	}
 }
 
+func TestManagedMoveTreatsBrokerNotFoundAsAvailableDestination(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "broker-host")
+	stagingRoot := filepath.Join(root, "exchange")
+	source := filepath.Join(hostRoot, "source.txt")
+	destination := filepath.Join(hostRoot, "renamed.txt")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("broker rename"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	brokerManager, err := hostfiles.Open(hostfiles.Options{Topology: testHostTopology{root: hostRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := privilegebroker.NewBrokerHostFilesService(brokerManager, stagingRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
+		Listener: listener, VerifyPeer: func(net.Conn) error { return nil }, Authorizer: allowHostFilesAuthorizer{},
+		Executor: rejectGenericPrivilegedExecutor{}, HostFiles: service,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Start()
+	t.Cleanup(func() { _ = server.Close() })
+	client := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+	}})
+	httpClient, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(root, "state"), FileTopology: rejectingHostTopology{},
+		HostFilesBackend: privilegebroker.NewHostFilesBackend(client, stagingRoot),
+	})
+	page := getBody(t, httpClient, hostFilesRequestURL(serverURL, hostRoot), http.StatusOK)
+	response, err := httpClient.PostForm(serverURL+"/resources/files/move", url.Values{
+		"source": {source}, "destination": {destination}, "csrf_token": {formToken(t, []byte(page))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("Broker-backed move status=%d body=%s", response.StatusCode, body)
+	}
+	if content, err := os.ReadFile(destination); err != nil || string(content) != "broker rename" {
+		t.Fatalf("Broker-backed move destination=%q error=%v", content, err)
+	}
+	if _, err := os.Stat(source); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Broker-backed move source still exists: %v", err)
+	}
+}
+
+func TestManagedWebPreservesBrokerHostFilesExchangeRoot(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "broker-host")
+	stateRoot := filepath.Join(root, "state")
+	stagingRoot := filepath.Join(stateRoot, "inbox", "host-files-broker")
+	sentinel := filepath.Join(stagingRoot, "broker-owned")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(stagingRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sentinel, []byte("preserve broker exchange"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	brokerManager, err := hostfiles.Open(hostfiles.Options{Topology: testHostTopology{root: hostRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := privilegebroker.NewBrokerHostFilesService(brokerManager, stagingRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
+		Listener: listener, VerifyPeer: func(net.Conn) error { return nil }, Authorizer: allowHostFilesAuthorizer{},
+		Executor: rejectGenericPrivilegedExecutor{}, HostFiles: service,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Start()
+	t.Cleanup(func() { _ = server.Close() })
+	client := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+	}})
+	_, _ = authenticatedClientWithConfig(t, app.Config{
+		StateRoot: stateRoot, FileTopology: rejectingHostTopology{},
+		HostFilesBackend: privilegebroker.NewHostFilesBackend(client, stagingRoot),
+	})
+	if content, err := os.ReadFile(sentinel); err != nil || string(content) != "preserve broker exchange" {
+		t.Fatalf("managed Web changed Broker exchange content=%q error=%v", content, err)
+	}
+}
+
 func TestQuickCreateTreatsBrokerNotFoundAsAvailableDestination(t *testing.T) {
 	root := t.TempDir()
 	hostRoot := filepath.Join(root, "broker-host")

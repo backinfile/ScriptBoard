@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"scriptboard/internal/hostfiles"
@@ -166,7 +165,7 @@ func (a *App) uploadConflicts(response http.ResponseWriter, request *http.Reques
 			return
 		}
 		info, _, err := a.hostInfo(request.Context(), target)
-		if os.IsNotExist(err) {
+		if hostFileNotExist(err) {
 			continue
 		}
 		if err != nil {

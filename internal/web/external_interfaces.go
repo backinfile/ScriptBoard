@@ -929,7 +929,7 @@ func (a *App) externalUploadApprovalPreview(ctx context.Context, entry externalt
 		}
 		data.TargetOutcome, data.TargetOutcomeText = "conflict", webText(data.Locale, "external.approval_outcome.conflict")
 		return
-	} else if !os.IsNotExist(statErr) {
+	} else if !hostFileNotExist(statErr) {
 		data.TargetOutcome, data.TargetOutcomeText = "unavailable", webText(data.Locale, "external.approval_outcome.unavailable")
 		return
 	}
@@ -955,7 +955,7 @@ func (a *App) externalLogApprovalPreview(ctx context.Context, entry externaltrig
 	if _, _, err := a.hostInfo(ctx, config.File); err == nil {
 		data.TargetOutcome, data.TargetOutcomeText = "append", webText(data.Locale, "external.approval_outcome.append")
 		data.TargetPreviewURL = routeFileURL("/resources/files/log", config.File)
-	} else if os.IsNotExist(err) {
+	} else if hostFileNotExist(err) {
 		data.TargetOutcome, data.TargetOutcomeText = "create", webText(data.Locale, "external.approval_outcome.create_log")
 	} else {
 		data.TargetOutcome, data.TargetOutcomeText = "unavailable", webText(data.Locale, "external.approval_outcome.unavailable")
@@ -1917,7 +1917,7 @@ func (a *App) publishExternalUpload(ctx context.Context, entry externaltrigger.E
 		if err != nil {
 			return externalFailure(http.StatusConflict, "upload_failed")
 		}
-	} else if !os.IsNotExist(statErr) {
+	} else if !hostFileNotExist(statErr) {
 		return externalFailure(http.StatusConflict, "upload_failed")
 	}
 	storedID, err := randomToken(18)

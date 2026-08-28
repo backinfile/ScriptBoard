@@ -178,9 +178,9 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 	if err := brokerFiles.Protect(stateRestoreStagingRoot); err != nil {
 		return fmt.Errorf("protect state restore staging root from Host Files: %w", err)
 	}
-	hostFilesStagingRoot := filepath.Join(absolute, "inbox", "host-files-broker")
-	if err := os.MkdirAll(hostFilesStagingRoot, 0o750); err != nil {
-		return fmt.Errorf("prepare Broker Host Files exchange root: %w", err)
+	hostFilesStagingRoot, err := prepareBrokerHostFilesStagingRoot(absolute)
+	if err != nil {
+		return err
 	}
 	legacyExternal := externaltrigger.New(database, externaltrigger.Options{SecretsDirectory: filepath.Join(absolute, "secrets"), SecretStore: vault})
 	hostFileOperationStore, err := privilegebroker.NewBrokerHostFileOperationStore(database)
@@ -264,6 +264,18 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		emailPoller.Wait()
 	}
 	return server.Close()
+}
+
+func prepareBrokerHostFilesStagingRoot(stateRoot string) (string, error) {
+	// Managed cleanup runs as Broker so a low-privilege Web restart never owns or removes the exchange root.
+	if err := os.RemoveAll(filepath.Join(stateRoot, "inbox", "uploads")); err != nil {
+		return "", fmt.Errorf("remove retired upload inbox: %w", err)
+	}
+	root := filepath.Join(stateRoot, "inbox", "host-files-broker")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		return "", fmt.Errorf("prepare Broker Host Files exchange root: %w", err)
+	}
+	return root, nil
 }
 
 type brokerKubernetesService struct {
