@@ -111,9 +111,15 @@ func (m *Manager) Update(ctx context.Context, id string, config Config) (Monitor
 		return Monitor{}, err
 	}
 	defer transaction.Rollback()
+	sortOrder := current.SortOrder
+	if current.Config.GroupID != normalized.GroupID {
+		if err := transaction.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order),0)+1 FROM website_monitors WHERE group_id IS ? AND deleted_at IS NULL`, nullableGroupID(normalized.GroupID)).Scan(&sortOrder); err != nil {
+			return Monitor{}, err
+		}
+	}
 	result, err := transaction.ExecContext(ctx, `UPDATE website_monitors SET
 		name = ?, scope = ?, kind = ?, url = ?, config_json = ?,
-		frequency_seconds = ?, timeout_seconds = ?,
+		frequency_seconds = ?, timeout_seconds = ?, group_id = ?, sort_order = ?,
 		state = CASE WHEN state = 'paused' THEN 'paused' ELSE 'pending' END,
 		failure_count = 0, generation = generation + 1,
 		next_check_at = CASE WHEN state = 'paused' THEN 0 ELSE ? END,
@@ -122,7 +128,7 @@ func (m *Manager) Update(ctx context.Context, id string, config Config) (Monitor
 		last_certificate_json = '{}', updated_at = ?
 		WHERE id = ? AND deleted_at IS NULL`,
 		normalized.Name, normalized.Scope, normalized.Kind, normalized.URL, string(configJSON),
-		int(normalized.Frequency/time.Second), int(normalized.Timeout/time.Second),
+		int(normalized.Frequency/time.Second), int(normalized.Timeout/time.Second), nullableGroupID(normalized.GroupID), sortOrder,
 		now.UnixNano(), now.UnixNano(), id)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
@@ -177,22 +183,24 @@ func (m *Manager) createMany(ctx context.Context, configs []Config) ([]Monitor, 
 		return nil, err
 	}
 	defer transaction.Rollback()
-	var enabled, sortOrder int
-	if err := transaction.QueryRowContext(ctx, `SELECT
-		COUNT(*) FILTER (WHERE deleted_at IS NULL AND state <> 'paused'),
-		COALESCE(MAX(sort_order), 0) + 1 FROM website_monitors`).Scan(&enabled, &sortOrder); err != nil {
+	var enabled int
+	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM website_monitors WHERE deleted_at IS NULL AND state <> 'paused'`).Scan(&enabled); err != nil {
 		return nil, err
 	}
 	if enabled+len(configs) > 100 {
 		return nil, errors.New("加入所选网站后会超过 100 个启用监控")
 	}
 	for index, config := range normalized {
+		var sortOrder int
+		if err := transaction.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order),0)+1 FROM website_monitors WHERE group_id IS ? AND deleted_at IS NULL`, nullableGroupID(config.GroupID)).Scan(&sortOrder); err != nil {
+			return nil, err
+		}
 		_, err = transaction.ExecContext(ctx, `INSERT INTO website_monitors
-			(id, name, scope, kind, url, config_json, frequency_seconds, timeout_seconds, sort_order, state,
+			(id, name, scope, kind, url, config_json, frequency_seconds, timeout_seconds, group_id, sort_order, state,
 			 generation, next_check_at, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?, ?)`,
 			ids[index], config.Name, config.Scope, config.Kind, config.URL, string(configJSON[index]),
-			int(config.Frequency/time.Second), int(config.Timeout/time.Second), sortOrder+index,
+			int(config.Frequency/time.Second), int(config.Timeout/time.Second), nullableGroupID(config.GroupID), sortOrder,
 			now.UnixNano(), now.UnixNano(), now.UnixNano())
 		if err != nil {
 			if strings.Contains(strings.ToLower(err.Error()), "unique") {
@@ -389,14 +397,15 @@ func ValidateConfig(config Config) (Config, error) {
 func (m *Manager) Get(ctx context.Context, id string) (Monitor, error) {
 	var value Monitor
 	var configJSON, certificateJSON string
+	var groupID sql.NullString
 	var lastSuccess bool
 	var lastLatencyMS, createdAt, updatedAt, checkedAt, nextCheckAt int64
 	var deletedAt sql.NullInt64
-	err := m.db.QueryRowContext(ctx, `SELECT id, config_json, state, failure_count, sort_order, generation,
+	err := m.db.QueryRowContext(ctx, `SELECT id, config_json, group_id, state, failure_count, sort_order, generation,
 		next_check_at, last_success, last_status_code, last_latency_ms, last_checked_at, last_error_category,
 		last_summary, last_technical_error, last_certificate_json, created_at, updated_at, deleted_at
 		FROM website_monitors WHERE id = ?`, id).Scan(
-		&value.ID, &configJSON, &value.State, &value.FailureCount, &value.SortOrder, &value.generation,
+		&value.ID, &configJSON, &groupID, &value.State, &value.FailureCount, &value.SortOrder, &value.generation,
 		&nextCheckAt, &lastSuccess, &value.Latest.StatusCode, &lastLatencyMS, &checkedAt, &value.Latest.ErrorCategory,
 		&value.Latest.Summary, &value.Latest.TechnicalError, &certificateJSON, &createdAt, &updatedAt, &deletedAt,
 	)
@@ -406,6 +415,7 @@ func (m *Manager) Get(ctx context.Context, id string) (Monitor, error) {
 	if err := json.Unmarshal([]byte(configJSON), &value.Config); err != nil {
 		return Monitor{}, fmt.Errorf("decode website monitor config: %w", err)
 	}
+	value.Config.GroupID = groupID.String
 	if value.Config.SkipTLSVerification && !value.Config.SkipTLSVerificationAt(m.options.Now()) {
 		value.Config.SkipTLSVerification = false
 		value.Config.TLSVerificationDisabledUntil = time.Time{}
@@ -433,8 +443,9 @@ func (m *Manager) List(ctx context.Context, filter Filter) ([]Monitor, error) {
 	if filter.IncludeDeleted {
 		deletedClause = "deleted_at IS NOT NULL"
 	}
-	rows, err := m.db.QueryContext(ctx, `SELECT id FROM website_monitors WHERE `+deletedClause+`
-		AND (? = '' OR state = ?) AND (? = '' OR scope = ?) ORDER BY sort_order, created_at`,
+	rows, err := m.db.QueryContext(ctx, `SELECT m.id FROM website_monitors m WHERE m.`+deletedClause+`
+		AND (? = '' OR m.state = ?) AND (? = '' OR m.scope = ?)
+		ORDER BY CASE WHEN m.group_id IS NULL THEN 1 ELSE 0 END, m.group_id, m.sort_order, m.created_at`,
 		filter.State, filter.State, filter.Scope, filter.Scope)
 	if err != nil {
 		return nil, err
@@ -471,8 +482,12 @@ func (m *Manager) Move(ctx context.Context, id string, direction int) error {
 		return err
 	}
 	defer transaction.Rollback()
+	var groupID sql.NullString
+	if err := transaction.QueryRowContext(ctx, `SELECT group_id FROM website_monitors WHERE id=? AND deleted_at IS NULL`, id).Scan(&groupID); err != nil {
+		return err
+	}
 	rows, err := transaction.QueryContext(ctx, `SELECT id, sort_order FROM website_monitors
-		WHERE deleted_at IS NULL ORDER BY sort_order, created_at`)
+		WHERE deleted_at IS NULL AND group_id IS ? ORDER BY sort_order, created_at`, groupID)
 	if err != nil {
 		return err
 	}
@@ -1328,4 +1343,11 @@ func randomID() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+func nullableGroupID(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
 }

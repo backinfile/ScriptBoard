@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestVariableListUsesServerSidePagination(t *testing.T) {
+func TestVariableListLoadsAllRecordsForGrouping(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -49,24 +49,10 @@ func TestVariableListUsesServerSidePagination(t *testing.T) {
 	firstPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	firstBody := string(firstPage)
-	if !strings.Contains(firstBody, "21 records · 1 / 2") || !strings.Contains(firstBody, `>VAR_00</code>`) {
-		t.Fatalf("first page is missing pagination metadata or first row: %s", firstBody)
+	if !strings.Contains(firstBody, `data-grouped-records="variable-groups"`) || !strings.Contains(firstBody, `>VAR_00</code>`) || !strings.Contains(firstBody, `>VAR_20</code>`) {
+		t.Fatalf("grouped variable list is missing its grouping shell or records: %s", firstBody)
 	}
-	if strings.Contains(firstBody, `>VAR_20</code>`) {
-		t.Fatalf("first page contains a row from the second page: %s", firstBody)
-	}
-
-	response, err = client.Get(serverURL + "/resources/variables?page=2")
-	if err != nil {
-		t.Fatalf("get second variable page: %v", err)
-	}
-	secondPage, _ := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	secondBody := string(secondPage)
-	if !strings.Contains(secondBody, "21 records · 2 / 2") || !strings.Contains(secondBody, `>VAR_20</code>`) {
-		t.Fatalf("second page is missing pagination metadata or final row: %s", secondBody)
-	}
-	if strings.Contains(secondBody, `value="VAR_00"`) {
-		t.Fatalf("second page contains a row from the first page: %s", secondBody)
+	if strings.Contains(firstBody, "records · 1 / 2") {
+		t.Fatalf("grouped variable list unexpectedly renders pagination: %s", firstBody)
 	}
 }

@@ -6874,6 +6874,11 @@ and contract tests depend on them.
 
 /* Compact one-line group header: chevron + folder icon + name + count + menu */
 .quick-run-group { position: relative; margin-top: 18px; }
+.file-quick-group-title { display:flex; align-items:center; gap:8px; padding:12px 8px 6px; color:var(--muted); }
+.file-quick-group-title__toggle { display:flex; flex:1; align-items:center; gap:8px; min-width:0; padding:0; color:inherit; text-align:left; background:none; border:0; }
+.file-quick-group-title__toggle svg { width:14px; height:14px; }
+.file-quick-group-title__toggle strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.file-quick-group-title__toggle small { margin-left:auto; }
 .quick-run-group:first-of-type { margin-top: 8px; }
 .quick-run-group::before { content: none; }
 .quick-run-group__header { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 0; border: 0; }

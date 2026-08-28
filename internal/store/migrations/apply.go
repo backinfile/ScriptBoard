@@ -84,6 +84,61 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 60 {
+		// Schema 61 makes Quick Run groups the shared organization baseline.
+		// Existing Schedule groups are retired without name matching; every newly
+		// supported collection starts in the derived Ungrouped section.
+		for _, column := range []struct {
+			table      string
+			definition string
+		}{
+			{"file_quick_access_pins", "group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL"},
+			{"website_monitors", "group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL"},
+			{"variables", "group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL"},
+		} {
+			exists, err := storesqlite.ColumnExists(migration, column.table, "group_id")
+			if err != nil {
+				return fmt.Errorf("inspect shared group migration for %s: %w", column.table, err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE " + column.table + " ADD COLUMN " + column.definition); err != nil {
+					return fmt.Errorf("add shared group to %s: %w", column.table, err)
+				}
+			}
+		}
+		for _, column := range []struct{ table, definition string }{
+			{"variables", "sort_order INTEGER NOT NULL DEFAULT 0"},
+			{"schedules", "sort_order INTEGER NOT NULL DEFAULT 0"},
+		} {
+			exists, err := storesqlite.ColumnExists(migration, column.table, "sort_order")
+			if err != nil {
+				return fmt.Errorf("inspect shared ordering migration for %s: %w", column.table, err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE " + column.table + " ADD COLUMN " + column.definition); err != nil {
+					return fmt.Errorf("add shared ordering to %s: %w", column.table, err)
+				}
+			}
+		}
+		if _, err := migration.Exec(`
+			UPDATE schedule_groups SET name = '__legacy__' || id;
+			INSERT INTO schedule_groups (id, name, sort_order, created_at, updated_at)
+			SELECT id, name, sort_order, created_at, updated_at FROM quick_run_groups WHERE true
+			ON CONFLICT(id) DO UPDATE SET name=excluded.name, sort_order=excluded.sort_order,
+				created_at=excluded.created_at, updated_at=excluded.updated_at;
+			UPDATE schedules SET group_id = NULL, group_name = '' WHERE deleted = 0;
+			DELETE FROM schedule_groups WHERE id NOT IN (SELECT id FROM quick_run_groups);
+			UPDATE variables SET sort_order = (
+				SELECT COUNT(*) FROM variables AS earlier WHERE earlier.name <= variables.name
+			);
+			UPDATE schedules SET sort_order = (
+				SELECT COUNT(*) FROM schedules AS earlier
+				WHERE earlier.deleted = schedules.deleted
+				AND (earlier.created_at < schedules.created_at OR (earlier.created_at = schedules.created_at AND earlier.id <= schedules.id))
+			)`); err != nil {
+			return fmt.Errorf("initialize shared groups: %w", err)
+		}
+	}
 	if schemaVersion >= 20 && schemaVersion <= 56 {
 		exists, err := storesqlite.ColumnExists(migration, "custom_dashboards", "show_as_tab")
 		if err != nil {
@@ -152,6 +207,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 				path_key TEXT PRIMARY KEY,
 				label TEXT NOT NULL,
 				target_kind TEXT NOT NULL DEFAULT 'directory' CHECK (target_kind IN ('directory', 'file')),
+				group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL,
 				sort_order INTEGER NOT NULL,
 				created_at INTEGER NOT NULL
 			)`,
@@ -439,6 +495,10 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		"CREATE INDEX IF NOT EXISTS trash_entries_original_path_idx ON trash_entries(original_path_key)",
 		"CREATE INDEX IF NOT EXISTS file_operations_phase_idx ON file_operations(phase, created_at)",
 		"CREATE INDEX IF NOT EXISTS file_quick_access_pins_order_idx ON file_quick_access_pins(sort_order, created_at)",
+		"CREATE INDEX IF NOT EXISTS file_quick_access_pins_group_order_idx ON file_quick_access_pins(group_id, sort_order, created_at)",
+		"CREATE INDEX IF NOT EXISTS website_monitors_group_order_idx ON website_monitors(group_id, sort_order, created_at)",
+		"CREATE INDEX IF NOT EXISTS variables_group_order_idx ON variables(group_id, sort_order, name)",
+		"CREATE INDEX IF NOT EXISTS schedules_shared_group_order_idx ON schedules(group_id, sort_order, created_at)",
 		"DROP INDEX IF EXISTS external_trigger_entries_key_unique_idx",
 		"CREATE INDEX IF NOT EXISTS external_trigger_keys_group_idx ON external_trigger_keys(group_id, created_at)",
 		"CREATE INDEX IF NOT EXISTS external_trigger_entries_group_idx ON external_trigger_entries(group_id, created_at)",

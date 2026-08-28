@@ -10,6 +10,7 @@ var SchemaStatements = []string{
 		config_json TEXT NOT NULL,
 		frequency_seconds INTEGER NOT NULL,
 		timeout_seconds INTEGER NOT NULL,
+		group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL,
 		sort_order INTEGER NOT NULL,
 		state TEXT NOT NULL CHECK (state IN ('pending', 'up', 'verifying', 'down', 'paused')),
 		failure_count INTEGER NOT NULL DEFAULT 0,

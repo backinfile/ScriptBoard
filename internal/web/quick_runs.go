@@ -451,6 +451,9 @@ func (a *App) reorderQuickRuns(response http.ResponseWriter, request *http.Reque
 		if _, err = transaction.Exec("UPDATE quick_run_groups SET sort_order = ?, updated_at = ? WHERE id = ?", index+1, now, id); err != nil {
 			break
 		}
+		if _, err = transaction.Exec("UPDATE schedule_groups SET sort_order = ?, updated_at = ? WHERE id = ?", index+1, now, id); err != nil {
+			break
+		}
 	}
 	groupPositions := map[string]int{}
 	for _, id := range quickRunIDs {

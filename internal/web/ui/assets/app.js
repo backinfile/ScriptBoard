@@ -4262,6 +4262,7 @@
     const editForm = drawerHost?.querySelector("[data-file-quick-edit-form]");
     const editPath = drawerHost?.querySelector("[data-file-quick-edit-path]");
     const editLabel = drawerHost?.querySelector("[data-file-quick-edit-label]");
+    const editGroup = drawerHost?.querySelector("[data-file-quick-edit-group]");
     const editTechnical = drawerHost?.querySelector("[data-file-quick-edit-technical]");
     if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel || !status) return;
 	const validationController = new AbortController();
@@ -4271,7 +4272,8 @@
     const isValidPin = pin => {
       if (!pin || typeof pin.path !== "string" || pin.path.length === 0 ||
         typeof pin.label !== "string" || pin.label.length === 0 ||
-        typeof pin.href !== "string" || !pin.href.startsWith("/") || !["directory", "file"].includes(pin.kind)) return false;
+		 typeof pin.href !== "string" || !pin.href.startsWith("/") || !["directory", "file"].includes(pin.kind) ||
+		 (pin.groupId != null && typeof pin.groupId !== "string")) return false;
       try {
         const target = new URL(pin.href, location.origin);
         const targetPath = pin.kind === "file" ? target.searchParams.get("focus_path") : target.searchParams.get("path");
@@ -4292,6 +4294,8 @@
 	let legacyPins = [];
 	try { legacyPins = normalizePins(JSON.parse(localStorage.getItem(storageKey) || "[]")); } catch { /* ignore invalid legacy storage */ }
 	let pins = [];
+	let groups = [];
+	const normalizeGroups = value => Array.isArray(value) ? value.filter(group => group && typeof group.ID === "string" && typeof group.Name === "string") : [];
 	const showSaveError = () => {
 	  status.textContent = disclosure.dataset.saveFailed;
 	  status.hidden = false;
@@ -4311,6 +4315,7 @@
 	  if (!response.ok) throw new Error(`Unable to save Quick access (${response.status})`);
 	  const payload = await response.json();
 	  pins = normalizePins(payload?.pins);
+	  groups = normalizeGroups(payload?.groups);
 	  clearSaveError();
     };
     const pinControls = Array.from(root.querySelectorAll("[data-file-pin]"));
@@ -4333,6 +4338,11 @@
       if (!drawerHost || !drawer || !editPath || !editLabel || !editTechnical) return;
       editPath.value = pin.path;
       editLabel.value = pin.label;
+      if (editGroup) {
+		editGroup.replaceChildren(new Option(disclosure.dataset.ungroupedLabel || "Ungrouped", ""));
+		groups.forEach(group => editGroup.add(new Option(group.Name, group.ID)));
+		editGroup.value = pin.groupId || "";
+	  }
       editTechnical.textContent = pin.path;
       drawerHost.classList.add("is-open");
       drawerHost.setAttribute("aria-hidden", "false");
@@ -4346,7 +4356,7 @@
       const submit = editForm.querySelector('[type="submit"]');
       if (submit) submit.disabled = true;
       try {
-        await savePin("rename", { path: editPath.value, label: editLabel.value });
+		await savePin("rename", { path: editPath.value, label: editLabel.value, group_id: editGroup?.value || "" });
         closeEditor();
         render();
       } catch (error) {
@@ -4362,8 +4372,12 @@
     };
     const movePin = async (path, offset) => {
       const index = pins.findIndex(pin => pin.path === path);
-      const destination = index + offset;
-      if (index < 0 || destination < 0 || destination >= pins.length) return;
+	  if (index < 0) return;
+	  const groupPins = pins.filter(pin => (pin.groupId || "") === (pins[index].groupId || ""));
+	  const groupIndex = groupPins.findIndex(pin => pin.path === path);
+	  const neighbor = groupPins[groupIndex + offset];
+	  if (!neighbor) return;
+	  const destination = pins.findIndex(pin => pin.path === neighbor.path);
       [pins[index], pins[destination]] = [pins[destination], pins[index]];
       render();
       try { await saveOrder(); } catch (error) { if (error?.name !== "AbortError") showSaveError(); }
@@ -4371,10 +4385,60 @@
     const render = () => {
       count.textContent = String(pins.length);
       countLabel.textContent = pins.length === 1 ? oneLabel.textContent : manyLabel.textContent;
-      empty.hidden = pins.length > 0;
-      list.hidden = pins.length === 0;
+      empty.hidden = pins.length > 0 || groups.length > 0;
+      list.hidden = pins.length === 0 && groups.length === 0;
       list.replaceChildren();
-      pins.forEach(pin => {
+	  const sections = groups.map(group => ({ id: group.ID, name: group.Name }));
+	  if (pins.some(pin => !pin.groupId)) sections.push({ id: "", name: disclosure.dataset.ungroupedLabel || "Ungrouped" });
+	  const collapseKey = "scriptboard.file-quick-access-groups.collapsed";
+	  let collapsed = new Set();
+	  try { collapsed = new Set(JSON.parse(localStorage.getItem(collapseKey) || "[]")); } catch { collapsed = new Set(); }
+	  sections.forEach(section => {
+		const heading = document.createElement("li");
+		heading.className = "file-quick-group-title";
+		const toggle = document.createElement("button");
+		toggle.type = "button";
+		toggle.className = "file-quick-group-title__toggle";
+		toggle.append(makeIcon(collapsed.has(section.id || "ungrouped") ? "chevron-right" : "chevron-down"), makeIcon(section.id ? "folder" : "folder-open"));
+		const title = document.createElement("strong");
+		title.textContent = section.name;
+		const badge = document.createElement("small");
+		badge.textContent = String(pins.filter(pin => (pin.groupId || "") === section.id).length);
+		toggle.append(title, badge);
+		toggle.addEventListener("click", () => {
+		  const key = section.id || "ungrouped";
+		  if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+		  try { localStorage.setItem(collapseKey, JSON.stringify([...collapsed])); } catch { /* local preference only */ }
+		  render();
+		});
+		heading.append(toggle);
+		if (section.id && disclosure.dataset.manageGroups === "true") {
+		  const moveGroupForm = document.createElement("form");
+		  moveGroupForm.method = "post";
+		  moveGroupForm.action = `/config/groups/${encodeURIComponent(section.id)}/move?return_to=%2Fresources%2Ffiles`;
+		  moveGroupForm.dataset.async = "";
+		  const csrf = document.createElement("input");
+		  csrf.type = "hidden"; csrf.name = "csrf_token"; csrf.value = disclosure.dataset.csrfToken || "";
+		  const up = document.createElement("button");
+		  up.type = "submit"; up.name = "direction"; up.value = "up"; up.className = "icon-button"; up.append(makeIcon("arrow-up"));
+		  const down = document.createElement("button");
+		  down.type = "submit"; down.name = "direction"; down.value = "down"; down.className = "icon-button"; down.append(makeIcon("arrow-down"));
+		  moveGroupForm.append(csrf, up, down);
+		  const editGroupLink = document.createElement("a");
+		  editGroupLink.className = "icon-button";
+		  editGroupLink.href = `/config/groups/${encodeURIComponent(section.id)}/edit?return_to=%2Fresources%2Ffiles`;
+		  editGroupLink.dataset.taskLink = "";
+		  editGroupLink.append(makeIcon("square-pen"));
+		  const deleteGroupLink = document.createElement("a");
+		  deleteGroupLink.className = "icon-button";
+		  deleteGroupLink.href = `/config/groups/${encodeURIComponent(section.id)}/delete?return_to=%2Fresources%2Ffiles`;
+		  deleteGroupLink.dataset.taskLink = "";
+		  deleteGroupLink.append(makeIcon("trash-2"));
+		  heading.append(moveGroupForm, editGroupLink, deleteGroupLink);
+		}
+		list.append(heading);
+		if (collapsed.has(section.id || "ungrouped")) return;
+		pins.filter(pin => (pin.groupId || "") === section.id).forEach(pin => {
         const item = document.createElement("li");
         item.className = "file-quick-row";
         item.draggable = true;
@@ -4396,11 +4460,11 @@
           event.dataTransfer?.setData("text/plain", pin.path);
         });
         item.addEventListener("dragover", event => event.preventDefault());
-        item.addEventListener("drop", async event => {
-          event.preventDefault();
-          const source = pins.findIndex(candidate => candidate.path === draggedPath);
-          const destination = pins.findIndex(candidate => candidate.path === pin.path);
-          if (source < 0 || destination < 0 || source === destination) return;
+		item.addEventListener("drop", async event => {
+		  event.preventDefault();
+		  const source = pins.findIndex(candidate => candidate.path === draggedPath);
+		  const destination = pins.findIndex(candidate => candidate.path === pin.path);
+		  if (source < 0 || destination < 0 || source === destination || (pins[source].groupId || "") !== (pin.groupId || "")) return;
           const [moved] = pins.splice(source, 1);
           pins.splice(destination, 0, moved);
           render();
@@ -4460,6 +4524,7 @@
         edit.addEventListener("click", () => openEditor(pin));
         item.append(grip, link, edit, remove);
         list.append(item);
+		});
       });
       pinControls.forEach(renderControl);
     };
@@ -4488,7 +4553,9 @@
 		  credentials: "same-origin", headers: { Accept: "application/json" }, signal: validationController.signal,
 		});
 		if (!response.ok) throw new Error(`Unable to read Quick access (${response.status})`);
-		pins = normalizePins((await response.json())?.pins);
+		const payload = await response.json();
+		pins = normalizePins(payload?.pins);
+		groups = normalizeGroups(payload?.groups);
 		let migrated = true;
 		for (const pin of legacyPins) {
 		  if (pins.some(candidate => candidate.path === pin.path)) continue;
@@ -5402,15 +5469,17 @@
     const status=root.querySelector('[data-reorder-status]');
     let refreshStatus=root.querySelector('[data-website-refresh-status]');
     const refreshControl=root.querySelector('[data-website-refresh]');
-    const ledger=root.querySelector('[data-website-ledger]');
-    const initialOrder=[...root.querySelectorAll('[data-monitor-id]')].map(row=>row.dataset.monitorId);
+    const ledgers=()=>[...root.querySelectorAll('[data-website-ledger]')];
+    const initialOrder=new Map(ledgers().map(ledger=>[ledger,[...ledger.querySelectorAll('[data-monitor-id]')].map(row=>row.dataset.monitorId)]));
     const rows=()=>[...root.querySelectorAll('[data-monitor-id]')];
     const updateMoveButtons=()=>{
-      const current=rows();
-      current.forEach((row,index)=>{
-        const buttons=row.querySelectorAll('[data-reorder-move-form] button');
-        if(buttons[0])buttons[0].disabled=index===0;
-        if(buttons[1])buttons[1].disabled=index===current.length-1;
+      ledgers().forEach(ledger=>{
+        const current=[...ledger.querySelectorAll('[data-monitor-id]')];
+        current.forEach((row,index)=>{
+          const buttons=row.querySelectorAll('[data-reorder-move-form] button');
+          if(buttons[0])buttons[0].disabled=index===0;
+          if(buttons[1])buttons[1].disabled=index===current.length-1;
+        });
       });
     };
     const markOrderChanged=()=>{
@@ -5429,10 +5498,10 @@
         await navigate('/monitor/websites',true);
       }catch(_){
         if(status)status.textContent=root.dataset.reorderFailed||'Order was not saved. Restoring the list.';
-        initialOrder.forEach(id=>{
+        initialOrder.forEach((ids,ledger)=>ids.forEach(id=>{
           const row=rows().find(candidate=>candidate.dataset.monitorId===id);
-          if(row)ledger?.append(row);
-        });
+          if(row)ledger.append(row);
+        }));
         updateMoveButtons();
       }
     };
@@ -5442,6 +5511,7 @@
         if(!form)return;
         event.preventDefault();
         const row=form.closest('[data-monitor-id]');
+		const ledger=row?.closest('[data-website-ledger]');
         const direction=event.submitter?.value;
         if(!row||!direction)return;
         if(direction==='up'&&row.previousElementSibling?.matches('[data-monitor-id]'))ledger.insertBefore(row,row.previousElementSibling);
@@ -5453,6 +5523,7 @@
       const onCancel=()=>navigate('/monitor/websites',true);
       const onReorderKey=event=>{
         const row=event.target.closest('[data-monitor-id]');
+		const ledger=row?.closest('[data-website-ledger]');
         if(!row||!['ArrowUp','ArrowDown'].includes(event.key))return;
         event.preventDefault();
         if(event.key==='ArrowUp'&&row.previousElementSibling?.matches('[data-monitor-id]'))ledger.insertBefore(row,row.previousElementSibling);
@@ -5476,7 +5547,7 @@
           dragged=undefined;
         });
         row.addEventListener('dragover',event=>{
-          if(!dragged||dragged===row)return;
+		  if(!dragged||dragged===row||dragged.parentElement!==row.parentElement)return;
           event.preventDefault();
           const before=event.clientY<row.getBoundingClientRect().top+row.offsetHeight/2;
           row.parentElement.insertBefore(dragged,before?row:row.nextSibling);

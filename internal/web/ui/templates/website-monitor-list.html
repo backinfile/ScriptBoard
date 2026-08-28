@@ -15,7 +15,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <title>{{t .Locale "website.title"}} · ScriptBoard</title>
 </head>
 <body>
-<main class="workspace website-monitor-page" data-website-monitoring data-status-url="{{.DataURL}}" data-refresh-failed="{{t .Locale "website.refresh_failed"}}" data-counts-token="{{.Counts.Up}}:{{.Counts.Verifying}}:{{.Counts.Down}}:{{.Counts.Paused}}:{{.NeedsCare}}:{{len .Alerts}}" {{if .Reorder}}data-reorder-url="/monitor/websites/reorder" data-csrf-token="{{.CSRFToken}}" data-reorder-saving="{{t .Locale "website.reorder_saving"}}" data-reorder-saved="{{t .Locale "website.reorder_saved"}}" data-reorder-failed="{{t .Locale "website.reorder_failed"}}"{{end}}>
+<main class="workspace website-monitor-page" data-grouped-records="website-monitor-groups" data-website-monitoring data-status-url="{{.DataURL}}" data-refresh-failed="{{t .Locale "website.refresh_failed"}}" data-counts-token="{{.Counts.Up}}:{{.Counts.Verifying}}:{{.Counts.Down}}:{{.Counts.Paused}}:{{.NeedsCare}}:{{len .Alerts}}" {{if .Reorder}}data-reorder-url="/monitor/websites/reorder" data-csrf-token="{{.CSRFToken}}" data-reorder-saving="{{t .Locale "website.reorder_saving"}}" data-reorder-saved="{{t .Locale "website.reorder_saved"}}" data-reorder-failed="{{t .Locale "website.reorder_failed"}}"{{end}}>
 <header class="page-heading website-page-heading">
 <div>
 <p class="page-eyebrow">{{t .Locale "website.eyebrow"}}</p>
@@ -28,6 +28,10 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 {{t .Locale "website.refresh"}}
 </a>
 {{if .CanManage}}
+<a class="button" href="/config/groups/new?return_to=%2Fmonitor%2Fwebsites" data-task-link>
+<span data-lucide="folder-plus" aria-hidden="true"></span>
+{{t .Locale "groups.create"}}
+</a>
 <a class="button" href="/monitor/websites/export" data-task-link>
 <span data-lucide="file-output" aria-hidden="true"></span>
 {{t .Locale "website.transfer.export"}}
@@ -130,8 +134,12 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 </form>
 {{end}}
 
-<section class="website-ledger" data-website-ledger aria-label="{{t .Locale "website.ledger"}}">
-<header class="website-ledger__head">{{if .Reorder}}<span aria-hidden="true"></span>{{end}}<span>{{t .Locale "website.ledger.website"}}</span><span>{{t .Locale "website.ledger.last_24h"}}</span><span>{{t .Locale "website.ledger.latest_check"}}</span><span>{{if .Reorder}}{{t .Locale "website.ledger.move"}}{{end}}</span></header>
+{{range .Groups}}
+<section class="quick-run-group" data-record-group="{{.ID}}" data-group-name="{{.Name}}">
+<header class="quick-run-group__header"><h2 class="quick-run-group__heading"><button class="quick-run-group__toggle" type="button" data-group-toggle aria-expanded="true" aria-controls="website-group-{{.ID}}"><span class="quick-run-group__chevron" data-lucide="chevron-right" aria-hidden="true"></span><span class="quick-run-group__identity"><span data-lucide="{{if .Ungrouped}}folder-open{{else}}folder{{end}}" aria-hidden="true"></span><span class="quick-run-group__name">{{.Name}}</span></span><span class="quick-run-group__count">{{len .Monitors}} {{t $.Locale "groups.items"}}</span></button></h2>{{if and $.CanManage (not .Ungrouped)}}<details class="action-menu quick-run-group__menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div><form method="post" action="/config/groups/{{.ID}}/move?return_to=%2Fmonitor%2Fwebsites" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "schedules.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "schedules.move_down"}}</button></form><a href="/config/groups/{{.ID}}/edit?return_to=%2Fmonitor%2Fwebsites" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a><a class="danger-action" href="/config/groups/{{.ID}}/delete?return_to=%2Fmonitor%2Fwebsites" data-task-link><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</a></div></details>{{end}}</header>
+<div id="website-group-{{.ID}}" data-group-body>
+<section class="website-ledger" data-website-ledger aria-label="{{t $.Locale "website.ledger"}}">
+<header class="website-ledger__head">{{if $.Reorder}}<span aria-hidden="true"></span>{{end}}<span>{{t $.Locale "website.ledger.website"}}</span><span>{{t $.Locale "website.ledger.last_24h"}}</span><span>{{t $.Locale "website.ledger.latest_check"}}</span><span>{{if $.Reorder}}{{t $.Locale "website.ledger.move"}}{{end}}</span></header>
 {{range .Monitors}}
 <article class="website-ledger__row" data-monitor-id="{{.ID}}" data-monitor-state="{{.State}}" data-monitor-latest="{{.LatestLabel}}" data-monitor-summary="{{.LatestSummary}}" data-monitor-latency="{{.LatencyLabel}}" data-monitor-checked="{{.CheckedToken}}" data-detail-href="/monitor/websites/{{.ID}}" tabindex="0" draggable="{{if $.Reorder}}true{{else}}false{{end}}">
 {{if $.Reorder}}<span class="website-reorder-index" aria-hidden="true"></span>{{end}}
@@ -163,9 +171,12 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 {{end}}
 </article>
 {{else}}
-<div class="website-empty website-empty--compact"><h2>{{t .Locale "website.empty_filtered_title"}}</h2><p>{{t .Locale "website.empty_filtered_description"}}</p></div>
+<div class="website-empty website-empty--compact"><h2>{{t $.Locale "groups.empty"}}</h2></div>
 {{end}}
 </section>
+</div>
+</section>
+{{end}}
 <p class="website-refresh-status" data-website-refresh-status aria-live="polite"></p>
 {{else}}
 <section class="website-empty">

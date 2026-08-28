@@ -378,13 +378,19 @@
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t .Locale "run_detail.save_quick"}}</button></footer>
     </form>
-    {{else if or (or (eq .Kind "quick-group-new") (eq .Kind "quick-group-edit")) (or (eq .Kind "schedule-group-new") (eq .Kind "schedule-group-edit"))}}
+    {{else if eq .Kind "record-group-delete"}}
+    <form method="post" action="{{.Action}}" data-async>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="confirm" value="yes">
+      <div class="drawer-body"><p><strong>{{.Name}}</strong></p><dl class="fact-strip"><div><dt>{{t .Locale "groups.impact.quick_runs"}}</dt><dd>{{.GroupImpact.QuickRuns}}</dd></div><div><dt>{{t .Locale "groups.impact.schedules"}}</dt><dd>{{.GroupImpact.Schedules}}</dd></div><div><dt>{{t .Locale "groups.impact.variables"}}</dt><dd>{{.GroupImpact.Variables}}</dd></div><div><dt>{{t .Locale "groups.impact.files"}}</dt><dd>{{.GroupImpact.Files}}</dd></div><div><dt>{{t .Locale "groups.impact.websites"}}</dt><dd>{{.GroupImpact.Websites}}</dd></div></dl></div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--danger" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "common.delete"}}</button></footer>
+    </form>
+    {{else if or (or (eq .Kind "quick-group-new") (eq .Kind "quick-group-edit")) (or (or (eq .Kind "schedule-group-new") (eq .Kind "schedule-group-edit")) (or (eq .Kind "record-group-new") (eq .Kind "record-group-edit")))}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <div class="drawer-body">
         <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" maxlength="256" value="{{.Name}}" required autofocus></label>
       </div>
-      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{if or (eq .Kind "quick-group-edit") (eq .Kind "schedule-group-edit")}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{if or (or (eq .Kind "quick-group-edit") (eq .Kind "schedule-group-edit")) (eq .Kind "record-group-edit")}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
     </form>
     {{else if eq .Kind "quick-move-group"}}
     <form method="post" action="{{.Action}}" data-async>
@@ -450,6 +456,7 @@
           <p class="ds-title"><span data-lucide="settings" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
           <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" spellcheck="false" pattern="[A-Z][A-Z0-9_]{0,63}" value="{{.Name}}" required autofocus></label>
           <label>{{t .Locale "variables.note"}} <textarea name="note" maxlength="500">{{.Note}}</textarea><small>{{t .Locale "variables.note_hint"}}</small></label>
+		  <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "groups.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
         </section>
         <section class="d-section">
           <p class="ds-title"><span data-lucide="braces" aria-hidden="true"></span>{{t .Locale "variables.value_type"}}</p>
