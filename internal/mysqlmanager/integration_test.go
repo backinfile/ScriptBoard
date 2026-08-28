@@ -83,6 +83,7 @@ func TestLogicalBackupAndRestoreAgainstContainer(t *testing.T) {
 	for _, statement := range []string{
 		"CREATE TRIGGER items_touch BEFORE UPDATE ON items FOR EACH ROW SET NEW.touched=OLD.touched+1",
 		"CREATE PROCEDURE item_count() SELECT COUNT(*) AS total FROM items",
+		"CREATE FUNCTION item_constant() RETURNS INT DETERMINISTIC RETURN 1",
 		"CREATE EVENT prune_nothing ON SCHEDULE EVERY 1 DAY DO DELETE FROM items WHERE id < 0",
 	} {
 		if _, err := objectDB.ExecContext(ctx, statement); err != nil {
@@ -109,6 +110,30 @@ func TestLogicalBackupAndRestoreAgainstContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	clearOperation, err := manager.BackupAndClearDatabase(ctx, BackupAndClearDatabaseRequest{
+		InstanceID: instance.ID, Database: "sb_source", Confirmation: "sb_source", Actor: Actor{Username: "integration"},
+	})
+	if err != nil || clearOperation.Phase != "completed" || clearOperation.SafetyBackupID == "" {
+		t.Fatalf("clear operation=%+v error=%v", clearOperation, err)
+	}
+	for objectType, query := range map[string]string{
+		"database": "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='sb_source'",
+		"table":    "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='sb_source'",
+		"routine":  "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='sb_source'",
+		"event":    "SELECT COUNT(*) FROM information_schema.EVENTS WHERE EVENT_SCHEMA='sb_source'",
+	} {
+		var count int
+		if err := serverDB.QueryRowContext(ctx, query).Scan(&count); err != nil {
+			t.Fatalf("cleared %s query error=%v", objectType, err)
+		}
+		want := 0
+		if objectType == "database" {
+			want = 1
+		}
+		if count != want {
+			t.Fatalf("cleared %s count=%d, want %d", objectType, count, want)
+		}
+	}
 	operation, err := manager.Restore(ctx, RestoreRequest{InstanceID: instance.ID, BackupID: backup.ID, TargetDatabase: "sb_restored", Actor: Actor{Username: "integration"}})
 	if err != nil || operation.Phase != "completed" {
 		t.Fatalf("restore operation=%+v error=%v", operation, err)
@@ -120,6 +145,7 @@ func TestLogicalBackupAndRestoreAgainstContainer(t *testing.T) {
 	for objectType, query := range map[string]string{
 		"trigger":   "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='sb_restored'",
 		"procedure": "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='sb_restored' AND ROUTINE_TYPE='PROCEDURE'",
+		"function":  "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='sb_restored' AND ROUTINE_TYPE='FUNCTION'",
 		"event":     "SELECT COUNT(*) FROM information_schema.EVENTS WHERE EVENT_SCHEMA='sb_restored'",
 	} {
 		var count int

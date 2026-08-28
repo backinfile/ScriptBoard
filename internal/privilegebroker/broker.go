@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	ProtocolVersion                     = 8
+	ProtocolVersion                     = 9
 	MaxRequestBytes                     = 3 << 20
 	MaxResponseBytes                    = 5 << 20
 	capabilityLifetime                  = 30 * time.Second
@@ -73,6 +73,7 @@ const (
 	operationMySQLCreate                = "mysql_create"
 	operationMySQLReplace               = "mysql_replace"
 	operationMySQLDrop                  = "mysql_drop"
+	operationMySQLClear                 = "mysql_clear"
 	operationMySQLDump                  = "mysql_dump"
 	operationMySQLImport                = "mysql_import"
 	operationMySQLSetTools              = "mysql_set_tools"
@@ -193,6 +194,7 @@ const (
 	ActionMySQLCreate             Action = "mysql_create"
 	ActionMySQLReplace            Action = "mysql_replace"
 	ActionMySQLDrop               Action = "mysql_drop"
+	ActionMySQLClear              Action = "mysql_clear"
 	ActionMySQLDump               Action = "mysql_dump"
 	ActionMySQLImport             Action = "mysql_import"
 	ActionMySQLSetTools           Action = "mysql_set_tools"
@@ -590,7 +592,7 @@ func (server *Server) handle(connection net.Conn) {
 	case operationRemoteWebsiteStore, operationRemoteWebsiteFetch, operationRemoteWebsiteDelete:
 		response = server.remoteWebsiteOperation(request)
 	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
-		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLDump,
+		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLClear, operationMySQLDump,
 		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk,
 		operationMySQLDatabasesAll, operationMySQLObjects, operationMySQLObjectDetails, operationMySQLExecuteSQL:
 		_ = connection.SetDeadline(server.now().Add(2 * time.Hour))
@@ -1465,7 +1467,7 @@ func isRemoteWebsiteOperation(operation string) bool {
 func isMySQLOperation(operation string) bool {
 	switch operation {
 	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
-		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLDump,
+		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLClear, operationMySQLDump,
 		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk,
 		operationMySQLDatabasesAll, operationMySQLObjects, operationMySQLObjectDetails, operationMySQLExecuteSQL:
 		return true

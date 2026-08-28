@@ -127,7 +127,7 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		BackupRoot: a.mysql.BackupRoot(), Instances: instances,
 		Tools:             a.mysql.Tools(),
 		ActiveTab:         "overview",
-		OperationAccepted: request.URL.Query().Get("accepted") == "backup",
+		OperationAccepted: request.URL.Query().Get("accepted") == "backup" || request.URL.Query().Get("accepted") == "clear",
 	}
 	data.databaseWorkspaceData = newDatabaseWorkspaceData(request, "mysql", data.Locale, data.CSRFToken, data.BackupRoot, data.Tools, instances, redisInstances)
 	if tab := strings.TrimSpace(request.URL.Query().Get("tab")); tab == "databases" || tab == "objects" || tab == "sql" || tab == "backups" || tab == "plans" || tab == "operations" {
@@ -535,6 +535,25 @@ func (a *App) startDropMySQLDatabase(response http.ResponseWriter, request *http
 		_, _ = a.mysql.DropDatabase(operationContext, mysqlmanager.DropDatabaseRequest{InstanceID: id, Database: database, Confirmation: confirmation, Actor: actor})
 	})
 	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id), http.StatusSeeOther)
+}
+
+func (a *App) startBackupAndClearMySQLDatabase(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	id, database, actor := request.PathValue("id"), request.FormValue("database"), mysqlActor(request)
+	confirmation := request.FormValue("confirmation")
+	if confirmation != database {
+		http.Error(response, "enter the complete database name to confirm clearing", http.StatusBadRequest)
+		return
+	}
+	a.startMySQLBackgroundOperation(request, "start_backup_and_clear_mysql_database", id+"/"+database, func(operationContext context.Context) {
+		_, _ = a.mysql.BackupAndClearDatabase(operationContext, mysqlmanager.BackupAndClearDatabaseRequest{
+			InstanceID: id, Database: database, Confirmation: confirmation, Actor: actor,
+		})
+	})
+	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id)+"&tab=operations&accepted=clear", http.StatusSeeOther)
 }
 
 func (a *App) importMySQLBackup(response http.ResponseWriter, request *http.Request) {

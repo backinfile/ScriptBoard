@@ -12,7 +12,7 @@ import (
 
 // RecoverInterrupted resolves operations whose child process supervision was
 // lost. Destructive operations prefer restoring their safety backup over
-// guessing whether an import or DROP reached the server.
+// guessing how far the server mutation progressed.
 func (m *Manager) RecoverInterrupted(ctx context.Context) error {
 	_ = filepath.WalkDir(m.BackupRoot(), func(path string, entry fs.DirEntry, err error) error {
 		if err == nil && !entry.IsDir() && (strings.HasSuffix(entry.Name(), ".partial") || strings.HasPrefix(entry.Name(), ".mysql-backup-")) {
@@ -57,7 +57,9 @@ func (m *Manager) RecoverInterrupted(ctx context.Context) error {
 			continue
 		}
 		instance, err := m.Instance(ctx, operation.InstanceID)
-		if err == nil {
+		if err == nil && operation.Kind == "backup_and_clear_database" {
+			err = m.backend.ClearDatabase(ctx, instance, operation.TargetDatabase)
+		} else if err == nil {
 			err = m.backend.ReplaceDatabase(ctx, instance, operation.TargetDatabase)
 		}
 		if err == nil {
