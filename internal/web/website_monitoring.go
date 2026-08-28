@@ -19,6 +19,7 @@ import (
 
 type websiteMonitorPageView struct {
 	ID                    string
+	GroupID               string
 	Name                  string
 	URL                   string
 	Scope                 websitemonitor.Scope
@@ -52,6 +53,13 @@ type websiteMonitorPageView struct {
 	CanMoveDown           bool
 }
 
+type websiteMonitorGroupView struct {
+	ID        string
+	Name      string
+	Ungrouped bool
+	Monitors  []websiteMonitorPageView
+}
+
 type websiteMonitorCounts struct {
 	Up        int `json:"up"`
 	Verifying int `json:"verifying"`
@@ -61,6 +69,7 @@ type websiteMonitorCounts struct {
 
 type websiteMonitorListView struct {
 	Monitors   []websiteMonitorPageView
+	Groups     []websiteMonitorGroupView
 	Alerts     []websiteMonitorPageView
 	Counts     websiteMonitorCounts
 	Locale     webLocale
@@ -79,6 +88,7 @@ type websiteMonitorListView struct {
 
 type websiteMonitorFormView struct {
 	Config               websitemonitor.Config
+	Groups               []recordGroup
 	Errors               map[string]string
 	Locale               webLocale
 	CSRFToken            string
@@ -207,6 +217,13 @@ func (a *App) websiteMonitorList(response http.ResponseWriter, request *http.Req
 	}
 	snapshot := a.newWebsiteMonitorListDataView(request.Context(), monitors, all, locale)
 	view.Monitors = snapshot.Monitors
+	groups, err := a.loadRecordGroups()
+	if err != nil {
+		http.Error(response, webText(locale, "website.error.read_monitors")+": "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	view.Groups = organizeWebsiteMonitorGroups(groups, snapshot.Monitors, locale)
+	view.HasAny = view.HasAny || len(groups) > 0
 	view.Alerts = snapshot.Alerts
 	view.Counts = snapshot.Counts
 	view.NeedsCare = snapshot.NeedsCare
@@ -308,7 +325,7 @@ func (a *App) websiteMonitorCreateTask(response http.ResponseWriter, request *ht
 		PingPayloadFormat: websitemonitor.PayloadNone,
 	}
 	renderWebsiteMonitorForm(response, http.StatusOK,
-		newWebsiteMonitorFormView(config, nil, resolveWebLocale(request), current.csrfToken, "", false))
+		a.newWebsiteMonitorFormView(config, nil, resolveWebLocale(request), current.csrfToken, "", false))
 }
 
 func (a *App) websiteMonitorEditTask(response http.ResponseWriter, request *http.Request) {
@@ -319,7 +336,7 @@ func (a *App) websiteMonitorEditTask(response http.ResponseWriter, request *http
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	renderWebsiteMonitorForm(response, http.StatusOK,
-		newWebsiteMonitorFormView(monitor.Config, nil, resolveWebLocale(request), current.csrfToken, monitor.ID, true))
+		a.newWebsiteMonitorFormView(monitor.Config, nil, resolveWebLocale(request), current.csrfToken, monitor.ID, true))
 }
 
 func (a *App) websiteMonitorNginxTask(response http.ResponseWriter, request *http.Request) {
@@ -428,6 +445,7 @@ func (a *App) createWebsiteMonitor(response http.ResponseWriter, request *http.R
 		return
 	}
 	config, fieldErrors := websiteMonitorConfigFromRequest(request)
+	a.applyWebsiteMonitorGroup(request, &config, fieldErrors)
 	if len(fieldErrors) > 0 {
 		if acceptsJSON(request) {
 			field, message := firstWebsiteMonitorFieldError(fieldErrors)
@@ -436,7 +454,7 @@ func (a *App) createWebsiteMonitor(response http.ResponseWriter, request *http.R
 		}
 		current := request.Context().Value(sessionContextKey).(session)
 		renderWebsiteMonitorForm(response, http.StatusUnprocessableEntity,
-			newWebsiteMonitorFormView(config, fieldErrors, resolveWebLocale(request), current.csrfToken, "", false))
+			a.newWebsiteMonitorFormView(config, fieldErrors, resolveWebLocale(request), current.csrfToken, "", false))
 		return
 	}
 	monitor, err := a.websiteMonitor.Create(request.Context(), config)
@@ -447,7 +465,7 @@ func (a *App) createWebsiteMonitor(response http.ResponseWriter, request *http.R
 		}
 		current := request.Context().Value(sessionContextKey).(session)
 		renderWebsiteMonitorForm(response, http.StatusUnprocessableEntity,
-			newWebsiteMonitorFormView(config, map[string]string{"form": err.Error()}, resolveWebLocale(request), current.csrfToken, "", false))
+			a.newWebsiteMonitorFormView(config, map[string]string{"form": err.Error()}, resolveWebLocale(request), current.csrfToken, "", false))
 		return
 	}
 	a.recordAuditForRequest(request, "create_website_monitor", websiteMonitorAuditTarget(monitor.Config), "succeeded")
@@ -461,6 +479,7 @@ func (a *App) updateWebsiteMonitor(response http.ResponseWriter, request *http.R
 	}
 	id := request.PathValue("id")
 	config, fieldErrors := websiteMonitorConfigFromRequest(request)
+	a.applyWebsiteMonitorGroup(request, &config, fieldErrors)
 	if len(fieldErrors) > 0 {
 		if acceptsJSON(request) {
 			field, message := firstWebsiteMonitorFieldError(fieldErrors)
@@ -469,7 +488,7 @@ func (a *App) updateWebsiteMonitor(response http.ResponseWriter, request *http.R
 		}
 		current := request.Context().Value(sessionContextKey).(session)
 		renderWebsiteMonitorForm(response, http.StatusUnprocessableEntity,
-			newWebsiteMonitorFormView(config, fieldErrors, resolveWebLocale(request), current.csrfToken, id, true))
+			a.newWebsiteMonitorFormView(config, fieldErrors, resolveWebLocale(request), current.csrfToken, id, true))
 		return
 	}
 	monitor, err := a.websiteMonitor.Update(request.Context(), id, config)
@@ -481,7 +500,7 @@ func (a *App) updateWebsiteMonitor(response http.ResponseWriter, request *http.R
 		}
 		current := request.Context().Value(sessionContextKey).(session)
 		renderWebsiteMonitorForm(response, http.StatusUnprocessableEntity,
-			newWebsiteMonitorFormView(config, map[string]string{"form": err.Error()}, resolveWebLocale(request), current.csrfToken, id, true))
+			a.newWebsiteMonitorFormView(config, map[string]string{"form": err.Error()}, resolveWebLocale(request), current.csrfToken, id, true))
 		return
 	}
 	a.recordAuditForRequest(request, "update_website_monitor", websiteMonitorAuditTarget(monitor.Config), "succeeded")
@@ -813,9 +832,11 @@ func renderWebsiteMonitorForm(response http.ResponseWriter, status int, view web
 	_ = websiteMonitorFormTemplate.Execute(response, view)
 }
 
-func newWebsiteMonitorFormView(config websitemonitor.Config, fieldErrors map[string]string, locale webLocale, csrfToken, id string, editing bool) websiteMonitorFormView {
+func (a *App) newWebsiteMonitorFormView(config websitemonitor.Config, fieldErrors map[string]string, locale webLocale, csrfToken, id string, editing bool) websiteMonitorFormView {
+	groups, _ := a.loadRecordGroups()
 	return websiteMonitorFormView{
 		Config:               config,
+		Groups:               groups,
 		Errors:               fieldErrors,
 		Locale:               locale,
 		CSRFToken:            csrfToken,
@@ -826,6 +847,36 @@ func newWebsiteMonitorFormView(config websitemonitor.Config, fieldErrors map[str
 		ExpectedStatusesText: websitemonitor.FormatHTTPStatusRanges(websitemonitor.ExpectedHTTPStatusRanges(config)),
 		RequestHeadersText:   websitemonitor.FormatRequestHeaders(config.RequestHeaders),
 	}
+}
+
+func (a *App) applyWebsiteMonitorGroup(request *http.Request, config *websitemonitor.Config, fieldErrors map[string]string) {
+	groupID, err := a.resolveRecordGroupID(request.FormValue("group_id"))
+	if err != nil {
+		fieldErrors["group_id"] = webText(resolveWebLocale(request), "groups.not_found")
+		return
+	}
+	config.GroupID = valueOrEmpty(groupID)
+}
+
+func organizeWebsiteMonitorGroups(groups []recordGroup, monitors []websiteMonitorPageView, locale webLocale) []websiteMonitorGroupView {
+	result := make([]websiteMonitorGroupView, 0, len(groups)+1)
+	index := make(map[string]int, len(groups))
+	for _, group := range groups {
+		index[group.ID] = len(result)
+		result = append(result, websiteMonitorGroupView{ID: group.ID, Name: group.Name})
+	}
+	var ungrouped []websiteMonitorPageView
+	for _, monitor := range monitors {
+		if position, ok := index[monitor.GroupID]; ok && monitor.GroupID != "" {
+			result[position].Monitors = append(result[position].Monitors, monitor)
+		} else {
+			ungrouped = append(ungrouped, monitor)
+		}
+	}
+	if len(ungrouped) > 0 {
+		result = append(result, websiteMonitorGroupView{ID: "ungrouped", Name: webText(locale, "groups.ungrouped"), Ungrouped: true, Monitors: ungrouped})
+	}
+	return result
 }
 
 func renderWebsiteMonitorNginx(response http.ResponseWriter, status int, view websiteMonitorNginxView) {
@@ -977,7 +1028,7 @@ func validWebsiteScopeFilter(value websitemonitor.Scope) bool {
 
 func (a *App) newWebsiteMonitorPageView(ctx context.Context, monitor websitemonitor.Monitor, locale webLocale) websiteMonitorPageView {
 	view := websiteMonitorPageView{
-		ID: monitor.ID, Name: monitor.Config.Name, URL: monitor.Config.URL,
+		ID: monitor.ID, GroupID: monitor.Config.GroupID, Name: monitor.Config.Name, URL: monitor.Config.URL,
 		Scope: monitor.Config.Scope, ScopeLabel: websiteScopeLabel(locale, monitor.Config.Scope),
 		Kind: monitor.Config.Kind, KindLabel: websiteKindLabel(locale, monitor.Config.Kind),
 		MethodLabel: monitor.Config.HTTPMethod, State: monitor.State,

@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "schedules.title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace" data-grouped-records="schedule-groups" data-schedules-page>
-  <header class="page-heading primary-page-heading"><div><p class="page-eyebrow">{{t .Locale "schedules.eyebrow"}}</p><h1>{{t .Locale "schedules.title"}}</h1><p>{{t .Locale "schedules.description"}}</p></div>{{if .CanManage}}<div class="heading-actions"><a class="button" href="/config/schedules/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "schedules.create_group"}}</a><a class="button button--primary" href="/config/schedules/new" data-task-link><span data-lucide="calendar-plus" aria-hidden="true"></span>{{t .Locale "schedules.create"}}</a></div>{{end}}</header>
+  <header class="page-heading primary-page-heading"><div><p class="page-eyebrow">{{t .Locale "schedules.eyebrow"}}</p><h1>{{t .Locale "schedules.title"}}</h1><p>{{t .Locale "schedules.description"}}</p></div>{{if .CanManage}}<div class="heading-actions"><a class="button" href="/config/groups/new?return_to=%2Fconfig%2Fschedules" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "groups.create"}}</a><a class="button button--primary" href="/config/schedules/new" data-task-link><span data-lucide="calendar-plus" aria-hidden="true"></span>{{t .Locale "schedules.create"}}</a></div>{{end}}</header>
   <div data-deferred-region>
   {{if .DeferredData}}
   {{template "deferred-loading" .}}
@@ -20,9 +20,9 @@
       </div>
       {{if and $.CanManage (not .Ungrouped)}}
       <details class="action-menu quick-run-group__menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
-        <a href="/config/schedules/groups/{{.ID}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
-        <form method="post" action="/config/schedules/groups/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "schedules.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "schedules.move_down"}}</button></form>
-        <form method="post" action="/config/schedules/groups/{{.ID}}/delete" data-confirm="{{t $.Locale "schedules.group_delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>
+        <a href="/config/groups/{{.ID}}/edit?return_to=%2Fconfig%2Fschedules" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
+        <form method="post" action="/config/groups/{{.ID}}/move?return_to=%2Fconfig%2Fschedules" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "schedules.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "schedules.move_down"}}</button></form>
+        <a class="danger-action" href="/config/groups/{{.ID}}/delete?return_to=%2Fconfig%2Fschedules" data-task-link><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</a>
       </div></details>
       {{end}}
     </header>
@@ -42,6 +42,7 @@
           <div><dt>{{t $.Locale "schedules.next_run"}}</dt><dd>{{if and .Enabled (not .NextFireAt.IsZero)}}<time datetime="{{instanceMachineTime .NextFireAt}}">{{instanceTime $.Locale .NextFireAt}}</time>{{else}}—{{end}}</dd></div>
         </dl>
         {{if $.CanManage}}<div class="record-actions record-actions__group">
+        <form method="post" action="/config/schedules/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button" type="submit" name="direction" value="up" aria-label="{{t $.Locale "schedules.move_up"}} {{.Name}}"><span data-lucide="arrow-up" aria-hidden="true"></span></button><button class="icon-button" type="submit" name="direction" value="down" aria-label="{{t $.Locale "schedules.move_down"}} {{.Name}}"><span data-lucide="arrow-down" aria-hidden="true"></span></button></form>
         <form method="post" action="/config/schedules/{{.ID}}/run"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--compact" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "schedules.run_now"}}</button></form>
         <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
           <a href="/config/schedules/{{.ID}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>

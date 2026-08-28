@@ -98,9 +98,9 @@ func TestAdminCanCreateRenameAndReorderScheduleGroups(t *testing.T) {
 	_ = response.Body.Close()
 	html := string(page)
 	for _, expected := range []string{
-		`href="/config/schedules/groups/new"`,
-		`action="/config/schedules/groups/` + secondID + `/move"`,
-		`action="/config/schedules/groups/` + firstID + `/delete"`,
+		`href="/config/groups/new?return_to=%2Fconfig%2Fschedules"`,
+		`action="/config/groups/` + secondID + `/move?return_to=%2Fconfig%2Fschedules"`,
+		`href="/config/groups/` + firstID + `/delete?return_to=%2Fconfig%2Fschedules"`,
 		`data-group-name="Operations"`,
 		`There are no schedules in this group.`,
 	} {
@@ -152,13 +152,18 @@ func TestDeletingScheduleGroupMovesItsSchedulesToUngrouped(t *testing.T) {
 		t.Fatalf("create grouped Schedule status=%d", response.StatusCode)
 	}
 
-	response, err = client.Get(serverURL + "/config/schedules")
+	response, err = client.Get(serverURL + "/config/groups/" + groupID + "/delete?return_to=%2Fconfig%2Fschedules")
 	if err != nil {
 		t.Fatal(err)
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/config/schedules/groups/"+groupID+"/delete", url.Values{
+	for _, expected := range []string{`data-task-kind="record-group-delete"`, `Temporary`, `>1</dd>`} {
+		if !strings.Contains(string(page), expected) {
+			t.Fatalf("shared group impact page missing %q: %s", expected, page)
+		}
+	}
+	response, err = client.PostForm(serverURL+"/config/groups/"+groupID+"/delete?return_to=%2Fconfig%2Fschedules", url.Values{
 		"csrf_token": {formToken(t, page)},
 		"confirm":    {"yes"},
 	})

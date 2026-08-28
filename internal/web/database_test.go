@@ -253,6 +253,84 @@ func TestOpenDatabaseMigratesSchema28QuickAccessPinsToGlobalScope(t *testing.T) 
 	}
 }
 
+func TestOpenDatabaseMigratesSchema60ToSharedQuickRunGroups(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	database, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		`INSERT INTO quick_run_groups (id, name, sort_order, created_at, updated_at)
+		 VALUES ('shared-ops', 'Operations', 1, 1, 1)`,
+		`INSERT INTO schedule_groups (id, name, sort_order, created_at, updated_at) VALUES
+		 ('schedule-ops', 'operations', 1, 1, 1), ('schedule-only', 'Schedule only', 2, 2, 2)`,
+		`INSERT INTO schedules
+		 (id, name, group_name, group_id, script_path, script_path_key, arguments_template, expression,
+		  timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at, deleted) VALUES
+		 ('mapped', 'Mapped', 'operations', 'schedule-ops', '/mapped.sh', '/mapped.sh', '', '* * * * *', 0, 1, 1, 0, 1, 1, 0),
+		 ('orphaned', 'Orphaned', 'Schedule only', 'schedule-only', '/orphaned.sh', '/orphaned.sh', '', '* * * * *', 0, 1, 1, 0, 2, 2, 0)`,
+		`INSERT INTO file_quick_access_pins (path, path_key, label, target_kind, group_id, sort_order, created_at)
+		 VALUES ('/srv', '/srv', 'srv', 'directory', 'shared-ops', 1, 1)`,
+		`INSERT INTO website_monitors
+		 (id, name, scope, kind, url, config_json, frequency_seconds, timeout_seconds, group_id, sort_order,
+		  state, generation, next_check_at, created_at, updated_at)
+		 VALUES ('site', 'Site', 'external', 'http', 'https://example.com', '{}', 60, 10, 'shared-ops', 1,
+		  'pending', 1, 0, 1, 1)`,
+		`INSERT INTO variables (name, value, note, group_id, sort_order, value_type, is_password, revision, created_at, updated_at)
+		 VALUES ('ALPHA', '1', '', 'shared-ops', 1, 'text', 0, 1, 1, 1)`,
+		`DROP INDEX file_quick_access_pins_group_order_idx`,
+		`DROP INDEX website_monitors_group_order_idx`,
+		`DROP INDEX variables_group_order_idx`,
+		`DROP INDEX schedules_shared_group_order_idx`,
+		`ALTER TABLE file_quick_access_pins DROP COLUMN group_id`,
+		`ALTER TABLE website_monitors DROP COLUMN group_id`,
+		`ALTER TABLE variables DROP COLUMN group_id`,
+		`ALTER TABLE variables DROP COLUMN sort_order`,
+		`ALTER TABLE schedules DROP COLUMN sort_order`,
+		`PRAGMA user_version=60`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	}
+	for _, statement := range statements {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 60 with %q: %v", statement, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 60: %v", err)
+	}
+	defer migrated.Close()
+	var mappedID sql.NullString
+	var mappedName string
+	if err := migrated.QueryRow(`SELECT group_id, group_name FROM schedules WHERE id='mapped'`).Scan(&mappedID, &mappedName); err != nil {
+		t.Fatal(err)
+	}
+	if mappedID.Valid || mappedName != "" {
+		t.Fatalf("mapped Schedule group=(%v,%q), want Ungrouped", mappedID, mappedName)
+	}
+	var orphanID sql.NullString
+	var orphanName string
+	if err := migrated.QueryRow(`SELECT group_id, group_name FROM schedules WHERE id='orphaned'`).Scan(&orphanID, &orphanName); err != nil {
+		t.Fatal(err)
+	}
+	if orphanID.Valid || orphanName != "" {
+		t.Fatalf("orphaned Schedule group=(%v,%q), want Ungrouped", orphanID, orphanName)
+	}
+	for _, table := range []string{"file_quick_access_pins", "website_monitors", "variables"} {
+		var groupID sql.NullString
+		if err := migrated.QueryRow("SELECT group_id FROM " + table + " LIMIT 1").Scan(&groupID); err != nil {
+			t.Fatal(err)
+		}
+		if groupID.Valid {
+			t.Fatalf("%s migrated group=%q, want Ungrouped", table, groupID.String)
+		}
+	}
+}
+
 func TestOpenDatabaseMigratesSchema26ExternalInterfaceTables(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)

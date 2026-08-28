@@ -356,7 +356,7 @@ const (
 	sessionCookieName        = "scriptboard_session"
 	loginCSRFCookieName      = "scriptboard_login_csrf"
 	loginChallengeCookieName = "scriptboard_login_challenge"
-	oauthReturnCookieName     = "scriptboard_oauth_return"
+	oauthReturnCookieName    = "scriptboard_oauth_return"
 )
 
 type contextKey string
@@ -831,7 +831,14 @@ func Open(config Config) (*App, error) {
 	application.runControl = runcontrol.New(runcontrol.Options{DB: db, Runs: application.runs, PrepareScript: application.hostPrepareScript, PrepareDirectory: application.hostPrepareDirectory, LoadVariables: application.loadVariables})
 	application.mcpStore = mcpaccess.NewStore(db, time.Now)
 	application.mcpCommands = mcpcommand.NewLedger(db, time.Now)
-	application.mcpStore.SetLifecycleObserver(func(event mcpaccess.LifecycleEvent){var username string;var role identity.Role;if event.UserID!=""{_ = db.QueryRow(`SELECT username,role FROM users WHERE id=?`,event.UserID).Scan(&username,&role)};application.recordAuditWithActor(event.Action,event.Target,event.Result,"oauth",event.UserID,username,role)})
+	application.mcpStore.SetLifecycleObserver(func(event mcpaccess.LifecycleEvent) {
+		var username string
+		var role identity.Role
+		if event.UserID != "" {
+			_ = db.QueryRow(`SELECT username,role FROM users WHERE id=?`, event.UserID).Scan(&username, &role)
+		}
+		application.recordAuditWithActor(event.Action, event.Target, event.Result, "oauth", event.UserID, username, role)
+	})
 	application.mcpOAuth = &mcpaccess.OAuthHTTP{Store: application.mcpStore, CanonicalExternalURL: config.CanonicalExternalURL, Limiter: mcpaccess.NewLimiter(60, 8)}
 	resource := strings.TrimRight(config.CanonicalExternalURL, "/") + "/mcp"
 	application.mcpProtocol = mcpserver.New(application.mcpStore, application, resource)
@@ -2931,7 +2938,10 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "快捷执行工作目录不可用", http.StatusConflict)
 		return
 	}
-	if errors.Is(err,runcontrol.ErrVariablesUnavailable){http.Error(response,"无法读取变量",http.StatusInternalServerError);return}
+	if errors.Is(err, runcontrol.ErrVariablesUnavailable) {
+		http.Error(response, "无法读取变量", http.StatusInternalServerError)
+		return
+	}
 	if err != nil {
 		http.Error(response, "无法启动快捷执行："+err.Error(), http.StatusBadRequest)
 		return
@@ -3081,6 +3091,14 @@ type variableView struct {
 	IsPassword bool
 	Revision   int64
 	UpdatedAt  time.Time
+	GroupID    string
+	SortOrder  int
+}
+
+type variableGroup struct {
+	ID, Name  string
+	Items     []variableView
+	Ungrouped bool
 }
 
 func (a *App) variablesPage(response http.ResponseWriter, request *http.Request) {
@@ -3089,7 +3107,7 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 	if isDeferredDataShell(request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = variablesTemplate.Execute(response, struct {
-			Variables    []variableView
+			Groups       []variableGroup
 			CSRFToken    string
 			Pagination   paginationView
 			Locale       webLocale
@@ -3097,13 +3115,13 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 		}{CSRFToken: current.csrfToken, Locale: locale, DeferredData: true})
 		return
 	}
-	var total int
-	if err := a.db.QueryRow("SELECT COUNT(*) FROM variables").Scan(&total); err != nil {
-		http.Error(response, "无法读取变量", http.StatusInternalServerError)
+	shared, err := a.loadRecordGroups()
+	if err != nil {
+		http.Error(response, "无法读取共享分组", http.StatusInternalServerError)
 		return
 	}
-	pagination := newPagination(request, total)
-	rows, err := a.db.Query("SELECT name, value, note, value_type, is_password, revision, updated_at FROM variables ORDER BY name LIMIT ? OFFSET ?", listPageSize, pagination.Start)
+	rows, err := a.db.Query(`SELECT name, value, note, value_type, is_password, revision, updated_at,
+		COALESCE(group_id,''), sort_order FROM variables ORDER BY group_id IS NULL, sort_order, name LIMIT 1000`)
 	if err != nil {
 		http.Error(response, "无法读取变量", http.StatusInternalServerError)
 		return
@@ -3112,7 +3130,7 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 	for rows.Next() {
 		var variable variableView
 		var updatedAt int64
-		if err := rows.Scan(&variable.Name, &variable.Value, &variable.Note, &variable.ValueType, &variable.IsPassword, &variable.Revision, &updatedAt); err != nil {
+		if err := rows.Scan(&variable.Name, &variable.Value, &variable.Note, &variable.ValueType, &variable.IsPassword, &variable.Revision, &updatedAt, &variable.GroupID, &variable.SortOrder); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取变量", http.StatusInternalServerError)
 			return
@@ -3121,14 +3139,31 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 		variables = append(variables, variable)
 	}
 	_ = rows.Close()
+	groups := make([]variableGroup, len(shared))
+	indexes := make(map[string]int, len(shared))
+	for index, group := range shared {
+		groups[index] = variableGroup{ID: group.ID, Name: group.Name}
+		indexes[group.ID] = index
+	}
+	var ungrouped []variableView
+	for _, variable := range variables {
+		if index, ok := indexes[variable.GroupID]; ok {
+			groups[index].Items = append(groups[index].Items, variable)
+		} else {
+			ungrouped = append(ungrouped, variable)
+		}
+	}
+	if len(ungrouped) > 0 {
+		groups = append(groups, variableGroup{ID: "ungrouped", Name: webText(locale, "groups.ungrouped"), Items: ungrouped, Ungrouped: true})
+	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = variablesTemplate.Execute(response, struct {
-		Variables    []variableView
+		Groups       []variableGroup
 		CSRFToken    string
 		Pagination   paginationView
 		Locale       webLocale
 		DeferredData bool
-	}{Variables: variables, CSRFToken: current.csrfToken, Pagination: pagination, Locale: locale})
+	}{Groups: groups, CSRFToken: current.csrfToken, Locale: locale})
 }
 
 var variableNamePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
@@ -3161,6 +3196,7 @@ func (a *App) createVariable(response http.ResponseWriter, request *http.Request
 	note, noteErr := parseVariableNote(request)
 	valueType, value, valueErr := parseVariableValue(request)
 	isPassword := request.FormValue("is_password") == "1"
+	groupID, groupErr := a.resolveRecordGroupID(request.FormValue("group_id"))
 	if !variableNamePattern.MatchString(name) {
 		http.Error(response, "变量名称无效", http.StatusBadRequest)
 		return
@@ -3177,13 +3213,22 @@ func (a *App) createVariable(response http.ResponseWriter, request *http.Request
 		http.Error(response, message, http.StatusBadRequest)
 		return
 	}
+	if groupErr != nil {
+		http.Error(response, "分组不存在", http.StatusBadRequest)
+		return
+	}
 	var count int
 	if err := a.db.QueryRow("SELECT COUNT(*) FROM variables").Scan(&count); err != nil || count >= 1000 {
 		http.Error(response, "变量数量已达到上限", http.StatusBadRequest)
 		return
 	}
 	now := time.Now().UTC().Unix()
-	if _, err := a.db.Exec("INSERT INTO variables (name, value, note, value_type, is_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", name, value, note, valueType, isPassword, now, now); err != nil {
+	var order int
+	if err := a.db.QueryRow("SELECT COALESCE(MAX(sort_order),0)+1 FROM variables WHERE group_id IS ?", groupID).Scan(&order); err != nil {
+		http.Error(response, "无法读取变量顺序", http.StatusInternalServerError)
+		return
+	}
+	if _, err := a.db.Exec("INSERT INTO variables (name, value, note, group_id, sort_order, value_type, is_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", name, value, note, groupID, order, valueType, isPassword, now, now); err != nil {
 		http.Error(response, "变量已存在或无法保存", http.StatusConflict)
 		return
 	}
@@ -3201,6 +3246,7 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 	note, noteErr := parseVariableNote(request)
 	valueType, value, valueErr := parseVariableValue(request)
 	isPassword := request.FormValue("is_password") == "1"
+	groupID, groupErr := a.resolveRecordGroupID(request.FormValue("group_id"))
 	if !variableNamePattern.MatchString(name) {
 		http.Error(response, "变量名称无效", http.StatusBadRequest)
 		return
@@ -3215,6 +3261,10 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 			message = "变量类型无效"
 		}
 		http.Error(response, message, http.StatusBadRequest)
+		return
+	}
+	if groupErr != nil {
+		http.Error(response, "分组不存在", http.StatusBadRequest)
 		return
 	}
 	if name != original || isPassword {
@@ -3234,7 +3284,15 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 		return
 	}
 	defer transaction.Rollback()
-	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, note = ?, value_type = ?, is_password = ?, revision = revision + 1, updated_at = ? WHERE name = ?", name, value, note, valueType, isPassword, time.Now().UTC().Unix(), original)
+	var currentGroup sql.NullString
+	var order int
+	if err = transaction.QueryRow("SELECT group_id, sort_order FROM variables WHERE name=?", original).Scan(&currentGroup, &order); err == nil && currentGroup.String != valueOrEmpty(groupID) {
+		err = transaction.QueryRow("SELECT COALESCE(MAX(sort_order),0)+1 FROM variables WHERE group_id IS ?", groupID).Scan(&order)
+	}
+	var result sql.Result
+	if err == nil {
+		result, err = transaction.Exec("UPDATE variables SET name = ?, value = ?, note = ?, group_id = ?, sort_order = ?, value_type = ?, is_password = ?, revision = revision + 1, updated_at = ? WHERE name = ?", name, value, note, groupID, order, valueType, isPassword, time.Now().UTC().Unix(), original)
+	}
 	if err == nil && name != original {
 		oldReference, newReference := "{{"+original+"}}", "{{"+name+"}}"
 		_, err = transaction.Exec("UPDATE quick_runs SET arguments_template = replace(arguments_template, ?, ?), revision = revision + 1 WHERE arguments_template LIKE ?", oldReference, newReference, "%"+oldReference+"%")
@@ -3348,7 +3406,10 @@ func (a *App) stopRun(response http.ResponseWriter, request *http.Request) {
 	id := request.PathValue("id")
 	current := request.Context().Value(sessionContextKey).(session)
 	_, err := a.runControl.Stop(request.Context(), runcontrol.Actor{UserID: current.userID, Username: current.username, Role: current.role}, id)
-	if errors.Is(err,runcontrol.ErrRunNotFound){http.Error(response,"无法读取运行",http.StatusNotFound);return}
+	if errors.Is(err, runcontrol.ErrRunNotFound) {
+		http.Error(response, "无法读取运行", http.StatusNotFound)
+		return
+	}
 	if errors.Is(err, runcontrol.ErrForbidden) {
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
@@ -4661,12 +4722,12 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	if isDeferredDataShell(request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = filesTemplate.Execute(response, struct {
-			CSRFToken, CurrentPath, Query, SortField, Direction        string
-			SortSummary, RootURL, SearchURL, ParentURL                 string
-			Locale                                                     webLocale
-			Breadcrumbs                                                []fileBreadcrumbView
-			DeferredData, ShowHidden                                   bool
-			CanWrite, CanMutateCurrent, CanExecute, CanManageExecution bool
+			CSRFToken, CurrentPath, Query, SortField, Direction                         string
+			SortSummary, RootURL, SearchURL, ParentURL                                  string
+			Locale                                                                      webLocale
+			Breadcrumbs                                                                 []fileBreadcrumbView
+			DeferredData, ShowHidden                                                    bool
+			CanWrite, CanMutateCurrent, CanExecute, CanManageExecution, CanManageGroups bool
 		}{
 			CSRFToken: current.csrfToken, CurrentPath: relative,
 			Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
@@ -4674,6 +4735,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			Locale: locale, Breadcrumbs: buildHostBreadcrumbs(relative, sortField, direction, showHidden), DeferredData: true, ShowHidden: showHidden,
 			CanWrite: identity.Allows(current.role, identity.PermissionWriteFiles), CanMutateCurrent: identity.Allows(current.role, identity.PermissionWriteFiles) && relative != "", CanExecute: identity.Allows(current.role, identity.PermissionExecute),
 			CanManageExecution: identity.Allows(current.role, identity.PermissionManageExecution),
+			CanManageGroups:    identity.Allows(current.role, identity.PermissionManageOperations),
 		})
 		return
 	}
@@ -4777,6 +4839,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		CanMutateCurrent   bool
 		CanExecute         bool
 		CanManageExecution bool
+		CanManageGroups    bool
 		ParentURL          string
 		Breadcrumbs        []fileBreadcrumbView
 		Locale             webLocale
@@ -4790,6 +4853,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		Pagination: pagination, ParentURL: parentURL,
 		CanWrite: identity.Allows(current.role, identity.PermissionWriteFiles), CanMutateCurrent: identity.Allows(current.role, identity.PermissionWriteFiles) && relative != "", CanExecute: identity.Allows(current.role, identity.PermissionExecute),
 		CanManageExecution: identity.Allows(current.role, identity.PermissionManageExecution),
+		CanManageGroups:    identity.Allows(current.role, identity.PermissionManageOperations),
 		Breadcrumbs:        breadcrumbs, Locale: locale, ShowHidden: showHidden,
 	})
 }

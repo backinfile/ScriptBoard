@@ -57,6 +57,7 @@ type taskPageData struct {
 	CanOverwrite       bool
 	QuickReferences    int
 	ScheduleReferences int
+	GroupImpact        recordGroupImpact
 	User               userView
 	DraftChanges       []securityFirewallChange
 	CanApplyDraft      bool
@@ -195,10 +196,15 @@ func safeFilesReturnTo(value string) string {
 }
 
 func (a *App) newVariableTask(response http.ResponseWriter, request *http.Request) {
+	groups, err := a.loadQuickRunGroups()
+	if err != nil {
+		http.Error(response, "Unable to read shared groups", http.StatusInternalServerError)
+		return
+	}
 	a.renderTaskPage(response, request, taskPageData{
 		Kind: "variable-new", Title: webText(resolveWebLocale(request), "task.variable_new.title"),
 		Description: webText(resolveWebLocale(request), "task.variable_description"),
-		BackURL:     "/resources/variables", Action: "/resources/variables", ValueType: variables.KindText,
+		BackURL:     "/resources/variables", Action: "/resources/variables", ValueType: variables.KindText, Groups: groups,
 	})
 }
 
@@ -227,9 +233,10 @@ func (a *App) saveQuickRunTask(response http.ResponseWriter, request *http.Reque
 
 func (a *App) editVariableTask(response http.ResponseWriter, request *http.Request) {
 	var name, value, note string
+	var groupID sql.NullString
 	var valueType variables.Kind
 	var isPassword bool
-	if err := a.db.QueryRow("SELECT name, value, note, value_type, is_password FROM variables WHERE name = ?", request.PathValue("name")).Scan(&name, &value, &note, &valueType, &isPassword); err != nil {
+	if err := a.db.QueryRow("SELECT name, value, note, value_type, is_password, group_id FROM variables WHERE name = ?", request.PathValue("name")).Scan(&name, &value, &note, &valueType, &isPassword, &groupID); err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(response, "Variable not found", http.StatusNotFound)
 			return
@@ -237,11 +244,16 @@ func (a *App) editVariableTask(response http.ResponseWriter, request *http.Reque
 		http.Error(response, "Unable to read variable", http.StatusInternalServerError)
 		return
 	}
+	groups, err := a.loadQuickRunGroups()
+	if err != nil {
+		http.Error(response, "Unable to read shared groups", http.StatusInternalServerError)
+		return
+	}
 	a.renderTaskPage(response, request, taskPageData{
 		Kind: "variable-edit", Title: webText(resolveWebLocale(request), "task.variable_edit.title"),
 		Description: webText(resolveWebLocale(request), "task.variable_description"),
 		BackURL:     "/resources/variables", Action: "/resources/variables/" + url.PathEscape(name) + "/update",
-		Name: name, Value: value, Note: note, ValueType: valueType, IsPassword: isPassword,
+		Name: name, Value: value, Note: note, ValueType: valueType, IsPassword: isPassword, GroupID: groupID.String, Groups: groups,
 	})
 }
 

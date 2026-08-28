@@ -136,8 +136,8 @@ func TestCreateGroupButtonsShareTheSecondaryContract(t *testing.T) {
 		path string
 		href string
 	}{
-		{"ui/templates/quick-runs.html", "/config/quick-runs/groups/new"},
-		{"ui/templates/schedules.html", "/config/schedules/groups/new"},
+		{"ui/templates/quick-runs.html", "/config/groups/new?return_to=%2Fconfig%2Fquick-runs"},
+		{"ui/templates/schedules.html", "/config/groups/new?return_to=%2Fconfig%2Fschedules"},
 	}
 
 	var expectedClasses string

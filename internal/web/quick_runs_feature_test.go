@@ -160,13 +160,13 @@ func TestQuickRunReorderModeUsesDragHandlesWithoutLegacyMoveActions(t *testing.T
 		}
 	}
 	heading := regexp.MustCompile(`(?s)<div class="heading-actions quick-run-heading-actions">(.*?)</div>`).FindSubmatch(page)
-	if len(heading) != 2 || strings.Index(string(heading[1]), `data-quick-run-reorder-toggle`) > strings.Index(string(heading[1]), `/config/quick-runs/groups/new`) {
+	if len(heading) != 2 || strings.Index(string(heading[1]), `data-quick-run-reorder-toggle`) > strings.Index(string(heading[1]), `/config/groups/new`) {
 		t.Fatalf("global reorder button must appear before create group: %s", page)
 	}
 	if strings.Contains(string(page), `quick-run-group__reorder`) || strings.Contains(string(page), `data-quick-run-drag-handle`) {
 		t.Fatalf("normal page still exposes per-group reorder controls or active drag handles: %s", page)
 	}
-	for _, removed := range []string{`action="/config/quick-runs/groups/` + groupID + `/move"`, `action="/config/quick-runs/` + quickRunIDForName(t, page, "Deploy") + `/move"`, `name="direction"`} {
+	for _, removed := range []string{`action="/config/quick-runs/groups/` + groupID + `/move"`, `action="/config/quick-runs/` + quickRunIDForName(t, page, "Deploy") + `/move"`} {
 		if strings.Contains(string(page), removed) {
 			t.Fatalf("normal page still contains legacy move action %q: %s", removed, page)
 		}
@@ -231,7 +231,7 @@ func TestQuickRunGroupMoveTopIsImmediateAndPreservesRelativeOrder(t *testing.T) 
 
 	page := getQuickRunsPage(t, client, serverURL)
 	for _, groupID := range []string{firstID, secondID, thirdID} {
-		action := `action="/config/quick-runs/groups/` + groupID + `/move-top"`
+		action := `action="/config/groups/` + groupID + `/move?return_to=%2Fconfig%2Fquick-runs"`
 		if !strings.Contains(string(page), action) {
 			t.Fatalf("group menu missing one-time move-to-top action %q: %s", action, page)
 		}

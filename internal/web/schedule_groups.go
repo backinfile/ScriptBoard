@@ -21,7 +21,7 @@ type scheduleGroup struct {
 
 func (a *App) loadScheduleGroups() ([]scheduleGroup, error) {
 	rows, err := a.db.Query(`SELECT g.id, g.name, g.sort_order, COUNT(s.id)
-		FROM schedule_groups g
+		FROM quick_run_groups g
 		LEFT JOIN schedules s ON s.group_id = g.id AND s.deleted = 0
 		GROUP BY g.id, g.name, g.sort_order, g.created_at
 		ORDER BY g.sort_order, g.created_at`)
@@ -46,7 +46,7 @@ func (a *App) resolveScheduleGroup(value string) (string, string, error) {
 		return "", "", nil
 	}
 	var name string
-	if err := a.db.QueryRow("SELECT name FROM schedule_groups WHERE id = ?", value).Scan(&name); err != nil {
+	if err := a.db.QueryRow("SELECT name FROM quick_run_groups WHERE id = ?", value).Scan(&name); err != nil {
 		return "", "", err
 	}
 	return value, name, nil

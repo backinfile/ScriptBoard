@@ -24,6 +24,13 @@
 <input name="name" value="{{.Config.Name}}" maxlength="80" autocomplete="off" placeholder="{{t .Locale "website.form.name_placeholder"}}" required>
 {{with index .Errors "name"}}<span class="field-error">{{.}}</span>{{end}}
 </label>
+<label>{{t .Locale "groups.label"}}
+<select name="group_id">
+<option value="" {{if not .Config.GroupID}}selected{{end}}>{{t .Locale "groups.ungrouped"}}</option>
+{{range .Groups}}<option value="{{.ID}}" {{if eq $.Config.GroupID .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+</select>
+{{with index .Errors "group_id"}}<span class="field-error">{{.}}</span>{{end}}
+</label>
 <label>{{t .Locale "website.form.check_type"}}
 <select name="kind" data-monitor-kind>
 <option value="http" {{if eq .Config.Kind "http"}}selected{{end}}>HTTP / HTTPS</option>

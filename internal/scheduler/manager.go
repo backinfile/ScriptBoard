@@ -34,6 +34,7 @@ type Schedule struct {
 	Name              string
 	GroupID           string
 	GroupName         string
+	SortOrder         int
 	ScriptPath        string
 	ArgumentsTemplate string
 	Expression        string
@@ -181,14 +182,32 @@ func (m *Manager) Update(id string, request CreateRequest) error {
 		return err
 	}
 	groupID := sql.NullString{String: request.GroupID, Valid: request.GroupID != ""}
-	result, err := m.db.Exec(`UPDATE schedules SET name = ?, group_id = ?, group_name = ?, script_path = ?, script_path_key = ?, arguments_template = ?, expression = ?, timeout_seconds = ?, allow_overlap = ?, next_fire_at = ?, updated_at = ? WHERE id = ? AND deleted = 0`,
-		request.Name, groupID, request.GroupName, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds, request.AllowOverlap,
+	transaction, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	var currentGroup sql.NullString
+	var sortOrder int
+	if err = transaction.QueryRow(`SELECT group_id, sort_order FROM schedules WHERE id=? AND deleted=0`, id).Scan(&currentGroup, &sortOrder); err != nil {
+		return err
+	}
+	if currentGroup.String != request.GroupID {
+		if err = transaction.QueryRow(`SELECT COALESCE(MAX(sort_order),0)+1 FROM schedules WHERE group_id IS ? AND deleted=0`, groupID).Scan(&sortOrder); err != nil {
+			return err
+		}
+	}
+	result, err := transaction.Exec(`UPDATE schedules SET name = ?, group_id = ?, group_name = ?, sort_order = ?, script_path = ?, script_path_key = ?, arguments_template = ?, expression = ?, timeout_seconds = ?, allow_overlap = ?, next_fire_at = ?, updated_at = ? WHERE id = ? AND deleted = 0`,
+		request.Name, groupID, request.GroupName, sortOrder, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds, request.AllowOverlap,
 		preview.NextFive[0].UnixNano(), now.UnixNano(), id)
 	if err != nil {
 		return err
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
+	}
+	if err := transaction.Commit(); err != nil {
+		return err
 	}
 	m.signalWake()
 	return nil
@@ -277,10 +296,14 @@ func (m *Manager) Create(request CreateRequest) (string, error) {
 		return "", err
 	}
 	groupID := sql.NullString{String: request.GroupID, Valid: request.GroupID != ""}
+	var sortOrder int
+	if err = m.db.QueryRow(`SELECT COALESCE(MAX(sort_order),0)+1 FROM schedules WHERE group_id IS ? AND deleted=0`, groupID).Scan(&sortOrder); err != nil {
+		return "", err
+	}
 	_, err = m.db.Exec(`INSERT INTO schedules
-		(id, name, group_id, group_name, script_path, script_path_key, arguments_template, expression, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-		id, request.Name, groupID, request.GroupName, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds,
+		(id, name, group_id, group_name, sort_order, script_path, script_path_key, arguments_template, expression, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+		id, request.Name, groupID, request.GroupName, sortOrder, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds,
 		request.AllowOverlap, preview.NextFive[0].UnixNano(), now.UnixNano(), now.UnixNano(),
 	)
 	if err != nil {
@@ -365,14 +388,14 @@ func (m *Manager) ListPage(limit, offset int) ([]Schedule, error) {
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := m.db.Query(`SELECT s.id, s.name, COALESCE(s.group_id, ''), COALESCE(g.name, ''), s.script_path, s.arguments_template, s.expression, s.timeout_seconds,
+	rows, err := m.db.Query(`SELECT s.id, s.name, COALESCE(s.group_id, ''), COALESCE(g.name, ''), s.sort_order, s.script_path, s.arguments_template, s.expression, s.timeout_seconds,
 		s.enabled, s.allow_overlap, s.next_fire_at,
 		COALESCE((SELECT result FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), ''),
 		COALESCE((SELECT run_id FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), ''),
 		COALESCE((SELECT error FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), '')
 		FROM schedules s
 		LEFT JOIN schedule_groups g ON g.id = s.group_id
-		WHERE s.deleted = 0 ORDER BY s.created_at LIMIT ? OFFSET ?`, limit, offset)
+		WHERE s.deleted = 0 ORDER BY s.group_id IS NULL, g.sort_order, s.sort_order, s.created_at LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +404,7 @@ func (m *Manager) ListPage(limit, offset int) ([]Schedule, error) {
 	for rows.Next() {
 		var schedule Schedule
 		var next int64
-		if err := rows.Scan(&schedule.ID, &schedule.Name, &schedule.GroupID, &schedule.GroupName, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.Expression,
+		if err := rows.Scan(&schedule.ID, &schedule.Name, &schedule.GroupID, &schedule.GroupName, &schedule.SortOrder, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.Expression,
 			&schedule.TimeoutSeconds, &schedule.Enabled, &schedule.AllowOverlap, &next, &schedule.LastResult, &schedule.LastRunID, &schedule.LastError); err != nil {
 			return nil, err
 		}
