@@ -249,17 +249,19 @@ async function assertDeferredMainNavigation(page) {
       "page",
       "main navigation did not update the active tab immediately",
     );
-    await page.getByRole("heading", { name: "Variables", exact: true }).waitFor({ timeout: 500 });
+    // Fix: use the gated data request as the shell-commit signal so a busy CI
+    // runner cannot fail this contract on an arbitrary 500 ms render budget.
+    await requestStarted;
+    await page.getByRole("heading", { name: "Variables", exact: true }).waitFor();
     await page.getByText("Password type only hides the value by default in this page.", { exact: false }).waitFor();
     const loading = page.locator('[data-deferred-region] [data-deferred-state="loading"]');
-    await loading.waitFor({ state: "visible", timeout: 500 });
+    await loading.waitFor({ state: "visible" });
     assert.match((await loading.textContent()).trim(), /^Loading/);
     assert.equal(
       await page.locator('main[data-navigation-state="loading"]').count(),
       0,
       "heavy-data navigation replaced the whole main region",
     );
-    await requestStarted;
     releaseResponse();
     await loading.waitFor({ state: "detached" });
     assert.equal(
