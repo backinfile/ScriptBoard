@@ -1,4 +1,4 @@
-# ScriptBoard v2.5.1
+# ScriptBoard v2.5.2
 
 ## 新增功能
 
@@ -19,6 +19,7 @@
 - 加固 MCP/OAuth：完善客户端注册、令牌撤销、Scope 收窄、失败限流和幂等操作账本，并修正 Windows 服务生命周期边界。
 - 修复自定义仪表盘 SVG 渐变定义触发 CSP 错误的问题，并为渐变卡片保留稳定的实体背景回退；浏览器 console 与页面错误门禁恢复为零错误。
 - 将请求目标 fuzz 输入约束到服务器真实的 1 MiB HTTP 请求头上限，避免超范围合成输入在 CI 定时 fuzz 结束边界造成伪失败。
+- 稳定共享实时数据库的前端契约测试连接，使 release race 门禁在后台写入期间按应用的 SQLite busy timeout 等待，不再产生偶发 `SQLITE_BUSY`。
 
 ## 升级
 
