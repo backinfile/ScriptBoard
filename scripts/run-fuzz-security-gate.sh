@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-fuzz_time="${SCRIPTBOARD_FUZZ_TIME:-30s}"
+# Fix: duration-based fuzzing can report context deadline exceeded when a worker
+# returns just after the timer. A fixed mutation budget keeps CI deterministic.
+fuzz_time="${SCRIPTBOARD_FUZZ_TIME:-200000x}"
 
 go test ./internal/outboundpolicy \
   -run='^$' -fuzz=FuzzPolicyAllowsAddress -fuzztime="$fuzz_time" -parallel=4
