@@ -1384,7 +1384,12 @@
       updateShellLocation(result.response.url);
       setSidebar(false);
       window.scrollTo({ top: partialNavigation || options.preserveScroll ? previousScrollY : 0, behavior: "auto" });
-      initPage({ openFileQuickAccess: options.openFileQuickAccess === true });
+      initPage({
+        openFileQuickAccess: options.openFileQuickAccess === true,
+        // Fix: the deferred data pass performs a second cleanup; do not expose
+        // Quick access during the shell pass or that cleanup can close its editor.
+        deferFileQuickAccess: deferredData,
+      });
 
       if (deferredData) {
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -7624,7 +7629,9 @@
     initCopyControls(document, cleanups);
     initFileDropUpload(document, cleanups);
     initFileVisibilityToggle(document, cleanups);
-    initFileQuickAccess(document, cleanups, options.openFileQuickAccess === true);
+    if (!options.deferFileQuickAccess) {
+      initFileQuickAccess(document, cleanups, options.openFileQuickAccess === true);
+    }
 	initFileOperation(cleanups);
     initDirectoryPickers(document, cleanups);
     initQuickCreateDefaults(document, cleanups);

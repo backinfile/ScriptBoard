@@ -20,6 +20,11 @@ func FuzzValidRequestTarget(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, rawTarget string) {
+		// Keep fuzz inputs inside the HTTP server's real MaxHeaderBytes boundary;
+		// larger synthetic targets can overrun a timed fuzz shutdown on CI.
+		if len(rawTarget) > 1<<20 {
+			return
+		}
 		parsed, err := url.ParseRequestURI(rawTarget)
 		if err != nil {
 			return
