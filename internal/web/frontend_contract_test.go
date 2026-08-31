@@ -17,6 +17,18 @@ import (
 	app "scriptboard/internal/web"
 )
 
+func openFrontendContractSQLite(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	// Fix: contract fixtures share the live application database, so mirror its
+	// busy timeout instead of failing immediately while a background write holds it.
+	database, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.SetMaxOpenConns(1)
+	return database
+}
+
 func TestShellStatusEndpointReturnsAuthenticatedNoStoreVerdict(t *testing.T) {
 	t.Parallel()
 
@@ -111,10 +123,7 @@ func TestPJAXHeavyDataShellReturnsPageChromeWithOnlyItsDataRegionLoading(t *test
 	stateRoot := filepath.Join(root, "state")
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
 
-	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openFrontendContractSQLite(t, filepath.Join(stateRoot, "app.db"))
 	defer db.Close()
 	if _, err := db.Exec("INSERT INTO variables (name, value, is_password, created_at, updated_at) VALUES ('LARGE_RESULT_MARKER', 'must only be in the data response', 0, 1, 1)"); err != nil {
 		t.Fatal(err)
@@ -251,10 +260,7 @@ func TestApplicationShellAndStatusEndpointShareFiveSecondSnapshot(t *testing.T) 
 		t.Fatalf("page status=%d, want %d", pageResponse.StatusCode, http.StatusOK)
 	}
 
-	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openFrontendContractSQLite(t, filepath.Join(stateRoot, "app.db"))
 	defer db.Close()
 	scriptPath := filepath.Join(root, "host", "job.cmd")
 	if _, err := db.Exec(`INSERT INTO runs
@@ -303,10 +309,7 @@ func TestSingleActiveRunUsesDirectShellDestination(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = application.Close() })
 
-	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openFrontendContractSQLite(t, filepath.Join(stateRoot, "app.db"))
 	scriptPath := filepath.Join(hostRoot, "only-active.cmd")
 	if _, err := db.Exec(`INSERT INTO runs
 		(id, script_path, script_path_key, script_sha256, arguments_template, arguments_json, executor, source_type, status, created_at, error, log_path)
