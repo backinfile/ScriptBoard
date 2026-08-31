@@ -457,24 +457,115 @@ func (m *Monitor) Overview(ctx context.Context, selectedRange string) (Overview,
 		}
 		return result, nil
 	}
-	rows, err := m.db.QueryContext(ctx, "SELECT bucket_at, average_json, maximum_json FROM host_metric_minutes WHERE bucket_at >= ? ORDER BY bucket_at", m.options.Now().Add(-duration).Unix())
+	bucketDuration := historyBucketDuration(selectedRange)
+	cutoff := m.options.Now().Add(-duration)
+	// Fix long-range charts loading every minute and every device detail: align the
+	// query to the selected resolution, then return only bounded summary buckets.
+	alignedCutoff := cutoff.Truncate(bucketDuration)
+	if alignedCutoff.Before(cutoff) {
+		alignedCutoff = alignedCutoff.Add(bucketDuration)
+	}
+	rows, err := m.db.QueryContext(ctx, "SELECT bucket_at, sample_count, average_json, maximum_json FROM host_metric_minutes WHERE bucket_at >= ? ORDER BY bucket_at", alignedCutoff.Unix())
 	if err != nil {
 		return result, err
 	}
 	defer rows.Close()
+	var bucket *historyAccumulator
 	for rows.Next() {
 		var timestamp int64
+		var sampleCount int
 		var averageJSON, maximumJSON string
-		if err := rows.Scan(&timestamp, &averageJSON, &maximumJSON); err != nil {
+		if err := rows.Scan(&timestamp, &sampleCount, &averageJSON, &maximumJSON); err != nil {
 			return result, err
 		}
 		var average, maximum MetricValues
 		if json.Unmarshal([]byte(averageJSON), &average) != nil || json.Unmarshal([]byte(maximumJSON), &maximum) != nil {
 			continue
 		}
-		result.Series = append(result.Series, SeriesPoint{At: time.Unix(timestamp, 0).UTC(), Average: average, Maximum: maximum})
+		at := time.Unix(timestamp, 0).UTC().Truncate(bucketDuration)
+		if bucket == nil || !bucket.at.Equal(at) {
+			if bucket != nil {
+				result.Series = append(result.Series, bucket.point())
+			}
+			bucket = newHistoryAccumulator(at)
+		}
+		bucket.add(average.Values, maximum.Values, sampleCount)
+	}
+	if bucket != nil {
+		result.Series = append(result.Series, bucket.point())
 	}
 	return result, rows.Err()
+}
+
+func historyBucketDuration(selectedRange string) time.Duration {
+	switch selectedRange {
+	case Range6Hours:
+		return 2 * time.Minute
+	case Range24Hours:
+		return 5 * time.Minute
+	default:
+		return time.Minute
+	}
+}
+
+type historyAccumulator struct {
+	at          time.Time
+	weightedSum map[string]float64
+	weight      map[string]int
+	maximum     map[string]float64
+	maximumSet  map[string]bool
+}
+
+func newHistoryAccumulator(at time.Time) *historyAccumulator {
+	return &historyAccumulator{
+		at: at, weightedSum: map[string]float64{}, weight: map[string]int{},
+		maximum: map[string]float64{}, maximumSet: map[string]bool{},
+	}
+}
+
+func (a *historyAccumulator) add(average, maximum map[string]float64, sampleCount int) {
+	if sampleCount < 1 {
+		sampleCount = 1
+	}
+	for key, value := range average {
+		if !overviewChartMetric(key) || math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+		a.weightedSum[key] += value * float64(sampleCount)
+		a.weight[key] += sampleCount
+	}
+	for key, value := range maximum {
+		if !overviewChartMetric(key) || math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+		if !a.maximumSet[key] || value > a.maximum[key] {
+			a.maximum[key] = value
+			a.maximumSet[key] = true
+		}
+	}
+}
+
+func overviewChartMetric(key string) bool {
+	switch key {
+	case "cpu.usedPercent", "memory.usedPercent", "storage.usedPercent",
+		"disk.readBytesPerSecond", "disk.writeBytesPerSecond",
+		"network.receivedBytesPerSecond", "network.sentBytesPerSecond":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *historyAccumulator) point() SeriesPoint {
+	average := make(map[string]float64, len(a.weightedSum))
+	for key, sum := range a.weightedSum {
+		average[key] = sum / float64(a.weight[key])
+	}
+	return SeriesPoint{
+		At:      a.at,
+		Average: MetricValues{Values: average},
+		Maximum: MetricValues{Values: a.maximum},
+	}
 }
 
 func rangeDuration(value string) (time.Duration, bool) {

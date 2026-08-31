@@ -246,6 +246,93 @@ func TestMonitorPersistsAndSerializesDuplexDiskAndNetworkHistory(t *testing.T) {
 	}
 }
 
+func TestOverviewHistoryUsesRangeSpecificBoundedSummarySeries(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0).UTC().Truncate(time.Minute)
+	now := base.Add(24 * time.Hour)
+	db := openMonitorDB(t)
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement, err := tx.Prepare(`INSERT INTO host_metric_minutes(bucket_at, sample_count, average_json, maximum_json) VALUES (?, ?, ?, ?)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for minute := range 24 * 60 {
+		average, err := json.Marshal(MetricValues{
+			Values:      map[string]float64{"memory.usedPercent": float64((minute % 5) * 10), "process.cpuPercent": 25},
+			Filesystems: map[string]map[string]float64{"fs0": {"usedPercent": 70}},
+			Disks:       map[string]map[string]float64{"disk0": {"readBytesPerSecond": 100}},
+			Networks:    map[string]map[string]float64{"eth0": {"receivedBytesPerSecond": 200}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		maximum, err := json.Marshal(MetricValues{
+			Values:      map[string]float64{"memory.usedPercent": float64(100 + minute%5), "process.cpuPercent": 50},
+			Filesystems: map[string]map[string]float64{"fs0": {"usedPercent": 90}},
+			Disks:       map[string]map[string]float64{"disk0": {"readBytesPerSecond": 500}},
+			Networks:    map[string]map[string]float64{"eth0": {"receivedBytesPerSecond": 600}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := statement.Exec(base.Add(time.Duration(minute)*time.Minute).Unix(), minute%5+1, average, maximum); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := statement.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	monitor, err := New(db, &sequenceProbe{samples: []RawSample{{At: now}}}, Options{
+		Interval: time.Hour, Retention: 24 * time.Hour, Now: func() time.Time { return now }, SkipInitialCleanup: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(monitor.Close)
+	var overview Overview
+	for selectedRange, wantPoints := range map[string]int{
+		Range1Hour: 60, Range6Hours: 180, Range24Hours: 288,
+	} {
+		selected, err := monitor.Overview(context.Background(), selectedRange)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(selected.Series) != wantPoints {
+			t.Fatalf("%s series points = %d, want %d", selectedRange, len(selected.Series), wantPoints)
+		}
+		if selectedRange == Range24Hours {
+			overview = selected
+		}
+	}
+	payload, err := json.Marshal(overview.Series)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("24h series: %d points, %d bytes", len(overview.Series), len(payload))
+	if len(payload) > 100*1024 {
+		t.Fatalf("24h series payload = %d bytes, want at most 100 KiB", len(payload))
+	}
+	first := overview.Series[0]
+	if got, want := first.Average.Values["memory.usedPercent"], 400.0/15.0; got != want {
+		t.Fatalf("weighted five-minute average = %v, want %v", got, want)
+	}
+	if got := first.Maximum.Values["memory.usedPercent"]; got != 104 {
+		t.Fatalf("five-minute peak = %v, want 104", got)
+	}
+	if len(first.Average.Filesystems)+len(first.Average.Disks)+len(first.Average.Networks) != 0 {
+		t.Fatalf("overview history leaked unused device details: %#v", first.Average)
+	}
+	if _, ok := first.Average.Values["process.cpuPercent"]; ok {
+		t.Fatalf("overview history leaked an unused summary metric: %#v", first.Average.Values)
+	}
+}
+
 func TestMonitorMarksDataStaleAfterFifteenSeconds(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0).UTC()
 	now := base
