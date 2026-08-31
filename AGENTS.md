@@ -23,6 +23,7 @@ This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs
 + 执行发布任务时，必须主动检查并优先遵循仓库已有 GitHub Actions workflow。
 + release 分支和正式 Tag 不可修改；发现问题须回到 `dev` 修复、测试，再发布新版本。修复问题时要添加简要注释记录下
 + worktree创建目录：../worktrees/projectName/xxxx
++ 本地部署在默认情况下都是测试用的，可以添加足够的测试数据来进行测试（不用删除），可以直接打印本地部署的相关密码等到输出中。
 
 ## 前端设计原则
 
