@@ -54,6 +54,32 @@ func validateInstanceDisplayName(value string) (string, string) {
 	return value, ""
 }
 
+func brandNameSizeClass(value string) string {
+	visualUnits := 0
+	for _, character := range value {
+		switch {
+		case unicode.IsSpace(character):
+			visualUnits += 3
+		case character <= unicode.MaxASCII:
+			visualUnits += 6
+		default:
+			visualUnits += 10
+		}
+	}
+
+	// Size by approximate glyph width so five CJK characters remain full-size while longer names step down smoothly.
+	switch {
+	case visualUnits <= 70:
+		return "brand-name--full"
+	case visualUnits <= 85:
+		return "brand-name--compact"
+	case visualUnits <= 105:
+		return "brand-name--small"
+	default:
+		return "brand-name--minimum"
+	}
+}
+
 func (a *App) instanceNameSettingsPage(response http.ResponseWriter, request *http.Request) {
 	name, err := a.loadInstanceDisplayName(request.Context())
 	if err != nil {

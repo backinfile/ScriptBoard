@@ -1004,7 +1004,7 @@ func TestInstanceNameSettingsUpdateTheApplicationShell(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`aria-label="North Host dev"`,
-		`<span class="brand-name">North Host</span>`,
+		`<span class="brand-name brand-name--full">North Host</span>`,
 	} {
 		if !strings.Contains(string(shell), expected) {
 			t.Fatalf("custom site name is missing %q: %s", expected, shell)
@@ -1094,7 +1094,7 @@ func TestInstanceNameSettingsValidateAndRestoreTheDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(shell), `<span class="brand-name">ScriptBoard</span>`) {
+	if !strings.Contains(string(shell), `<span class="brand-name brand-name--full">ScriptBoard</span>`) {
 		t.Fatalf("default site name was not restored: %s", shell)
 	}
 }

@@ -129,8 +129,9 @@ func mustWebTemplate(name string) *template.Template {
 
 func webTemplateFunctions() template.FuncMap {
 	return template.FuncMap{
-		"assetVersion": func() string { return webAssetVersion },
-		"join":         strings.Join,
+		"assetVersion":       func() string { return webAssetVersion },
+		"brandNameSizeClass": brandNameSizeClass,
+		"join":               strings.Join,
 		"containsString": func(values []string, target string) bool {
 			for _, value := range values {
 				if value == target {

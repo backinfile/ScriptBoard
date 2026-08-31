@@ -602,6 +602,30 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
   white-space: nowrap;
 }
 .brand-wordmark:hover .brand-version { color: var(--sb-ink); }
+.app-sidebar .brand-wordmark {
+  flex: 1 1 auto;
+  max-width: none;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 1px;
+}
+.app-sidebar .brand-mark { grid-row: 1 / 3; }
+.app-sidebar .brand-name {
+  grid-column: 2;
+  align-self: end;
+  line-height: 1.15;
+}
+.app-sidebar .brand-name--full { font-size: 1.05rem; }
+.app-sidebar .brand-name--compact { font-size: .85rem; }
+.app-sidebar .brand-name--small { font-size: .72rem; }
+.app-sidebar .brand-name--minimum { font-size: .7rem; }
+.app-sidebar .brand-version {
+  grid-column: 2;
+  justify-self: start;
+  align-self: start;
+}
 .sidebar-close, .sidebar-toggle {
   display: none;
   place-items: center;

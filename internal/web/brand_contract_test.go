@@ -20,6 +20,43 @@ func TestApplicationBrandAllowsCJKGlyphHeight(t *testing.T) {
 	}
 }
 
+func TestApplicationBrandKeepsFiveCJKCharactersAndScalesLongerNames(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "five CJK characters", value: "脚本管理台", want: "brand-name--full"},
+		{name: "longer CJK name", value: "脚本管理控制面板", want: "brand-name--compact"},
+		{name: "default Latin name", value: "ScriptBoard", want: "brand-name--full"},
+		{name: "very long name", value: strings.Repeat("界", maxApplicationNameRunes), want: "brand-name--minimum"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := brandNameSizeClass(test.value); got != test.want {
+				t.Fatalf("brandNameSizeClass(%q) = %q, want %q", test.value, got, test.want)
+			}
+		})
+	}
+
+	stylesheet, err := webFiles.ReadFile("ui/assets/app.css")
+	if err != nil {
+		t.Fatalf("read application stylesheet: %v", err)
+	}
+	css := string(stylesheet)
+	for _, expected := range []string{
+		`.app-sidebar .brand-wordmark {`,
+		`grid-template-columns: 34px minmax(0, 1fr);`,
+		`.app-sidebar .brand-name--full { font-size: 1.05rem; }`,
+		`.app-sidebar .brand-name--minimum { font-size: .7rem; }`,
+	} {
+		if !strings.Contains(css, expected) {
+			t.Fatalf("application brand scaling is missing %q", expected)
+		}
+	}
+}
+
 func TestPrimaryWorkspacesShareTheApplicationContentWidth(t *testing.T) {
 	t.Parallel()
 

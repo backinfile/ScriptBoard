@@ -6,7 +6,7 @@
 <div class="sidebar-scrim" data-sidebar-close hidden></div>
 <aside class="app-sidebar" id="app-sidebar" data-pjax-nav aria-label="{{t .Locale "shell.navigation"}}">
   <div class="sidebar-head">
-    <a class="brand-wordmark" href="/monitor" aria-label="{{.ApplicationName}}{{if .Version}} {{.Version}}{{end}}"><span class="brand-mark" aria-hidden="true"><span data-lucide="square-terminal"></span></span><span class="brand-name">{{.ApplicationName}}</span>{{if .Version}}<span class="brand-version">{{.Version}}</span>{{end}}</a>
+    <a class="brand-wordmark" href="/monitor" aria-label="{{.ApplicationName}}{{if .Version}} {{.Version}}{{end}}"><span class="brand-mark" aria-hidden="true"><span data-lucide="square-terminal"></span></span><span class="brand-name {{brandNameSizeClass .ApplicationName}}">{{.ApplicationName}}</span>{{if .Version}}<span class="brand-version">{{.Version}}</span>{{end}}</a>
     <div class="sidebar-head__actions">
       <button class="sidebar-collapse" type="button" data-sidebar-collapse aria-expanded="true" data-expanded-label="{{t .Locale "shell.collapse_navigation"}}" data-collapsed-label="{{t .Locale "shell.expand_navigation"}}" aria-label="{{t .Locale "shell.collapse_navigation"}}" title="{{t .Locale "shell.collapse_navigation"}}"><span data-sidebar-collapse-icon data-lucide="panel-left-close" aria-hidden="true"></span></button>
       <button class="sidebar-close" type="button" data-sidebar-close><span data-lucide="x" aria-hidden="true"></span><span class="sr-only">{{t .Locale "shell.close_navigation"}}</span></button>
