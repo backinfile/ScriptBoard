@@ -792,7 +792,11 @@ func (m *Manager) refreshRegistryCard(ctx context.Context, card Card) (Card, err
 		}
 		failures++
 		if old, ok := previous[results[index].Image]; ok && old.Tag != "" {
+			// 刷新失败时沿用完整的最近成功镜像事实，保证版本、时间和下载大小来自同一次快照。
 			results[index].Tag = old.Tag
+			results[index].CompressedSizeMinBytes = old.CompressedSizeMinBytes
+			results[index].CompressedSizeMaxBytes = old.CompressedSizeMaxBytes
+			results[index].CompressedSizeAvailable = old.CompressedSizeAvailable
 			results[index].PushedAt = old.PushedAt
 			results[index].PushTimeAvailable = old.PushTimeAvailable
 			results[index].TimeSource = old.TimeSource

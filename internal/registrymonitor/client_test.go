@@ -160,6 +160,91 @@ func TestInspectReadsImageCreatedTimeFromRegistryManifest(t *testing.T) {
 	}
 }
 
+func TestInspectReadsCompressedDownloadSizeFromRegistryManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v2/team/api/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"2.4.0"}})
+		case "/api/v2.0/projects/team/repositories/api/artifacts/2.4.0":
+			http.NotFound(response, request)
+		case "/v2/team/api/manifests/2.4.0":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+				"config":        map[string]any{"digest": "sha256:" + strings.Repeat("d", 64), "size": 512},
+				"layers": []map[string]any{
+					{"digest": "sha256:" + strings.Repeat("e", 64), "size": 4096},
+					{"digest": "sha256:" + strings.Repeat("f", 64), "size": 8192},
+				},
+			})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	results, err := New(server.Client()).Inspect(context.Background(), Config{Endpoint: server.URL, Images: []string{"team/api"}})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("results=%#v err=%v", results, err)
+	}
+	if !results[0].CompressedSizeAvailable || results[0].CompressedSizeMinBytes != 12800 || results[0].CompressedSizeMaxBytes != 12800 {
+		t.Fatalf("compressed download size was not populated: %#v", results[0])
+	}
+}
+
+func TestInspectReportsCompressedDownloadSizeRangeForRegistryIndex(t *testing.T) {
+	amd64Manifest := "sha256:" + strings.Repeat("1", 64)
+	arm64Manifest := "sha256:" + strings.Repeat("2", 64)
+	attestationManifest := "sha256:" + strings.Repeat("5", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v2/team/api/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"3.1.0"}})
+		case "/api/v2.0/projects/team/repositories/api/artifacts/3.1.0":
+			http.NotFound(response, request)
+		case "/v2/team/api/manifests/3.1.0":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"mediaType":     "application/vnd.oci.image.index.v1+json",
+				"manifests": []map[string]any{
+					{"digest": amd64Manifest, "size": 600, "platform": map[string]any{"os": "linux", "architecture": "amd64"}},
+					{"digest": arm64Manifest, "size": 620, "platform": map[string]any{"os": "linux", "architecture": "arm64"}},
+					{"digest": attestationManifest, "size": 400, "platform": map[string]any{"os": "unknown", "architecture": "unknown"}, "annotations": map[string]any{"vnd.docker.reference.type": "attestation-manifest"}},
+				},
+			})
+		case "/v2/team/api/manifests/" + amd64Manifest:
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"config":        map[string]any{"digest": "sha256:" + strings.Repeat("3", 64), "size": 100},
+				"layers":        []map[string]any{{"size": 900}, {"size": 2000}},
+			})
+		case "/v2/team/api/manifests/" + arm64Manifest:
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"config":        map[string]any{"digest": "sha256:" + strings.Repeat("4", 64), "size": 120},
+				"layers":        []map[string]any{{"size": 1080}, {"size": 3800}},
+			})
+		case "/v2/team/api/manifests/" + attestationManifest:
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"config":        map[string]any{"digest": "sha256:" + strings.Repeat("6", 64), "size": 20},
+				"layers":        []map[string]any{{"size": 80}},
+			})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	results, err := New(server.Client()).Inspect(context.Background(), Config{Endpoint: server.URL, Images: []string{"team/api"}})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("results=%#v err=%v", results, err)
+	}
+	if !results[0].CompressedSizeAvailable || results[0].CompressedSizeMinBytes != 3000 || results[0].CompressedSizeMaxBytes != 5000 {
+		t.Fatalf("multi-platform compressed size range was not populated: %#v", results[0])
+	}
+}
+
 func TestInspectReadsImageCreatedTimeFromRegistryIndex(t *testing.T) {
 	wantTime := time.Date(2026, 8, 16, 8, 15, 0, 0, time.UTC)
 	manifestDigest := "sha256:" + strings.Repeat("b", 64)

@@ -53,8 +53,8 @@ type customDashboardCardView struct {
 }
 
 type customDashboardRegistryImageView struct {
-	Image, Tag, TimeLabel, TimeKindLabel string
-	Error, Stale                         bool
+	Image, Tag, TimeLabel, TimeKindLabel, CompressedSizeLabel string
+	Error, Stale                                              bool
 }
 
 type customDashboardWebsiteView struct {
@@ -183,6 +183,12 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 				} else {
 					imageView.TimeKindLabel = "更新时间"
 					imageView.TimeLabel = "仓库未提供"
+				}
+				if image.CompressedSizeAvailable {
+					imageView.CompressedSizeLabel = humanBytes(image.CompressedSizeMinBytes)
+					if image.CompressedSizeMaxBytes != image.CompressedSizeMinBytes {
+						imageView.CompressedSizeLabel += "–" + humanBytes(image.CompressedSizeMaxBytes)
+					}
 				}
 				item.RegistryImages = append(item.RegistryImages, imageView)
 			}

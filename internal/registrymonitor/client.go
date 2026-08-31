@@ -40,6 +40,11 @@ type Config struct {
 type ImageResult struct {
 	Image string `json:"image"`
 	Tag   string `json:"tag,omitempty"`
+	// CompressedSizeMinBytes and CompressedSizeMaxBytes describe the compressed
+	// bytes downloaded for one platform. They differ for multi-platform tags.
+	CompressedSizeMinBytes  int64 `json:"compressedSizeMinBytes,omitempty"`
+	CompressedSizeMaxBytes  int64 `json:"compressedSizeMaxBytes,omitempty"`
+	CompressedSizeAvailable bool  `json:"compressedSizeAvailable,omitempty"`
 	// PushedAt and PushTimeAvailable keep the persisted snapshot contract. TimeSource
 	// distinguishes an actual Registry push time from the OCI image creation fallback.
 	PushedAt          time.Time `json:"pushedAt,omitempty"`
@@ -164,11 +169,21 @@ func (client *Client) Inspect(ctx context.Context, config Config) ([]ImageResult
 			// 修复空仓库使整张卡片进入错误状态：无标签仓库不产生可展示的镜像结果。
 			continue
 		}
+		metadata, _ := client.registryManifestMetadata(ctx, config, image, result.Tag, 2)
+		if len(metadata.CompressedSizes) > 0 {
+			result.CompressedSizeMinBytes = metadata.CompressedSizes[0]
+			result.CompressedSizeMaxBytes = metadata.CompressedSizes[0]
+			for _, size := range metadata.CompressedSizes[1:] {
+				result.CompressedSizeMinBytes = min(result.CompressedSizeMinBytes, size)
+				result.CompressedSizeMaxBytes = max(result.CompressedSizeMaxBytes, size)
+			}
+			result.CompressedSizeAvailable = true
+		}
 		if pushedAt, ok := client.harborPushTime(ctx, config, image, result.Tag); ok {
 			result.PushedAt = pushedAt
 			result.PushTimeAvailable = true
 			result.TimeSource = ImageTimePushed
-		} else if createdAt, ok := client.registryImageCreatedTime(ctx, config, image, result.Tag); ok {
+		} else if createdAt, ok := client.registryImageCreatedTime(ctx, config, image, metadata.ConfigDigest); ok {
 			result.PushedAt = createdAt
 			result.PushTimeAvailable = true
 			result.TimeSource = ImageTimeCreated
@@ -501,9 +516,8 @@ func (client *Client) harborPushTime(ctx context.Context, config Config, image, 
 	return document.PushTime, true
 }
 
-func (client *Client) registryImageCreatedTime(ctx context.Context, config Config, image, reference string) (time.Time, bool) {
-	configDigest, ok := client.registryManifestConfigDigest(ctx, config, image, reference, 2)
-	if !ok {
+func (client *Client) registryImageCreatedTime(ctx context.Context, config Config, image, configDigest string) (time.Time, bool) {
+	if !digestPattern.MatchString(configDigest) {
 		return time.Time{}, false
 	}
 	blobURL := config.Endpoint + "/v2/" + escapeRepository(image) + "/blobs/" + configDigest
@@ -524,9 +538,14 @@ func (client *Client) registryImageCreatedTime(ctx context.Context, config Confi
 	return imageConfig.Created, true
 }
 
-func (client *Client) registryManifestConfigDigest(ctx context.Context, config Config, image, reference string, remainingDepth int) (string, bool) {
+type registryManifestMetadata struct {
+	ConfigDigest    string
+	CompressedSizes []int64
+}
+
+func (client *Client) registryManifestMetadata(ctx context.Context, config Config, image, reference string, remainingDepth int) (registryManifestMetadata, bool) {
 	if remainingDepth < 1 {
-		return "", false
+		return registryManifestMetadata{}, false
 	}
 	manifestURL := config.Endpoint + "/v2/" + escapeRepository(image) + "/manifests/" + url.PathEscape(reference)
 	response, err := client.doAuthenticatedAccept(ctx, manifestURL, config, strings.Join([]string{
@@ -536,37 +555,68 @@ func (client *Client) registryManifestConfigDigest(ctx context.Context, config C
 		"application/vnd.docker.distribution.manifest.list.v2+json",
 	}, ", "))
 	if err != nil {
-		return "", false
+		return registryManifestMetadata{}, false
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		response.Body.Close()
-		return "", false
+		return registryManifestMetadata{}, false
 	}
 	var manifest struct {
 		Config struct {
 			Digest string `json:"digest"`
+			Size   *int64 `json:"size"`
 		} `json:"config"`
+		Layers []struct {
+			Size *int64 `json:"size"`
+		} `json:"layers"`
 		Manifests []struct {
-			Digest string `json:"digest"`
+			Digest      string            `json:"digest"`
+			Annotations map[string]string `json:"annotations"`
 		} `json:"manifests"`
 	}
 	decodeErr := decodeJSON(response.Body, &manifest)
 	response.Body.Close()
 	if decodeErr != nil {
-		return "", false
+		return registryManifestMetadata{}, false
 	}
+	metadata := registryManifestMetadata{}
 	if digestPattern.MatchString(manifest.Config.Digest) {
-		return manifest.Config.Digest, true
+		metadata.ConfigDigest = manifest.Config.Digest
+		if manifest.Config.Size != nil && *manifest.Config.Size >= 0 {
+			total := *manifest.Config.Size
+			complete := true
+			for _, layer := range manifest.Layers {
+				if layer.Size == nil || *layer.Size < 0 {
+					complete = false
+					break
+				}
+				if *layer.Size > (1<<63-1)-total {
+					complete = false
+					break
+				}
+				total += *layer.Size
+			}
+			if complete {
+				metadata.CompressedSizes = append(metadata.CompressedSizes, total)
+			}
+		}
+		return metadata, true
 	}
 	for _, child := range manifest.Manifests {
+		if child.Annotations["vnd.docker.reference.type"] == "attestation-manifest" {
+			continue
+		}
 		if !digestPattern.MatchString(child.Digest) {
 			continue
 		}
-		if digest, ok := client.registryManifestConfigDigest(ctx, config, image, child.Digest, remainingDepth-1); ok {
-			return digest, true
+		if childMetadata, ok := client.registryManifestMetadata(ctx, config, image, child.Digest, remainingDepth-1); ok {
+			if metadata.ConfigDigest == "" {
+				metadata.ConfigDigest = childMetadata.ConfigDigest
+			}
+			metadata.CompressedSizes = append(metadata.CompressedSizes, childMetadata.CompressedSizes...)
 		}
 	}
-	return "", false
+	return metadata, metadata.ConfigDigest != "" || len(metadata.CompressedSizes) > 0
 }
 
 func latestTag(tags []string) string {

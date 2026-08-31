@@ -63,6 +63,16 @@ func TestRegistryCardStoresCredentialOutsideDatabaseAndRefreshesMultipleImages(t
 				return
 			}
 			_, _ = response.Write([]byte(`{"tags":["2.0.0"]}`))
+		case "/v2/team/api/manifests/1.3.0":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"config": map[string]any{"digest": "sha256:" + strings.Repeat("a", 64), "size": 100},
+				"layers": []map[string]any{{"size": 900}},
+			})
+		case "/v2/team/web/manifests/2.0.0":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"config": map[string]any{"digest": "sha256:" + strings.Repeat("b", 64), "size": 200},
+				"layers": []map[string]any{{"size": 1800}},
+			})
 		default:
 			http.NotFound(response, request)
 		}
@@ -105,7 +115,7 @@ func TestRegistryCardStoresCredentialOutsideDatabaseAndRefreshesMultipleImages(t
 	if err == nil {
 		t.Fatal("partial registry failure should be returned")
 	}
-	if len(refreshed.Snapshot.Images) != 2 || refreshed.Snapshot.Images[1].Tag != "2.0.0" || refreshed.Snapshot.Images[1].Error == "" || !refreshed.Snapshot.Images[1].Stale {
+	if len(refreshed.Snapshot.Images) != 2 || refreshed.Snapshot.Images[1].Tag != "2.0.0" || refreshed.Snapshot.Images[1].Error == "" || !refreshed.Snapshot.Images[1].Stale || !refreshed.Snapshot.Images[1].CompressedSizeAvailable || refreshed.Snapshot.Images[1].CompressedSizeMinBytes != 2000 {
 		t.Fatalf("unexpected registry snapshot: %#v", refreshed.Snapshot.Images)
 	}
 	credential = "rotated-secret"
