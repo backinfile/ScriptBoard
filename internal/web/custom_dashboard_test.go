@@ -259,10 +259,20 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 			_, _ = response.Write([]byte(`{"tags":["1.8.1"]}`))
 		case "/api/v2.0/projects/team/repositories/api/artifacts/v2.5.0":
 			_, _ = response.Write([]byte(`{"push_time":"2026-08-18T10:30:00Z"}`))
+		case "/v2/team/api/manifests/v2.5.0":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"config":        map[string]any{"digest": "sha256:" + strings.Repeat("a", 64), "size": 512},
+				"layers":        []map[string]any{{"size": 4096}, {"size": 8192}},
+			})
 		case "/api/v2.0/projects/team/repositories/web/artifacts/1.8.1":
 			http.NotFound(response, request)
 		case "/v2/team/web/manifests/1.8.1":
-			_ = json.NewEncoder(response).Encode(map[string]any{"schemaVersion": 2, "config": map[string]any{"digest": webConfigDigest}})
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"config":        map[string]any{"digest": webConfigDigest, "size": 256},
+				"layers":        []map[string]any{{"size": 1024}},
+			})
 		case "/v2/team/web/blobs/" + webConfigDigest:
 			_, _ = response.Write([]byte(`{"created":"2026-08-17T11:45:00Z"}`))
 		default:
@@ -314,7 +324,7 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 	renderedBytes, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	rendered := string(renderedBytes)
-	for _, expected := range []string{"生产镜像", "team/api", "v2.5.0", "team/web", "1.8.1", "上传时间 2026-08-18", "构建时间 2026-08-17"} {
+	for _, expected := range []string{"生产镜像", "team/api", "v2.5.0", "team/web", "1.8.1", "上传时间 2026-08-18", "构建时间 2026-08-17", "下载大小（压缩） 12.5 KiB", "下载大小（压缩） 1.2 KiB"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("registry card missing %q", expected)
 		}
