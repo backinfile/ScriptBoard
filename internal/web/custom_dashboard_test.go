@@ -254,7 +254,7 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 		case "/v2/_catalog":
 			_, _ = response.Write([]byte(`{"repositories":["team/web","team/api","other/db"]}`))
 		case "/v2/team/api/tags/list":
-			_, _ = response.Write([]byte(`{"tags":["v2.4.0","v2.5.0"]}`))
+			_, _ = response.Write([]byte(`{"tags":["v1.0.0","v2.0.0","v2.1.0","v2.2.0","v2.3.0","v2.4.0","v2.5.0"]}`))
 		case "/v2/team/web/tags/list":
 			_, _ = response.Write([]byte(`{"tags":["1.8.1"]}`))
 		case "/api/v2.0/projects/team/repositories/api/artifacts/v2.5.0":
@@ -331,6 +331,9 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 	}
 	if strings.Contains(rendered, "registry-secret") || !strings.Contains(rendered, "custom-dashboard-registry-list") {
 		t.Fatal("registry secret leaked or list presentation missing")
+	}
+	if strings.Contains(rendered, ">最新 ") || strings.Contains(rendered, ">最早<") || !strings.Contains(rendered, "data-registry-tag-gap") {
+		t.Fatal("registry tag history must use an ellipsis instead of latest/earliest labels")
 	}
 	response, err = client.Get(serverURL + "/config/dashboards?dashboard=" + dashboardID)
 	if err != nil {

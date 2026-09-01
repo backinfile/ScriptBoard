@@ -8058,6 +8058,23 @@ document.querySelectorAll("[data-dashboard-registry-auth]").forEach((input) => {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 });
 
+document.addEventListener("click", function (event) {
+  const tag = event.target.closest("[data-registry-tag]");
+  if (!tag) return;
+  const image = tag.closest("[data-registry-image]");
+  if (!image) return;
+  image.querySelectorAll("[data-registry-tag]").forEach((button) => {
+    button.setAttribute("aria-pressed", button === tag ? "true" : "false");
+  });
+	const time = image.querySelector("[data-registry-time]");
+	const sizeRow = image.querySelector("[data-registry-size-row]");
+	if (time) time.textContent = tag.dataset.timeText || "更新时间 仓库未提供";
+	if (sizeRow) {
+		sizeRow.textContent = tag.dataset.sizeLabel ? `下载大小（压缩） ${tag.dataset.sizeLabel}` : "";
+		sizeRow.hidden = !tag.dataset.sizeLabel;
+	}
+});
+
 document.addEventListener("input", function (event) {
   const input = event.target.closest("[data-dashboard-slug-input]");
   if (!input) return;

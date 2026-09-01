@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"scriptboard/internal/registryconnection"
+	"scriptboard/internal/registrymonitor"
 )
 
 func testManager(t *testing.T) *Manager {
@@ -110,6 +112,8 @@ func TestRegistryCardStoresCredentialOutsideDatabaseAndRefreshesMultipleImages(t
 	if len(refreshed.Snapshot.Images) != 2 || refreshed.Snapshot.Images[0].Tag != "1.3.0" || refreshed.Snapshot.Images[1].Tag != "2.0.0" {
 		t.Fatalf("unexpected initial registry snapshot: %#v", refreshed.Snapshot.Images)
 	}
+	webTags := append([]registrymonitor.TagResult(nil), refreshed.Snapshot.Images[1].Tags...)
+	webEarliestTag := refreshed.Snapshot.Images[1].EarliestTag
 	failing = true
 	refreshed, err = manager.RefreshCard(ctx, card.ID)
 	if err == nil {
@@ -117,6 +121,9 @@ func TestRegistryCardStoresCredentialOutsideDatabaseAndRefreshesMultipleImages(t
 	}
 	if len(refreshed.Snapshot.Images) != 2 || refreshed.Snapshot.Images[1].Tag != "2.0.0" || refreshed.Snapshot.Images[1].Error == "" || !refreshed.Snapshot.Images[1].Stale || !refreshed.Snapshot.Images[1].CompressedSizeAvailable || refreshed.Snapshot.Images[1].CompressedSizeMinBytes != 2000 {
 		t.Fatalf("unexpected registry snapshot: %#v", refreshed.Snapshot.Images)
+	}
+	if fmt.Sprint(refreshed.Snapshot.Images[1].Tags) != fmt.Sprint(webTags) || refreshed.Snapshot.Images[1].EarliestTag != webEarliestTag {
+		t.Fatalf("partial failure did not retain tag history: %#v", refreshed.Snapshot.Images[1])
 	}
 	credential = "rotated-secret"
 	if _, err := manager.UpdateCard(ctx, card.ID, CardInput{

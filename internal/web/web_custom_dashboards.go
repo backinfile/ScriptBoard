@@ -53,8 +53,15 @@ type customDashboardCardView struct {
 }
 
 type customDashboardRegistryImageView struct {
-	Image, Tag, TimeLabel, TimeKindLabel, CompressedSizeLabel string
-	Error, Stale                                              bool
+	Image, TimeLabel, TimeKindLabel, CompressedSizeLabel string
+	Tags                                                 []customDashboardRegistryTagView
+	EarliestTag                                          *customDashboardRegistryTagView
+	Error, Stale                                         bool
+}
+
+type customDashboardRegistryTagView struct {
+	Tag, TimeLabel, TimeKindLabel, CompressedSizeLabel string
+	Selected                                           bool
 }
 
 type customDashboardWebsiteView struct {
@@ -169,27 +176,30 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 				item.RegistryInsecureConfigured, _ = a.registryConnections.InsecureConfigured(request.Context(), registryConfig.Endpoint)
 			}
 			for _, image := range card.Snapshot.Images {
-				imageView := customDashboardRegistryImageView{Image: image.Image, Tag: image.Tag, Error: image.Error != "", Stale: image.Stale}
-				if imageView.Tag == "" {
-					imageView.Tag = "—"
+				imageView := customDashboardRegistryImageView{Image: image.Image, Error: image.Error != "", Stale: image.Stale}
+				for index, tag := range image.Tags {
+					tagView := customDashboardRegistryTag(tag)
+					tagView.Selected = index == 0
+					imageView.Tags = append(imageView.Tags, tagView)
 				}
-				if image.PushTimeAvailable && !image.PushedAt.IsZero() {
-					imageView.TimeLabel = image.PushedAt.Local().Format("2006-01-02 15:04")
-					if image.TimeSource == registrymonitor.ImageTimeCreated {
-						imageView.TimeKindLabel = "构建时间"
-					} else {
-						imageView.TimeKindLabel = "上传时间"
-					}
-				} else {
-					imageView.TimeKindLabel = "更新时间"
-					imageView.TimeLabel = "仓库未提供"
+				if image.EarliestTag != nil {
+					earliest := customDashboardRegistryTag(*image.EarliestTag)
+					imageView.EarliestTag = &earliest
 				}
-				if image.CompressedSizeAvailable {
-					imageView.CompressedSizeLabel = humanBytes(image.CompressedSizeMinBytes)
-					if image.CompressedSizeMaxBytes != image.CompressedSizeMinBytes {
-						imageView.CompressedSizeLabel += "–" + humanBytes(image.CompressedSizeMaxBytes)
-					}
+				// 兼容升级前只保存单个 tag 的 Registry 快照。
+				if len(imageView.Tags) == 0 && image.Tag != "" {
+					imageView.Tags = []customDashboardRegistryTagView{{
+						Tag: image.Tag, TimeLabel: registryTimeLabel(image.PushedAt, image.PushTimeAvailable),
+						TimeKindLabel:       registryTimeKindLabel(image.TimeSource, image.PushTimeAvailable),
+						CompressedSizeLabel: registryCompressedSizeLabel(image.CompressedSizeMinBytes, image.CompressedSizeMaxBytes, image.CompressedSizeAvailable), Selected: true,
+					}}
 				}
+				if len(imageView.Tags) == 0 {
+					imageView.Tags = []customDashboardRegistryTagView{{Tag: "—", TimeKindLabel: "更新时间", TimeLabel: "仓库未提供", Selected: true}}
+				}
+				imageView.TimeLabel = imageView.Tags[0].TimeLabel
+				imageView.TimeKindLabel = imageView.Tags[0].TimeKindLabel
+				imageView.CompressedSizeLabel = imageView.Tags[0].CompressedSizeLabel
 				item.RegistryImages = append(item.RegistryImages, imageView)
 			}
 		}
@@ -258,6 +268,42 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 		view.Cards = append(view.Cards, item)
 	}
 	return view
+}
+
+func customDashboardRegistryTag(tag registrymonitor.TagResult) customDashboardRegistryTagView {
+	return customDashboardRegistryTagView{
+		Tag: tag.Tag, TimeLabel: registryTimeLabel(tag.PushedAt, tag.PushTimeAvailable),
+		TimeKindLabel:       registryTimeKindLabel(tag.TimeSource, tag.PushTimeAvailable),
+		CompressedSizeLabel: registryCompressedSizeLabel(tag.CompressedSizeMinBytes, tag.CompressedSizeMaxBytes, tag.CompressedSizeAvailable),
+	}
+}
+
+func registryTimeLabel(value time.Time, available bool) string {
+	if available && !value.IsZero() {
+		return value.Local().Format("2006-01-02 15:04")
+	}
+	return "仓库未提供"
+}
+
+func registryTimeKindLabel(source string, available bool) string {
+	if !available {
+		return "更新时间"
+	}
+	if source == registrymonitor.ImageTimeCreated {
+		return "构建时间"
+	}
+	return "上传时间"
+}
+
+func registryCompressedSizeLabel(minBytes, maxBytes int64, available bool) string {
+	if !available {
+		return ""
+	}
+	label := humanBytes(minBytes)
+	if maxBytes != minBytes {
+		label += "–" + humanBytes(maxBytes)
+	}
+	return label
 }
 
 func dashboardLastSuccessLabel(locale webLocale, refreshedAt time.Time) string {

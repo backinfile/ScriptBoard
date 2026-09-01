@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -38,8 +39,10 @@ type Config struct {
 }
 
 type ImageResult struct {
-	Image string `json:"image"`
-	Tag   string `json:"tag,omitempty"`
+	Image       string      `json:"image"`
+	Tag         string      `json:"tag,omitempty"`
+	Tags        []TagResult `json:"tags,omitempty"`
+	EarliestTag *TagResult  `json:"earliestTag,omitempty"`
 	// CompressedSizeMinBytes and CompressedSizeMaxBytes describe the compressed
 	// bytes downloaded for one platform. They differ for multi-platform tags.
 	CompressedSizeMinBytes  int64 `json:"compressedSizeMinBytes,omitempty"`
@@ -52,6 +55,16 @@ type ImageResult struct {
 	TimeSource        string    `json:"timeSource,omitempty"`
 	Error             string    `json:"error,omitempty"`
 	Stale             bool      `json:"stale,omitempty"`
+}
+
+type TagResult struct {
+	Tag                     string    `json:"tag"`
+	CompressedSizeMinBytes  int64     `json:"compressedSizeMinBytes,omitempty"`
+	CompressedSizeMaxBytes  int64     `json:"compressedSizeMaxBytes,omitempty"`
+	CompressedSizeAvailable bool      `json:"compressedSizeAvailable,omitempty"`
+	PushedAt                time.Time `json:"pushedAt,omitempty"`
+	PushTimeAvailable       bool      `json:"pushTimeAvailable,omitempty"`
+	TimeSource              string    `json:"timeSource,omitempty"`
 }
 
 type Client struct {
@@ -164,33 +177,71 @@ func (client *Client) Inspect(ctx context.Context, config Config) ([]ImageResult
 			results = append(results, result)
 			continue
 		}
-		result.Tag = latestTag(tags)
+		recentTags, earliestTag := displayTags(tags)
+		selectedTags := append([]string(nil), recentTags...)
+		if earliestTag != "" {
+			selectedTags = append(selectedTags, earliestTag)
+		}
+		details := client.inspectTags(ctx, config, image, selectedTags)
+		result.Tags = details[:len(recentTags)]
+		if earliestTag != "" {
+			result.EarliestTag = &details[len(details)-1]
+		}
+		if len(result.Tags) > 0 {
+			result.Tag = result.Tags[0].Tag
+		}
 		if result.Tag == "" {
 			// 修复空仓库使整张卡片进入错误状态：无标签仓库不产生可展示的镜像结果。
 			continue
 		}
-		metadata, _ := client.registryManifestMetadata(ctx, config, image, result.Tag, 2)
-		if len(metadata.CompressedSizes) > 0 {
-			result.CompressedSizeMinBytes = metadata.CompressedSizes[0]
-			result.CompressedSizeMaxBytes = metadata.CompressedSizes[0]
-			for _, size := range metadata.CompressedSizes[1:] {
-				result.CompressedSizeMinBytes = min(result.CompressedSizeMinBytes, size)
-				result.CompressedSizeMaxBytes = max(result.CompressedSizeMaxBytes, size)
-			}
-			result.CompressedSizeAvailable = true
-		}
-		if pushedAt, ok := client.harborPushTime(ctx, config, image, result.Tag); ok {
-			result.PushedAt = pushedAt
-			result.PushTimeAvailable = true
-			result.TimeSource = ImageTimePushed
-		} else if createdAt, ok := client.registryImageCreatedTime(ctx, config, image, metadata.ConfigDigest); ok {
-			result.PushedAt = createdAt
-			result.PushTimeAvailable = true
-			result.TimeSource = ImageTimeCreated
-		}
+		latest := result.Tags[0]
+		result.CompressedSizeMinBytes = latest.CompressedSizeMinBytes
+		result.CompressedSizeMaxBytes = latest.CompressedSizeMaxBytes
+		result.CompressedSizeAvailable = latest.CompressedSizeAvailable
+		result.PushedAt = latest.PushedAt
+		result.PushTimeAvailable = latest.PushTimeAvailable
+		result.TimeSource = latest.TimeSource
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+func (client *Client) inspectTags(ctx context.Context, config Config, image string, tags []string) []TagResult {
+	results := make([]TagResult, len(tags))
+	var wait sync.WaitGroup
+	for index, tag := range tags {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			results[index] = client.inspectTag(ctx, config, image, tag)
+		}()
+	}
+	wait.Wait()
+	return results
+}
+
+func (client *Client) inspectTag(ctx context.Context, config Config, image, tag string) TagResult {
+	result := TagResult{Tag: tag}
+	metadata, _ := client.registryManifestMetadata(ctx, config, image, tag, 2)
+	if len(metadata.CompressedSizes) > 0 {
+		result.CompressedSizeMinBytes = metadata.CompressedSizes[0]
+		result.CompressedSizeMaxBytes = metadata.CompressedSizes[0]
+		for _, size := range metadata.CompressedSizes[1:] {
+			result.CompressedSizeMinBytes = min(result.CompressedSizeMinBytes, size)
+			result.CompressedSizeMaxBytes = max(result.CompressedSizeMaxBytes, size)
+		}
+		result.CompressedSizeAvailable = true
+	}
+	if pushedAt, ok := client.harborPushTime(ctx, config, image, tag); ok {
+		result.PushedAt = pushedAt
+		result.PushTimeAvailable = true
+		result.TimeSource = ImageTimePushed
+	} else if createdAt, ok := client.registryImageCreatedTime(ctx, config, image, metadata.ConfigDigest); ok {
+		result.PushedAt = createdAt
+		result.PushTimeAvailable = true
+		result.TimeSource = ImageTimeCreated
+	}
+	return result
 }
 
 func isImageSelector(value string) bool {
@@ -620,26 +671,48 @@ func (client *Client) registryManifestMetadata(ctx context.Context, config Confi
 }
 
 func latestTag(tags []string) string {
-	versions := make([]string, 0, len(tags))
+	recent, _ := displayTags(tags)
+	if len(recent) > 0 {
+		return recent[0]
+	}
+	return ""
+}
+
+func displayTags(tags []string) ([]string, string) {
+	unique := make([]string, 0, len(tags))
+	seen := map[string]bool{}
 	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag != "" && !seen[tag] {
+			unique = append(unique, tag)
+			seen[tag] = true
+		}
+	}
+	versions := make([]string, 0, len(unique))
+	for _, tag := range unique {
 		if _, ok := semanticParts(tag); ok {
 			versions = append(versions, tag)
 		}
 	}
 	if len(versions) > 0 {
-		sort.SliceStable(versions, func(i, j int) bool { return compareSemantic(versions[i], versions[j]) > 0 })
-		return versions[0]
-	}
-	for _, tag := range tags {
-		if tag == "latest" {
-			return tag
+		sort.Slice(versions, func(i, j int) bool { return compareSemantic(versions[i], versions[j]) > 0 })
+		unique = versions
+	} else {
+		sort.Sort(sort.Reverse(sort.StringSlice(unique)))
+		for index, tag := range unique {
+			if tag == "latest" {
+				copy(unique[1:index+1], unique[0:index])
+				unique[0] = tag
+				break
+			}
 		}
 	}
-	sort.Strings(tags)
-	if len(tags) > 0 {
-		return tags[len(tags)-1]
+	recentCount := min(5, len(unique))
+	recent := append([]string(nil), unique[:recentCount]...)
+	if len(unique) > recentCount {
+		return recent, unique[len(unique)-1]
 	}
-	return ""
+	return recent, ""
 }
 
 func semanticParts(value string) ([]int, bool) {

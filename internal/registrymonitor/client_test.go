@@ -24,7 +24,7 @@ func TestInspectSupportsBasicAuthenticationAndSelectsHighestSemanticVersion(t *t
 			http.NotFound(response, request)
 			return
 		}
-		_ = json.NewEncoder(response).Encode(map[string]any{"name": "team/api", "tags": []string{"latest", "v1.9.0", "1.10.0", "dev"}})
+		_ = json.NewEncoder(response).Encode(map[string]any{"name": "team/api", "tags": []string{"latest", "v1.9.0", "1.10.0", "dev", "1.8.0", "1.7.0", "1.6.0", "1.5.0"}})
 	}))
 	defer server.Close()
 
@@ -36,6 +36,14 @@ func TestInspectSupportsBasicAuthenticationAndSelectsHighestSemanticVersion(t *t
 	}
 	if len(results) != 1 || results[0].Tag != "1.10.0" || results[0].Error != "" {
 		t.Fatalf("unexpected results: %#v", results)
+	}
+	wantTags := []string{"1.10.0", "v1.9.0", "1.8.0", "1.7.0", "1.6.0"}
+	gotTags := make([]string, 0, len(results[0].Tags))
+	for _, tag := range results[0].Tags {
+		gotTags = append(gotTags, tag.Tag)
+	}
+	if fmt.Sprint(gotTags) != fmt.Sprint(wantTags) || results[0].EarliestTag == nil || results[0].EarliestTag.Tag != "1.5.0" {
+		t.Fatalf("display tags=%v earliest=%v", results[0].Tags, results[0].EarliestTag)
 	}
 }
 
@@ -121,6 +129,37 @@ func TestInspectReadsHarborArtifactPushTime(t *testing.T) {
 	}
 	if !results[0].PushedAt.Equal(wantTime) || !results[0].PushTimeAvailable {
 		t.Fatalf("push time was not populated: %#v", results[0])
+	}
+}
+
+func TestInspectReadsMetadataForEachDisplayedTag(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/v2/team/api/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"1.0.0", "2.5.0", "2.6.0", "2.7.0", "2.8.0", "2.9.0", "3.0.0"}})
+		case strings.HasPrefix(request.URL.Path, "/api/v2.0/projects/team/repositories/api/artifacts/"):
+			tag := strings.TrimPrefix(request.URL.Path, "/api/v2.0/projects/team/repositories/api/artifacts/")
+			day := map[string]int{"1.0.0": 1, "2.6.0": 2, "2.7.0": 3, "2.8.0": 4, "2.9.0": 5, "3.0.0": 6}[tag]
+			_ = json.NewEncoder(response).Encode(map[string]string{"push_time": time.Date(2026, 8, day, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	results, err := New(server.Client()).Inspect(context.Background(), Config{Endpoint: server.URL, Images: []string{"team/api"}})
+	if err != nil || len(results) != 1 || len(results[0].Tags) != 5 || results[0].EarliestTag == nil {
+		t.Fatalf("results=%#v err=%v", results, err)
+	}
+	allTags := append([]TagResult(nil), results[0].Tags...)
+	allTags = append(allTags, *results[0].EarliestTag)
+	for _, tag := range allTags {
+		if !tag.PushTimeAvailable || tag.TimeSource != ImageTimePushed || tag.PushedAt.IsZero() {
+			t.Fatalf("tag metadata missing: %#v", tag)
+		}
+	}
+	if results[0].EarliestTag.Tag != "1.0.0" || !results[0].EarliestTag.PushedAt.Equal(time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)) {
+		t.Fatalf("earliest tag=%#v", results[0].EarliestTag)
 	}
 }
 
@@ -575,5 +614,18 @@ func TestValidateConfigAllowsHTTPAndRejectsTooManyOrTaggedImages(t *testing.T) {
 func TestLatestTagPrefersStableSemanticVersionOverPrereleaseAndLatest(t *testing.T) {
 	if got := latestTag([]string{"latest", "v2.0.0-rc.1", "1.9.9", "v2.0.0"}); got != "v2.0.0" {
 		t.Fatalf("latest tag=%q", got)
+	}
+}
+
+func TestDisplayTagsShowsFiveNewestAndOneEarliestWithoutDuplicates(t *testing.T) {
+	recent, earliest := displayTags([]string{"v2.0.0", "1.0.0", "1.8.0", "1.7.0", "1.6.0", "1.5.0", "1.4.0", "1.4.0"})
+	want := []string{"v2.0.0", "1.8.0", "1.7.0", "1.6.0", "1.5.0"}
+	if fmt.Sprint(recent) != fmt.Sprint(want) || earliest != "1.0.0" {
+		t.Fatalf("recent=%v earliest=%q", recent, earliest)
+	}
+
+	recent, earliest = displayTags([]string{"1.0.0", "1.2.0", "1.1.0"})
+	if fmt.Sprint(recent) != fmt.Sprint([]string{"1.2.0", "1.1.0", "1.0.0"}) || earliest != "" {
+		t.Fatalf("short history should not repeat earliest: recent=%v earliest=%q", recent, earliest)
 	}
 }
