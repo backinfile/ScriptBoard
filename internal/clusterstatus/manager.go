@@ -345,17 +345,30 @@ func (manager *Manager) ensureClient(ctx context.Context, id string, runtime *co
 	return client, nil
 }
 
+func (manager *Manager) discardClient(runtime *connectionRuntime, failed Client) {
+	manager.mu.Lock()
+	if runtime.client == failed {
+		runtime.client = nil
+	}
+	manager.mu.Unlock()
+	_ = failed.Close()
+}
+
 func (manager *Manager) Refresh(ctx context.Context, id string) error {
 	runtime := manager.runtime(id)
 	runtime.operationMu.Lock()
 	defer runtime.operationMu.Unlock()
 	client, err := manager.ensureClient(ctx, id, runtime)
 	if err != nil {
+		_, _ = manager.db.ExecContext(ctx, `UPDATE kubernetes_connection SET last_error=? WHERE id=?`, err.Error(), id)
 		return err
 	}
 	snapshot, err := client.Snapshot(ctx)
 	if err != nil {
 		_, _ = manager.db.ExecContext(ctx, `UPDATE kubernetes_connection SET last_error=? WHERE id=?`, err.Error(), id)
+		// A failed refresh discards cached credentials so a restored or rotated
+		// kubeconfig is read again on the next monitoring cycle.
+		manager.discardClient(runtime, client)
 		return err
 	}
 	if snapshot.CollectedAt.IsZero() {
