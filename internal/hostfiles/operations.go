@@ -548,11 +548,16 @@ func (m *Manager) AvailableName(directory, name string) (string, error) {
 }
 
 func (m *Manager) PurgeTrash(storedPath string) error {
-	target, err := m.resolveTrashEntry(storedPath)
+	target, err := m.resolveTrashEntryPath(storedPath)
 	if err != nil {
 		return err
 	}
 	info, err := os.Lstat(target)
+	// External maintenance or an interrupted earlier cleanup can leave only the
+	// database record; after ownership validation, missing content is already purged.
+	if os.IsNotExist(err) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -813,6 +818,17 @@ func (m *Manager) ensureTrashRoot(path string) (string, error) {
 }
 
 func (m *Manager) resolveTrashEntry(storedPath string) (string, error) {
+	target, err := m.resolveTrashEntryPath(storedPath)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(target); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func (m *Manager) resolveTrashEntryPath(storedPath string) (string, error) {
 	if !filepath.IsAbs(storedPath) {
 		return "", fmt.Errorf("invalid trash entry path")
 	}
@@ -831,9 +847,6 @@ func (m *Manager) resolveTrashEntry(storedPath string) (string, error) {
 		return "", err
 	}
 	if err := ValidateName(filepath.Base(storedPath)); err != nil {
-		return "", err
-	}
-	if _, err := os.Lstat(storedPath); err != nil {
 		return "", err
 	}
 	return filepath.Clean(storedPath), nil

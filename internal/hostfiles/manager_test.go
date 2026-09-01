@@ -352,6 +352,60 @@ func TestManagerTrashIsRecoverableAndPrivateToTheFilesystem(t *testing.T) {
 	}
 }
 
+func TestManagerPurgeTrashIsIdempotentWhenStoredContentIsMissing(t *testing.T) {
+	t.Parallel()
+
+	filesystem := t.TempDir()
+	path := filepath.Join(filesystem, "orphan.txt")
+	if err := os.WriteFile(path, []byte("orphan"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{InstanceID: "idempotent-purge", Topology: fixedTopology{root: filesystem}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trashed, err := manager.MoveToTrash(path, "orphan-entry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(trashed.StoredPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.PurgeTrash(trashed.StoredPath); err != nil {
+		t.Fatalf("purge missing trash content: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(trashed.StoredPath), ".scriptboard-owner")); err != nil {
+		t.Fatalf("purge changed the verified trash ownership marker: %v", err)
+	}
+}
+
+func TestManagerPurgeTrashStillRequiresOwnershipMarker(t *testing.T) {
+	t.Parallel()
+
+	filesystem := t.TempDir()
+	path := filepath.Join(filesystem, "keep.txt")
+	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{InstanceID: "marker-required", Topology: fixedTopology{root: filesystem}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trashed, err := manager.MoveToTrash(path, "keep-entry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(filepath.Dir(trashed.StoredPath), ".scriptboard-owner")); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.PurgeTrash(trashed.StoredPath); err == nil {
+		t.Fatal("purge accepted trash content without a verified ownership marker")
+	}
+	if content, err := os.ReadFile(trashed.StoredPath); err != nil || string(content) != "keep" {
+		t.Fatalf("rejected purge changed stored content: content=%q error=%v", content, err)
+	}
+}
+
 func TestManagerIsolatesTrashOwnedByAnotherInstance(t *testing.T) {
 	t.Parallel()
 

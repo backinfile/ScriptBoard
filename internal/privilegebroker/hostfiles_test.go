@@ -59,6 +59,20 @@ func TestHostFilesTrashLifecycleAcceptsValidSessionWithoutRecentStepUp(t *testin
 	if err := backend.PurgeTrash(ctx, trashed.StoredPath); err != nil {
 		t.Fatalf("valid session could not purge trash: %v", err)
 	}
+	missingPath := filepath.Join(root, "missing-before-purge.txt")
+	if err := os.WriteFile(missingPath, []byte("missing before purge"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	trashed, err = backend.MoveToTrash(ctx, missingPath, "trash-session-missing-purge")
+	if err != nil {
+		t.Fatalf("move missing-purge fixture to trash: %v", err)
+	}
+	if err := os.Remove(trashed.StoredPath); err != nil {
+		t.Fatalf("remove stored trash fixture: %v", err)
+	}
+	if err := backend.PurgeTrash(ctx, trashed.StoredPath); err != nil {
+		t.Fatalf("Broker purge should be idempotent when stored content is missing: %v", err)
+	}
 	source, destination := filepath.Join(root, "source.txt"), filepath.Join(root, "destination.txt")
 	if err := os.WriteFile(source, []byte("high-risk move"), 0o600); err != nil {
 		t.Fatal(err)

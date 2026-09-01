@@ -2492,6 +2492,73 @@ func TestAdminCanCleanAllTrashEntries(t *testing.T) {
 	}
 }
 
+func TestAdminCanCleanTrashWhenStoredContentIsAlreadyMissing(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(hostRoot, "missing-before-cleanup.txt")
+	if err := os.WriteFile(path, []byte("missing before cleanup"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	filesPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
+		"path":       {path},
+		"csrf_token": {formToken(t, filesPage)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var storedPath string
+	if err := database.QueryRow("SELECT stored_path FROM trash_entries WHERE original_path = ?", path).Scan(&storedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(storedPath); err != nil {
+		t.Fatal(err)
+	}
+	response, err = client.Get(serverURL + "/resources/trash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trashPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/trash/cleanup", url.Values{
+		"csrf_token": {formToken(t, trashPage)},
+		"retention":  {"all"},
+		"confirm":    {"yes"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/trash" {
+		t.Fatalf("cleanup missing stored content: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	var remaining int
+	if err := database.QueryRow("SELECT COUNT(*) FROM trash_entries WHERE original_path = ?", path).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("orphan trash database record remains: %d", remaining)
+	}
+}
+
 func TestTrashCleanupRejectsUnsupportedRetention(t *testing.T) {
 	t.Parallel()
 
