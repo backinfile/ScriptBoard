@@ -3,6 +3,7 @@ package clusterstatus
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -19,6 +20,20 @@ type connectionFactory struct {
 	clients map[string]Client
 }
 
+type sequenceFactory struct {
+	clients []Client
+	opened  int
+}
+
+func (factory *sequenceFactory) Open(_ context.Context, _ Connection) (Client, error) {
+	index := factory.opened
+	factory.opened++
+	if index >= len(factory.clients) {
+		index = len(factory.clients) - 1
+	}
+	return factory.clients[index], nil
+}
+
 func (factory connectionFactory) Open(_ context.Context, connection Connection) (Client, error) {
 	return factory.clients[connection.KubeconfigPath], nil
 }
@@ -32,6 +47,7 @@ type fakeClient struct {
 	capabilities Capabilities
 	fingerprint  string
 	snapshot     Snapshot
+	snapshotErr  error
 	details      map[string]Detail
 	operations   []Operation
 	closed       int
@@ -41,8 +57,10 @@ func (client *fakeClient) Close() error { client.closed++; return nil }
 func (client *fakeClient) Capabilities(context.Context) (Capabilities, error) {
 	return client.capabilities, nil
 }
-func (client *fakeClient) Fingerprint() string                        { return client.fingerprint }
-func (client *fakeClient) Snapshot(context.Context) (Snapshot, error) { return client.snapshot, nil }
+func (client *fakeClient) Fingerprint() string { return client.fingerprint }
+func (client *fakeClient) Snapshot(context.Context) (Snapshot, error) {
+	return client.snapshot, client.snapshotErr
+}
 func (client *fakeClient) Detail(_ context.Context, key string) (Detail, error) {
 	return client.details[key], nil
 }
@@ -177,6 +195,46 @@ func TestMultipleConnectionsKeepSnapshotsAndHistoryIndependent(t *testing.T) {
 	}
 	if productionDetail.Versions[0].Image != "api:production" || stagingDetail.Versions[0].Image != "api:staging" {
 		t.Fatalf("history crossed connections: production=%#v staging=%#v", productionDetail.Versions, stagingDetail.Versions)
+	}
+}
+
+func TestRefreshReopensConnectionAfterKubeconfigCredentialsRecover(t *testing.T) {
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	stale := &fakeClient{fingerprint: "sha256:cluster", capabilities: Capabilities{Workloads: true}, snapshot: Snapshot{
+		CollectedAt: now, Workloads: []Workload{{Key: "default/Deployment/api", Name: "api", Image: "api:v1"}},
+	}}
+	recovered := &fakeClient{fingerprint: "sha256:cluster", capabilities: Capabilities{Workloads: true}, snapshot: Snapshot{
+		CollectedAt: now.Add(time.Minute), Workloads: []Workload{{Key: "default/Deployment/api", Name: "api", Image: "api:v2"}},
+	}}
+	factory := &sequenceFactory{clients: []Client{stale, recovered}}
+	manager := testManager(t, factory)
+	ctx := context.Background()
+	saved, err := manager.SaveConnection(ctx, Connection{Name: "cluster", KubeconfigPath: "/cluster", Mode: ModeObserve})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Refresh(ctx, saved.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A restored kubeconfig can contain renewed credentials. The failed client
+	// must be discarded so the next refresh reads the recovered file again.
+	stale.snapshotErr = errors.New("Kubernetes credentials expired while kubeconfig was missing")
+	if err := manager.Refresh(ctx, saved.ID); err == nil {
+		t.Fatal("refresh with stale credentials succeeded")
+	}
+	if err := manager.Refresh(ctx, saved.ID); err != nil {
+		t.Fatalf("refresh after kubeconfig recovery: %v", err)
+	}
+	view, err := manager.View(ctx, saved.ID, Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if factory.opened != 2 || len(view.Workloads) != 1 || view.Workloads[0].Image != "api:v2" {
+		t.Fatalf("recovered refresh opened=%d workloads=%#v", factory.opened, view.Workloads)
+	}
+	if stale.closed != 1 {
+		t.Fatalf("failed Kubernetes client close count=%d", stale.closed)
 	}
 }
 
