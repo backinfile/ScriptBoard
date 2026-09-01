@@ -75,6 +75,7 @@
     "refresh-cw": '<path d="M21 12a9 9 0 0 0-15.2-6.5L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15.2 6.5L21 16"/><path d="M16 16h5v5"/>',
     "rotate-cw": '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
     "list-filter": '<path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/>',
+    "list-checks": '<path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="m3 17 2 2 4-4"/><path d="M13 12h8"/><path d="M13 18h8"/>',
     "rotate-ccw": '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
     "scroll-text": '<path d="M15 12h-5M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1H11v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2h4"/>',
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -4266,6 +4267,189 @@
     });
   }
 
+  function initFileSelection(root = document, cleanups = []) {
+    const toolbar = root.querySelector("[data-file-selection]");
+    const table = root.querySelector("[data-file-table]");
+    if (!toolbar || !table) return;
+
+    const start = toolbar.querySelector("[data-file-selection-start]");
+    const actions = toolbar.querySelector("[data-file-selection-actions]");
+    const count = toolbar.querySelector("[data-file-selection-count]");
+    const copy = toolbar.querySelector("[data-file-selection-copy]");
+    const copyLabel = toolbar.querySelector("[data-file-selection-copy-label]");
+    const download = toolbar.querySelector("[data-file-selection-download]");
+    const move = toolbar.querySelector("[data-file-selection-move]");
+    const trash = toolbar.querySelector("[data-file-selection-trash]");
+    const clear = toolbar.querySelector("[data-file-selection-clear]");
+    const cancel = toolbar.querySelector("[data-file-selection-cancel]");
+    const status = toolbar.querySelector("[data-file-selection-status]");
+    const selectAll = table.querySelector("[data-file-select-all]");
+    const rows = Array.from(table.querySelectorAll("[data-file-selection-row]"));
+    const checks = rows.map(row => row.querySelector("[data-file-select]"));
+    const downloadForm = root.querySelector("[data-file-batch-download-form]");
+    const trashForm = root.querySelector("[data-file-batch-trash-form]");
+    const trashSubmit = trashForm?.querySelector("[data-file-batch-trash-submit]");
+    const moveDialog = root.querySelector("[data-file-batch-move-dialog]");
+    const moveForm = moveDialog?.querySelector("[data-file-batch-move-form]");
+    const moveClose = Array.from(moveDialog?.querySelectorAll("[data-file-batch-move-close]") || []);
+    let lastCheckedIndex = -1;
+    let copyFeedbackTimer = 0;
+    const copyDefaultLabel = copyLabel?.textContent || "";
+
+    const selectedRows = () => rows.filter((_, index) => checks[index]?.checked);
+    const update = () => {
+      const selected = selectedRows();
+      rows.forEach((row, index) => row.setAttribute("aria-selected", checks[index]?.checked ? "true" : "false"));
+      if (count) count.textContent = String(selected.length);
+      if (copy) copy.disabled = selected.length === 0;
+      if (download) download.disabled = selected.length === 0;
+      const mutableSelection = selected.length > 0 && selected.every(row => row.dataset.fileMutable === "true");
+      if (move) move.disabled = !mutableSelection;
+      if (trash) trash.disabled = !mutableSelection;
+      if (clear) clear.disabled = selected.length === 0;
+      if (selectAll) {
+        selectAll.checked = selected.length > 0 && selected.length === rows.length;
+        selectAll.indeterminate = selected.length > 0 && selected.length < rows.length;
+      }
+    };
+    const enter = () => {
+      toolbar.dataset.selectionMode = "";
+      table.dataset.selectionActive = "";
+      if (actions) actions.hidden = false;
+      checks[0]?.focus({ preventScroll: true });
+      update();
+    };
+    const clearSelection = () => {
+      checks.forEach(check => { if (check) check.checked = false; });
+      lastCheckedIndex = -1;
+      update();
+    };
+    const exit = () => {
+      clearSelection();
+      delete toolbar.dataset.selectionMode;
+      delete table.dataset.selectionActive;
+      if (actions) actions.hidden = true;
+      start?.focus({ preventScroll: true });
+    };
+    const onStart = () => enter();
+    const onClear = () => clearSelection();
+    const onCancel = () => exit();
+    const onSelectAll = () => {
+      checks.forEach(check => { if (check) check.checked = Boolean(selectAll?.checked); });
+      update();
+    };
+    const onCopy = async () => {
+      const paths = selectedRows().map(row => row.dataset.filePath || "").filter(Boolean);
+      if (!paths.length || !copy) return;
+      window.clearTimeout(copyFeedbackTimer);
+      if (copyLabel) copyLabel.textContent = copyDefaultLabel;
+      copy.disabled = true;
+      copy.setAttribute("aria-busy", "true");
+      try {
+        await copyTextToClipboard(paths.join("\n"));
+        if (status) status.textContent = toolbar.dataset.copySuccess || "";
+        if (copyLabel) copyLabel.textContent = toolbar.dataset.copySuccess || copyDefaultLabel;
+      } catch {
+        if (status) status.textContent = toolbar.dataset.copyFailed || "";
+        if (copyLabel) copyLabel.textContent = toolbar.dataset.copyFailed || copyDefaultLabel;
+      } finally {
+        copy.removeAttribute("aria-busy");
+        update();
+        copyFeedbackTimer = window.setTimeout(() => {
+          if (copyLabel) copyLabel.textContent = copyDefaultLabel;
+          if (status) status.textContent = "";
+        }, 1600);
+      }
+    };
+    const replaceSelectedPaths = form => {
+      if (!form) return [];
+      form.querySelectorAll('input[name="path"]').forEach(input => input.remove());
+      const paths = selectedRows().map(row => row.dataset.filePath || "").filter(Boolean);
+      paths.forEach(path => {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "path";
+        input.value = path;
+        form.append(input);
+      });
+      return paths;
+    };
+    const onDownload = () => {
+      if (!downloadForm || replaceSelectedPaths(downloadForm).length === 0) return;
+      downloadForm.requestSubmit();
+    };
+    const closeMoveDialog = () => {
+      if (moveDialog?.open) moveDialog.close();
+      move?.focus({ preventScroll: true });
+    };
+    const onMove = () => {
+      if (!moveDialog || !moveForm || replaceSelectedPaths(moveForm).length === 0) return;
+      moveDialog.showModal();
+      moveDialog.querySelector("[data-directory-tree] button")?.focus({ preventScroll: true });
+    };
+    const onMoveCancel = event => {
+      event?.preventDefault();
+      closeMoveDialog();
+    };
+    const onTrash = () => {
+      const paths = replaceSelectedPaths(trashForm);
+      if (!trashForm || !trashSubmit || paths.length === 0) return;
+      trashForm.dataset.confirm = (toolbar.dataset.trashConfirm || "").replace("%d", String(paths.length));
+      trashForm.requestSubmit(trashSubmit);
+    };
+    const onKeydown = event => {
+      if (event.key === "Escape" && moveDialog?.open) return;
+      if (event.key === "Escape" && toolbar.hasAttribute("data-selection-mode")) {
+        event.preventDefault();
+        exit();
+      }
+    };
+
+    start.hidden = false;
+    start.addEventListener("click", onStart);
+    clear?.addEventListener("click", onClear);
+    cancel?.addEventListener("click", onCancel);
+    copy?.addEventListener("click", onCopy);
+    download?.addEventListener("click", onDownload);
+    move?.addEventListener("click", onMove);
+    trash?.addEventListener("click", onTrash);
+    moveClose.forEach(control => control.addEventListener("click", onMoveCancel));
+    moveDialog?.addEventListener("cancel", onMoveCancel);
+    selectAll?.addEventListener("change", onSelectAll);
+    checks.forEach((check, index) => check?.addEventListener("click", event => {
+      if (event.shiftKey && lastCheckedIndex >= 0) {
+        const [from, to] = [lastCheckedIndex, index].sort((left, right) => left - right);
+        for (let current = from; current <= to; current += 1) {
+          if (checks[current]) checks[current].checked = check.checked;
+        }
+      }
+      lastCheckedIndex = index;
+      update();
+    }));
+    rows.forEach((row, index) => row.addEventListener("click", event => {
+      if (!toolbar.hasAttribute("data-selection-mode") || event.target.closest("a,button,input,details,summary,form")) return;
+      if (checks[index]) checks[index].checked = !checks[index].checked;
+      lastCheckedIndex = index;
+      update();
+    }));
+    document.addEventListener("keydown", onKeydown);
+    cleanups.push(() => {
+      start.removeEventListener("click", onStart);
+      clear?.removeEventListener("click", onClear);
+      cancel?.removeEventListener("click", onCancel);
+      copy?.removeEventListener("click", onCopy);
+      download?.removeEventListener("click", onDownload);
+      move?.removeEventListener("click", onMove);
+      trash?.removeEventListener("click", onTrash);
+      moveClose.forEach(control => control.removeEventListener("click", onMoveCancel));
+      moveDialog?.removeEventListener("cancel", onMoveCancel);
+      if (moveDialog?.open) moveDialog.close();
+      selectAll?.removeEventListener("change", onSelectAll);
+      document.removeEventListener("keydown", onKeydown);
+      window.clearTimeout(copyFeedbackTimer);
+    });
+  }
+
   function initFileQuickAccess(root = document, cleanups = [], initiallyOpen = false) {
     const disclosure = root.querySelector("[data-file-quick-access]");
     if (!disclosure) return;
@@ -7629,6 +7813,7 @@
     initCopyControls(document, cleanups);
     initFileDropUpload(document, cleanups);
     initFileVisibilityToggle(document, cleanups);
+    initFileSelection(document, cleanups);
     if (!options.deferFileQuickAccess) {
       initFileQuickAccess(document, cleanups, options.openFileQuickAccess === true);
     }

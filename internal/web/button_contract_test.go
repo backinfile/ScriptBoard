@@ -25,6 +25,7 @@ func TestNativePostFormsAreLimitedToNonStepUpTransfers(t *testing.T) {
 	allowed := []string{
 		`action="/settings/locale"`,
 		`data-file-upload-form`,
+		`action="/resources/files/batch-download"`,
 		`action="/monitor/websites/export"`,
 	}
 	templates, err := fs.Glob(webFiles, "ui/templates/*.html")

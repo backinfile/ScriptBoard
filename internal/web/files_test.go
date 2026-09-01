@@ -1097,6 +1097,59 @@ func TestFilesPageSortsByVisibleTypeAndPreservesSortAcrossDirectories(t *testing
 	}
 }
 
+func TestFilesPageOffersSortableDateHeadersAndMultiSelection(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hostRoot, "report.txt"), []byte("report"), 0o644); err != nil {
+		t.Fatalf("create report: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot) + "&sort=created&direction=desc")
+	if err != nil {
+		t.Fatalf("get files sorted by creation time: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read sorted files: %v", err)
+	}
+	page := string(body)
+	createdAscendingURL := hostFilesHrefWithQuery(hostRoot, url.Values{"direction": {"asc"}, "sort": {"created"}})
+	for _, expected := range []string{
+		`data-file-selection`,
+		`data-file-selection-start hidden`,
+		`data-file-selection-actions hidden`,
+		`data-file-select-all`,
+		`data-file-selection-row`,
+		`data-file-mutable="true"`,
+		`data-file-path="` + html.EscapeString(filepath.Join(hostRoot, "report.txt")) + `"`,
+		`data-file-select`,
+		`data-file-selection-download disabled`,
+		`data-file-selection-move disabled`,
+		`data-file-selection-trash disabled`,
+		`action="/resources/files/batch-download"`,
+		`action="/resources/files/batch-move"`,
+		`action="/resources/files/batch-delete"`,
+		`data-file-batch-move-dialog`,
+		`data-directory-picker data-endpoint="/resources/directories"`,
+		`<option value="created" selected>Created</option>`,
+		`aria-sort="descending"><a class="file-table-sort" href="` + html.EscapeString(createdAscendingURL) + `"`,
+		`data-label="Created" class="file-created"`,
+		`data-label="Modified" class="file-modified"`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("files page does not contain %q: %s", expected, page)
+		}
+	}
+}
+
 func TestFilesPageNormalizesSortAndShowsDedicatedNoResultsState(t *testing.T) {
 	t.Parallel()
 
