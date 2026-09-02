@@ -41,11 +41,11 @@ type BatchBackupRequest struct {
 }
 
 type Backup struct {
-	ID, InstanceID, Database, PlanID, Path, SHA256, Warning string
-	Kind                                                    BackupKind
-	SizeBytes                                               int64
-	CreatedAt                                               time.Time
-	CreatedByUserID, CreatedByUsername                      string
+	ID, InstanceID, Database, PlanID, SourceName, Path, SHA256, Warning string
+	Kind                                                                BackupKind
+	SizeBytes                                                           int64
+	CreatedAt                                                           time.Time
+	CreatedByUserID, CreatedByUsername                                  string
 }
 
 type Operation struct {
@@ -85,12 +85,21 @@ func (m *Manager) Backup(ctx context.Context, request BackupRequest) (Backup, er
 	if err != nil {
 		return Backup{}, err
 	}
+	sourceName := ""
+	if request.Kind == BackupScheduled {
+		plan, planErr := m.Plan(ctx, request.PlanID)
+		if planErr != nil || plan.InstanceID != instance.ID {
+			return Backup{}, errors.New("scheduled MySQL backup requires a plan for the selected instance")
+		}
+		// Keep the plan name on the backup so its recorded source survives later plan edits or deletion.
+		sourceName = plan.Name
+	}
 	operation, operationContext, release, err := m.beginOperation(ctx, "backup", instance.ID, request.Database, Actor{request.ActorUserID, request.ActorUsername})
 	if err != nil {
 		return Backup{}, err
 	}
 	defer release()
-	return m.runBackup(operationContext, operation, instance, request, true)
+	return m.runBackup(operationContext, operation, instance, request, sourceName, true)
 }
 
 // BackupBatch deliberately reuses the single-database operation boundary so
@@ -119,7 +128,7 @@ func (m *Manager) BackupBatch(ctx context.Context, request BatchBackupRequest) (
 	return backups, errors.Join(failures...)
 }
 
-func (m *Manager) runBackup(ctx context.Context, operation Operation, instance Instance, request BackupRequest, completeOperation bool) (Backup, error) {
+func (m *Manager) runBackup(ctx context.Context, operation Operation, instance Instance, request BackupRequest, sourceName string, completeOperation bool) (Backup, error) {
 	if err := m.updateOperation(ctx, operation.ID, "dumping", "", "", 0, 0); err != nil {
 		return Backup{}, err
 	}
@@ -154,13 +163,13 @@ func (m *Manager) runBackup(ctx context.Context, operation Operation, instance I
 		return Backup{}, err
 	}
 	backup := Backup{
-		ID: backupID, InstanceID: instance.ID, Database: request.Database, PlanID: request.PlanID, Kind: request.Kind,
+		ID: backupID, InstanceID: instance.ID, Database: request.Database, PlanID: request.PlanID, SourceName: sourceName, Kind: request.Kind,
 		Path: finalPath, SizeBytes: dumpResult.SizeBytes, SHA256: dumpResult.SHA256, CreatedAt: m.now().UTC(),
 		CreatedByUserID: request.ActorUserID, CreatedByUsername: request.ActorUsername, Warning: dumpResult.Warning,
 	}
 	_, err := m.db.ExecContext(ctx, `INSERT INTO mysql_backups
-		(id, instance_id, database_name, plan_id, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, backup.ID, backup.InstanceID, backup.Database, backup.PlanID,
+		(id, instance_id, database_name, plan_id, source_name, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, backup.ID, backup.InstanceID, backup.Database, backup.PlanID, backup.SourceName,
 		backup.Kind, backup.Path, backup.SizeBytes, backup.SHA256, backup.Warning, backup.CreatedAt.UnixNano(),
 		backup.CreatedByUserID, backup.CreatedByUsername)
 	if err != nil {
@@ -279,7 +288,7 @@ func (m *Manager) BackupDatabases(ctx context.Context, instanceID string) ([]str
 }
 
 func (m *Manager) BackupsPage(ctx context.Context, instanceID, database string, limit, offset int) ([]Backup, int, error) {
-	query := `SELECT id, instance_id, database_name, plan_id, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username
+	query := `SELECT id, instance_id, database_name, plan_id, source_name, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username
 		FROM mysql_backups WHERE instance_id=?`
 	countQuery := `SELECT COUNT(*) FROM mysql_backups WHERE instance_id=?`
 	arguments := []any{instanceID}
@@ -306,7 +315,7 @@ func (m *Manager) BackupsPage(ctx context.Context, instanceID, database string, 
 	for rows.Next() {
 		var item Backup
 		var createdAt int64
-		if err := rows.Scan(&item.ID, &item.InstanceID, &item.Database, &item.PlanID, &item.Kind, &item.Path, &item.SizeBytes,
+		if err := rows.Scan(&item.ID, &item.InstanceID, &item.Database, &item.PlanID, &item.SourceName, &item.Kind, &item.Path, &item.SizeBytes,
 			&item.SHA256, &item.Warning, &createdAt, &item.CreatedByUserID, &item.CreatedByUsername); err != nil {
 			return nil, 0, err
 		}
@@ -319,8 +328,8 @@ func (m *Manager) BackupsPage(ctx context.Context, instanceID, database string, 
 func (m *Manager) BackupByID(ctx context.Context, id string) (Backup, error) {
 	var item Backup
 	var createdAt int64
-	err := m.db.QueryRowContext(ctx, `SELECT id, instance_id, database_name, plan_id, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username
-		FROM mysql_backups WHERE id=?`, id).Scan(&item.ID, &item.InstanceID, &item.Database, &item.PlanID, &item.Kind, &item.Path,
+	err := m.db.QueryRowContext(ctx, `SELECT id, instance_id, database_name, plan_id, source_name, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username
+		FROM mysql_backups WHERE id=?`, id).Scan(&item.ID, &item.InstanceID, &item.Database, &item.PlanID, &item.SourceName, &item.Kind, &item.Path,
 		&item.SizeBytes, &item.SHA256, &item.Warning, &createdAt, &item.CreatedByUserID, &item.CreatedByUsername)
 	item.CreatedAt = time.Unix(0, createdAt).UTC()
 	return item, err

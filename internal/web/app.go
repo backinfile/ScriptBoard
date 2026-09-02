@@ -282,6 +282,18 @@ func webTemplateFunctions() template.FuncMap {
 			}
 			return webText(locale, key)
 		},
+		"mysqlBackupSourceText": func(locale webLocale, kind mysqlmanager.BackupKind) string {
+			key := map[mysqlmanager.BackupKind]string{
+				mysqlmanager.BackupManual:    "mysql.backup_source.manual",
+				mysqlmanager.BackupScheduled: "mysql.backup_source.scheduled",
+				mysqlmanager.BackupImported:  "mysql.backup_source.imported",
+				mysqlmanager.BackupSafety:    "mysql.backup_source.safety",
+			}[kind]
+			if key == "" {
+				return string(kind)
+			}
+			return webText(locale, key)
+		},
 		"resultText": func(locale webLocale, result string) string {
 			if label := webText(locale, "result."+result); label != "result."+result {
 				return label

@@ -62,6 +62,23 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 62 {
+		exists, err := storesqlite.ColumnExists(migration, "mysql_backups", "source_name")
+		if err != nil {
+			return fmt.Errorf("inspect MySQL backup source migration: %w", err)
+		}
+		if !exists {
+			// Preserve the plan label on historical backups so the source remains readable after plan changes.
+			if _, err := migration.Exec(`
+				ALTER TABLE mysql_backups ADD COLUMN source_name TEXT NOT NULL DEFAULT '';
+				UPDATE mysql_backups SET source_name = COALESCE((
+					SELECT name FROM mysql_backup_plans WHERE mysql_backup_plans.id = mysql_backups.plan_id
+				), '') WHERE kind = 'scheduled'
+			`); err != nil {
+				return fmt.Errorf("add MySQL backup source names: %w", err)
+			}
+		}
+	}
 	if schemaVersion >= 20 && schemaVersion <= 61 {
 		exists, err := storesqlite.ColumnExists(migration, "quick_runs", "require_confirmation")
 		if err != nil {

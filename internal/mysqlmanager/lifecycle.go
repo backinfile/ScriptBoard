@@ -38,7 +38,7 @@ func (m *Manager) BackupAndClearDatabase(ctx context.Context, request BackupAndC
 	safety, err := m.runBackup(ctx, operation, instance, BackupRequest{
 		InstanceID: instance.ID, Database: request.Database, Kind: BackupSafety,
 		ActorUserID: request.Actor.UserID, ActorUsername: request.Actor.Username,
-	}, false)
+	}, "", false)
 	if err != nil {
 		result, _ := m.Operation(ctx, operation.ID)
 		return result, err
@@ -74,7 +74,7 @@ func (m *Manager) DropDatabase(ctx context.Context, request DropDatabaseRequest)
 	safety, err := m.runBackup(ctx, operation, instance, BackupRequest{
 		InstanceID: instance.ID, Database: request.Database, Kind: BackupSafety,
 		ActorUserID: request.Actor.UserID, ActorUsername: request.Actor.Username,
-	}, false)
+	}, "", false)
 	if err != nil {
 		result, _ := m.Operation(ctx, operation.ID)
 		return result, err
@@ -133,8 +133,8 @@ func (m *Manager) ImportBackup(ctx context.Context, request ImportRequest) (Back
 		SizeBytes: result.SizeBytes, SHA256: result.SHA256, CreatedAt: m.now().UTC(),
 		CreatedByUserID: request.Actor.UserID, CreatedByUsername: request.Actor.Username}
 	_, err = m.db.ExecContext(ctx, `INSERT INTO mysql_backups
-		(id, instance_id, database_name, plan_id, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username)
-		VALUES (?, ?, ?, '', ?, ?, ?, ?, '', ?, ?, ?)`, backup.ID, backup.InstanceID, backup.Database, backup.Kind,
+		(id, instance_id, database_name, plan_id, source_name, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username)
+		VALUES (?, ?, ?, '', '', ?, ?, ?, ?, '', ?, ?, ?)`, backup.ID, backup.InstanceID, backup.Database, backup.Kind,
 		backup.Path, backup.SizeBytes, backup.SHA256, backup.CreatedAt.UnixNano(), backup.CreatedByUserID, backup.CreatedByUsername)
 	if err != nil {
 		_ = m.backend.DeleteArtifact(context.WithoutCancel(ctx), finalPath)

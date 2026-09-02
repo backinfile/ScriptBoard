@@ -23,7 +23,8 @@ package migrations
 // OAuth clients, grants, opaque-token families and bounded invocation records;
 // schema 61 shares the Quick Run grouping baseline with Schedules, Variables,
 // file Quick access, and website monitoring; schema 62 adds an opt-in
-// manual-start confirmation for Quick Runs.
+// manual-start confirmation for Quick Runs; schema 63 records the visible
+// source name for scheduled MySQL backups.
 //
 // The explicit current-version guard forces a deliberate policy update when a
 // future schema is introduced instead of silently promising an untested path.
@@ -32,7 +33,7 @@ func Compatible(current, existing int) bool {
 		return true
 	}
 	switch current {
-	case 57, 58, 59, 60, 61, 62:
+	case 57, 58, 59, 60, 61, 62, 63:
 		return existing >= 20 && existing < current
 	default:
 		return false
