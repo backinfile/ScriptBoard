@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -126,30 +125,12 @@ func (m *Manager) runBackup(ctx context.Context, operation Operation, instance I
 	}
 	databaseDigest := sha256.Sum256([]byte(request.Database))
 	directory := filepath.Join(m.BackupRoot(), instance.ID, hex.EncodeToString(databaseDigest[:8]))
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		_ = m.failOperation(ctx, operation.ID, err)
-		return Backup{}, err
-	}
 	backupID := randomID()
 	filename := m.now().UTC().Format("20060102T150405Z") + "-" + backupID + ".sql.gz"
 	finalPath := filepath.Join(directory, filename)
-	temporary, err := os.CreateTemp(directory, ".mysql-backup-*.partial")
-	if err != nil {
-		_ = m.failOperation(ctx, operation.ID, err)
-		return Backup{}, err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	_ = temporary.Chmod(0o600)
-	if err := temporary.Close(); err != nil {
-		_ = m.failOperation(ctx, operation.ID, err)
-		return Backup{}, err
-	}
-	if err := os.Remove(temporaryPath); err != nil {
-		_ = m.failOperation(ctx, operation.ID, err)
-		return Backup{}, err
-	}
-	dumpResult, runErr := m.backend.Dump(ctx, instance, request.Database, temporaryPath)
+	// The Broker owns the complete artifact lifecycle so a low-privilege Web
+	// process never has to reopen a root-owned 0600 dump to hash or commit it.
+	dumpResult, runErr := m.backend.Dump(ctx, instance, request.Database, finalPath)
 	if runErr != nil {
 		cause := runErr
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -162,38 +143,28 @@ func (m *Manager) runBackup(ctx context.Context, operation Operation, instance I
 		return Backup{}, cause
 	}
 	if err := m.updateOperation(ctx, operation.ID, "validating", "", "", 0, 0); err != nil {
+		_ = m.backend.DeleteArtifact(context.WithoutCancel(ctx), finalPath)
 		return Backup{}, err
 	}
-	info, err := os.Stat(temporaryPath)
-	if err != nil || info.Size() == 0 {
-		if err == nil {
-			err = errors.New("mysqldump produced an empty backup")
-		}
-		_ = m.failOperation(ctx, operation.ID, err)
-		return Backup{}, err
-	}
-	if err := os.Rename(temporaryPath, finalPath); err != nil {
-		_ = m.failOperation(ctx, operation.ID, err)
-		return Backup{}, err
-	}
-	hash, err := fileSHA256(finalPath)
-	if err != nil {
-		_ = os.Remove(finalPath)
+	_, digestErr := hex.DecodeString(dumpResult.SHA256)
+	if dumpResult.SizeBytes <= 0 || len(dumpResult.SHA256) != 64 || digestErr != nil {
+		err := errors.New("Broker returned invalid MySQL backup artifact metadata")
+		_ = m.backend.DeleteArtifact(context.WithoutCancel(ctx), finalPath)
 		_ = m.failOperation(ctx, operation.ID, err)
 		return Backup{}, err
 	}
 	backup := Backup{
 		ID: backupID, InstanceID: instance.ID, Database: request.Database, PlanID: request.PlanID, Kind: request.Kind,
-		Path: finalPath, SizeBytes: info.Size(), SHA256: hash, CreatedAt: m.now().UTC(),
+		Path: finalPath, SizeBytes: dumpResult.SizeBytes, SHA256: dumpResult.SHA256, CreatedAt: m.now().UTC(),
 		CreatedByUserID: request.ActorUserID, CreatedByUsername: request.ActorUsername, Warning: dumpResult.Warning,
 	}
-	_, err = m.db.ExecContext(ctx, `INSERT INTO mysql_backups
+	_, err := m.db.ExecContext(ctx, `INSERT INTO mysql_backups
 		(id, instance_id, database_name, plan_id, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, backup.ID, backup.InstanceID, backup.Database, backup.PlanID,
 		backup.Kind, backup.Path, backup.SizeBytes, backup.SHA256, backup.Warning, backup.CreatedAt.UnixNano(),
 		backup.CreatedByUserID, backup.CreatedByUsername)
 	if err != nil {
-		_ = os.Remove(finalPath)
+		_ = m.backend.DeleteArtifact(context.WithoutCancel(ctx), finalPath)
 		_ = m.failOperation(ctx, operation.ID, err)
 		return Backup{}, err
 	}
@@ -205,56 +176,6 @@ func (m *Manager) runBackup(ctx context.Context, operation Operation, instance I
 	}
 	m.recordAudit(AuditEvent{Action: "mysql_backup", Target: instance.ID + "/" + request.Database, Result: "succeeded", Actor: Actor{request.ActorUserID, request.ActorUsername}})
 	return backup, nil
-}
-
-func fileSHA256(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-func (m *Manager) clientOptionFile(instance Instance) (string, func(), error) {
-	password, err := m.secrets.getForInstance(instance)
-	if err != nil {
-		return "", func() {}, err
-	}
-	directory := filepath.Join(m.stateRoot, "secrets")
-	file, err := os.CreateTemp(directory, ".mysql-client-*.cnf")
-	if err != nil {
-		return "", func() {}, err
-	}
-	path := file.Name()
-	cleanup := func() { _ = os.Remove(path) }
-	_ = file.Chmod(0o600)
-	escape := func(value string) string {
-		value = strings.ReplaceAll(value, "\\", "\\\\")
-		value = strings.ReplaceAll(value, "\n", "\\n")
-		value = strings.ReplaceAll(value, "\r", "\\r")
-		return strings.ReplaceAll(value, "\"", "\\\"")
-	}
-	sslMode := map[TLSMode]string{TLSDisabled: "DISABLED", TLSPreferred: "PREFERRED", TLSRequired: "REQUIRED", TLSVerifyIdentity: "VERIFY_IDENTITY"}[instance.TLSMode]
-	body := fmt.Sprintf("[client]\nhost=\"%s\"\nport=%d\nuser=\"%s\"\npassword=\"%s\"\nssl-mode=%s\n",
-		escape(instance.Host), instance.Port, escape(instance.Username), escape(password), sslMode)
-	if instance.CAPath != "" {
-		body += "ssl-ca=\"" + escape(instance.CAPath) + "\"\n"
-	}
-	if _, err := io.WriteString(file, body); err != nil {
-		_ = file.Close()
-		cleanup()
-		return "", func() {}, err
-	}
-	if err := file.Close(); err != nil {
-		cleanup()
-		return "", func() {}, err
-	}
-	return path, cleanup, nil
 }
 
 func (m *Manager) beginOperation(ctx context.Context, kind, instanceID, database string, actor Actor) (Operation, context.Context, func(), error) {

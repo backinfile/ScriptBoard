@@ -1,14 +1,11 @@
 package mysqlmanager
 
 import (
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -116,113 +113,43 @@ func (m *Manager) ImportBackup(ctx context.Context, request ImportRequest) (Back
 	}
 	digest := sha256.Sum256([]byte(request.Database))
 	directory := filepath.Join(m.BackupRoot(), instance.ID, hex.EncodeToString(digest[:8]))
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return Backup{}, err
-	}
 	id := randomID()
 	finalPath := filepath.Join(directory, m.now().UTC().Format("20060102T150405Z")+"-"+id+".sql.gz")
-	temporary, err := os.CreateTemp(directory, ".mysql-import-*.partial")
-	if err != nil {
-		return Backup{}, err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	_ = temporary.Chmod(0o600)
-	hash := sha256.New()
-	destination := io.MultiWriter(temporary, hash)
 	limited := &io.LimitedReader{R: request.Reader, N: (2 << 30) + 1}
-	if isGzip {
-		if _, err = io.Copy(destination, limited); err == nil {
-			err = validateGzipSQL(temporary, maximumExpandedSQLBytes)
-		}
-	} else {
-		compressed := gzip.NewWriter(destination)
-		_, err = io.Copy(compressed, limited)
-		if closeErr := compressed.Close(); err == nil {
-			err = closeErr
-		}
-	}
-	if err == nil && limited.N <= 0 {
-		err = errors.New("MySQL import exceeds the 2 GiB upload limit")
-	}
-	if syncErr := temporary.Sync(); err == nil {
-		err = syncErr
-	}
-	if closeErr := temporary.Close(); err == nil {
-		err = closeErr
-	}
+	result, err := m.backend.StoreArtifact(ctx, finalPath, limited, isGzip)
 	if err != nil {
 		return Backup{}, err
 	}
-	info, err := os.Stat(temporaryPath)
-	if err != nil || info.Size() == 0 {
-		return Backup{}, errors.New("imported SQL backup is empty")
+	_, digestErr := hex.DecodeString(result.SHA256)
+	if result.SizeBytes <= 0 || len(result.SHA256) != 64 || digestErr != nil {
+		_ = m.backend.DeleteArtifact(context.WithoutCancel(ctx), finalPath)
+		return Backup{}, errors.New("Broker returned invalid MySQL import artifact metadata")
 	}
-	if err := os.Rename(temporaryPath, finalPath); err != nil {
-		return Backup{}, err
+	if limited.N <= 0 {
+		_ = m.backend.DeleteArtifact(context.WithoutCancel(ctx), finalPath)
+		return Backup{}, errors.New("MySQL import exceeds the 2 GiB upload limit")
 	}
 	backup := Backup{ID: id, InstanceID: instance.ID, Database: request.Database, Kind: BackupImported, Path: finalPath,
-		SizeBytes: info.Size(), SHA256: hex.EncodeToString(hash.Sum(nil)), CreatedAt: m.now().UTC(),
+		SizeBytes: result.SizeBytes, SHA256: result.SHA256, CreatedAt: m.now().UTC(),
 		CreatedByUserID: request.Actor.UserID, CreatedByUsername: request.Actor.Username}
 	_, err = m.db.ExecContext(ctx, `INSERT INTO mysql_backups
 		(id, instance_id, database_name, plan_id, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username)
 		VALUES (?, ?, ?, '', ?, ?, ?, ?, '', ?, ?, ?)`, backup.ID, backup.InstanceID, backup.Database, backup.Kind,
 		backup.Path, backup.SizeBytes, backup.SHA256, backup.CreatedAt.UnixNano(), backup.CreatedByUserID, backup.CreatedByUsername)
 	if err != nil {
-		_ = os.Remove(finalPath)
+		_ = m.backend.DeleteArtifact(context.WithoutCancel(ctx), finalPath)
 		return Backup{}, err
 	}
 	m.recordAudit(AuditEvent{Action: "mysql_import_backup", Target: backup.InstanceID + "/" + backup.Database, Result: "succeeded", Actor: request.Actor})
 	return backup, nil
 }
 
-func validateGzipSQL(openFile *os.File, maximumExpandedBytes int64) error {
-	if maximumExpandedBytes <= 0 {
-		return errors.New("invalid expanded SQL size limit")
-	}
-	if _, err := openFile.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	reader, err := gzip.NewReader(openFile)
-	if err != nil {
-		return fmt.Errorf("invalid gzip backup: %w", err)
-	}
-	defer reader.Close()
-	written, err := io.Copy(io.Discard, io.LimitReader(reader, maximumExpandedBytes+1))
-	if err != nil {
-		return fmt.Errorf("invalid gzip backup: %w", err)
-	}
-	if written > maximumExpandedBytes {
-		return fmt.Errorf("expanded size exceeds the %d-byte SQL limit", maximumExpandedBytes)
-	}
-	if err := reader.Close(); err != nil {
-		return fmt.Errorf("invalid gzip backup: %w", err)
-	}
-	if written == 0 {
-		return errors.New("compressed SQL backup is empty or unreadable")
-	}
-	return nil
+func (m *Manager) verifyBackupFile(ctx context.Context, backup Backup) error {
+	return m.backend.VerifyArtifact(ctx, backup.Path, backup.SHA256, strings.HasSuffix(strings.ToLower(backup.Path), ".gz"))
 }
 
-func verifyBackupFile(backup Backup) error {
-	file, err := os.Open(backup.Path)
-	if err != nil {
-		return fmt.Errorf("open backup for verification: %w", err)
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return fmt.Errorf("read backup for verification: %w", err)
-	}
-	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), backup.SHA256) {
-		return errors.New("backup SHA-256 verification failed")
-	}
-	if strings.HasSuffix(strings.ToLower(backup.Path), ".gz") {
-		if err := validateGzipSQL(file, maximumExpandedSQLBytes); err != nil {
-			return fmt.Errorf("verify compressed backup: %w", err)
-		}
-	}
-	return nil
+func (m *Manager) DownloadBackup(ctx context.Context, id string, destination io.Writer) (string, int64, error) {
+	return m.backend.DownloadBackup(ctx, id, destination)
 }
 
 func (m *Manager) DeleteBackup(ctx context.Context, id string) error {
@@ -233,7 +160,7 @@ func (m *Manager) DeleteBackup(ctx context.Context, id string) error {
 	if !pathWithin(m.BackupRoot(), backup.Path) {
 		return errors.New("backup path is outside the managed MySQL root")
 	}
-	if err := os.Remove(backup.Path); err != nil && !os.IsNotExist(err) {
+	if err := m.backend.DeleteArtifact(ctx, backup.Path); err != nil {
 		return err
 	}
 	_, err = m.db.ExecContext(ctx, "DELETE FROM mysql_backups WHERE id=?", id)

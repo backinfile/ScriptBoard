@@ -2,12 +2,18 @@ package privilegebroker
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -45,12 +51,30 @@ func TestMySQLUsesTypedAuthorizedBrokerOperations(t *testing.T) {
 	if _, err := backend.Test(authorized, instance); err != nil {
 		t.Fatal(err)
 	}
-	destination := filepath.Join(backupRoot, "instance-one", "backup.partial")
-	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	destination := filepath.Join(backupRoot, "instance-one", "database", "backup.sql.gz")
 	if _, err := backend.Dump(authorized, instance, "application", destination); err != nil {
 		t.Fatal(err)
+	}
+	sql := make([]byte, (2<<20)+12345)
+	var pseudo uint32 = 0x12345678
+	for index := range sql {
+		pseudo ^= pseudo << 13
+		pseudo ^= pseudo >> 17
+		pseudo ^= pseudo << 5
+		sql[index] = byte(pseudo)
+	}
+	artifactPath := filepath.Join(backupRoot, "instance-one", "database", "import.sql.gz")
+	artifact, err := backend.StoreArtifact(authorized, artifactPath, bytes.NewReader(sql), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed, err := gzip.NewReader(bytes.NewReader(service.artifactContent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := io.ReadAll(compressed)
+	if err != nil || !bytes.Equal(stored, sql) || artifact.SizeBytes != int64(len(service.artifactContent)) || service.artifactPath != artifactPath || service.artifactChunks < 3 {
+		t.Fatalf("Broker artifact upload mismatch: bytes=%d err=%v", len(stored), err)
 	}
 	var downloaded bytes.Buffer
 	filename, size, err := backend.DownloadBackup(authorized, "backup-one", &downloaded)
@@ -59,6 +83,84 @@ func TestMySQLUsesTypedAuthorizedBrokerOperations(t *testing.T) {
 	}
 	if service.password != "secret" || service.instance.Host != instance.Host || service.dumps != 1 || service.tests != 1 {
 		t.Fatalf("typed MySQL fields were not preserved: %+v", service)
+	}
+}
+
+func TestBrokerCommitsUploadedArtifactAtomically(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "instance", "database", "backup.sql.gz")
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write([]byte("CREATE TABLE fixture (id INT);\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	service := &brokerMySQLService{}
+	cut := compressed.Len() / 2
+	if _, err := service.StoreArtifactChunk(context.Background(), path, compressed.Bytes()[:cut], 0, false); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.StoreArtifactChunk(context.Background(), path, compressed.Bytes()[cut:], int64(cut), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SizeBytes != int64(compressed.Len()) || len(result.SHA256) != 64 {
+		t.Fatalf("artifact result = %+v", result)
+	}
+	if _, err := os.Stat(path + ".upload.partial"); !os.IsNotExist(err) {
+		t.Fatalf("partial artifact remains after commit: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("committed artifact permissions = %v", info.Mode().Perm())
+	}
+}
+
+func TestBrokerArtifactVerificationRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.sql.gz")
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "linked.sql.gz")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symbolic links are unavailable: %v", err)
+	}
+	service := &brokerMySQLService{Backend: &fixtureMySQLService{}}
+	if err := service.VerifyArtifact(context.Background(), link, strings.Repeat("0", 64), true); err == nil {
+		t.Fatal("Broker accepted a symbolic-link MySQL backup artifact")
+	}
+}
+
+func TestBrokerArtifactVerificationRejectsNonRegularFile(t *testing.T) {
+	service := &brokerMySQLService{Backend: &fixtureMySQLService{}}
+	if err := service.VerifyArtifact(context.Background(), t.TempDir(), strings.Repeat("0", 64), true); err == nil {
+		t.Fatal("Broker accepted a non-regular MySQL backup artifact")
+	}
+}
+
+func TestBrokerPreparesOnlyConfiguredArtifactRoot(t *testing.T) {
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "broker.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Exec("CREATE TABLE mysql_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	configured := filepath.Join(t.TempDir(), "configured")
+	if _, err := database.Exec("INSERT INTO mysql_settings(key,value) VALUES ('backup_root',?)", configured); err != nil {
+		t.Fatal(err)
+	}
+	service := &brokerMySQLService{Backend: &fixtureMySQLService{}, db: database, backupRoot: configured}
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := service.PrepareArtifactRoot(context.Background(), outside); err == nil {
+		t.Fatal("Broker prepared a directory other than the configured MySQL backup root")
 	}
 }
 
@@ -167,12 +269,15 @@ func TestMySQLExecutableAllowlistRejectsGenericCommand(t *testing.T) {
 }
 
 type fixtureMySQLService struct {
-	instance     mysqlmanager.Instance
-	password     string
-	tests, dumps int
-	dumpStarted  chan struct{}
-	blockDump    bool
-	artifactRoot string
+	instance        mysqlmanager.Instance
+	password        string
+	tests, dumps    int
+	dumpStarted     chan struct{}
+	blockDump       bool
+	artifactRoot    string
+	artifactPath    string
+	artifactContent []byte
+	artifactChunks  int
 }
 
 func (service *fixtureMySQLService) StoreCredential(_ context.Context, instance mysqlmanager.Instance, password string) error {
@@ -212,10 +317,23 @@ func (service *fixtureMySQLService) Dump(ctx context.Context, instance mysqlmana
 		<-ctx.Done()
 		return mysqlmanager.DumpResult{}, ctx.Err()
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return mysqlmanager.DumpResult{}, err
+	}
 	return mysqlmanager.DumpResult{}, os.WriteFile(path, []byte("dump"), 0o600)
 }
 func (*fixtureMySQLService) Import(context.Context, mysqlmanager.Instance, string, string) error {
 	return nil
+}
+func (*fixtureMySQLService) PrepareArtifactRoot(context.Context, string) error { return nil }
+func (*fixtureMySQLService) StoreArtifact(context.Context, string, io.Reader, bool) (mysqlmanager.ArtifactResult, error) {
+	return mysqlmanager.ArtifactResult{}, nil
+}
+func (*fixtureMySQLService) VerifyArtifact(context.Context, string, string, bool) error { return nil }
+func (*fixtureMySQLService) DeleteArtifact(context.Context, string) error               { return nil }
+func (*fixtureMySQLService) CleanupArtifacts(context.Context, string) error             { return nil }
+func (*fixtureMySQLService) DownloadBackup(context.Context, string, io.Writer) (string, int64, error) {
+	return "fixture.sql.gz", 1, nil
 }
 func (*fixtureMySQLService) Tools() mysqlmanager.ToolSettings                          { return mysqlmanager.ToolSettings{} }
 func (*fixtureMySQLService) SetTools(context.Context, mysqlmanager.ToolSettings) error { return nil }
@@ -232,6 +350,19 @@ func (service *fixtureMySQLService) ArtifactRoot(context.Context) (string, error
 }
 func (*fixtureMySQLService) ReadBackupChunk(context.Context, string, int64, int) ([]byte, int64, string, error) {
 	return []byte("backup"), 6, "fixture.sql.gz", nil
+}
+func (service *fixtureMySQLService) StoreArtifactChunk(_ context.Context, path string, content []byte, offset int64, final bool) (mysqlmanager.ArtifactResult, error) {
+	if int64(len(service.artifactContent)) != offset {
+		return mysqlmanager.ArtifactResult{}, errors.New("unexpected artifact offset")
+	}
+	service.artifactPath = path
+	service.artifactContent = append(service.artifactContent, content...)
+	service.artifactChunks++
+	if !final {
+		return mysqlmanager.ArtifactResult{}, nil
+	}
+	digest := sha256.Sum256(service.artifactContent)
+	return mysqlmanager.ArtifactResult{SizeBytes: int64(len(service.artifactContent)), SHA256: fmt.Sprintf("%x", digest[:])}, nil
 }
 
 var _ MySQLService = (*fixtureMySQLService)(nil)

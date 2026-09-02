@@ -43,7 +43,7 @@ func (m *Manager) Restore(ctx context.Context, request RestoreRequest) (Operatio
 	if err := m.updateOperation(ctx, operation.ID, "verifying", "", "", backup.SizeBytes, 0); err != nil {
 		return operation, err
 	}
-	if err := verifyBackupFile(backup); err != nil {
+	if err := m.verifyBackupFile(ctx, backup); err != nil {
 		_ = m.failOperation(ctx, operation.ID, err)
 		result, _ := m.Operation(ctx, operation.ID)
 		return result, err
