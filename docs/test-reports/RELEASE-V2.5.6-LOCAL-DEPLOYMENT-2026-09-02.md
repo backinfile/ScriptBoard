@@ -16,12 +16,15 @@
 | 项目 | 命令或范围 | 结果 |
 | --- | --- | --- |
 | 全仓 Go 测试 | `go test ./... -count=1` | 通过 |
+| Windows SQLite 关闭压力回归 | 4 个并发进程各运行目标用例 100 次 | 400/400 通过 |
 | 静态检查 | `go vet ./...` | 通过 |
 | 命令构建 | `go build ./cmd/...` | 通过 |
 | 外部 Chromium 门禁 | `pnpm test`（`integration/browser`） | 通过 |
 | 开发安装器打包 | `./scripts/build-release.ps1 -Version development` | 通过 |
 | 开发安装器合同 | `./scripts/verify-development-installers.ps1` | 通过 |
 | 补丁格式 | `git diff --check` | 通过 |
+
+首次远端 Windows Go job 暴露出调度器启动测试绕过应用数据库所有权、额外打开 WAL 连接后偶发无法释放 `app.db` 的问题。测试已改为在 `internal/web` 的应用自有连接上完成夹具写入与验证；相同压力矩阵在修复前复现文件占用，修复后 400 次全部通过，随后全仓门禁再次通过。
 
 ## 本地部署
 
