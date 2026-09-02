@@ -21,7 +21,7 @@ func TestManagerSavesPlaintextAndTLSConnectionsThroughBackend(t *testing.T) {
 	for _, mode := range []TLSMode{TLSDisabled, TLSVerifyIdentity, TLSInsecureSkipVerify} {
 		instance, saveErr := manager.SaveInstance(context.Background(), InstanceInput{
 			Name: "cache-" + string(mode), Host: "redis.internal", Port: 6379,
-			Username: "operator", Password: "secret", Database: 2, TLSMode: mode,
+			Username: "operator", Password: "secret", TLSMode: mode,
 		})
 		if saveErr != nil {
 			t.Fatalf("save %s connection: %v", mode, saveErr)
@@ -56,13 +56,16 @@ func TestLocalBackendEncryptsPasswordAndBuildsEveryTransportMode(t *testing.T) {
 		if saveErr != nil {
 			t.Fatalf("save %s: %v", test.mode, saveErr)
 		}
-		client, clientErr := backend.client(instance)
+		client, clientErr := backend.client(instance, 5)
 		if clientErr != nil {
 			t.Fatalf("build %s client: %v", test.mode, clientErr)
 		}
 		options := client.Options()
 		if (options.TLSConfig != nil) != test.tls {
 			t.Fatalf("mode %s TLS configured = %v, want %v", test.mode, options.TLSConfig != nil, test.tls)
+		}
+		if options.DB != 5 {
+			t.Fatalf("mode %s database = %d, want operation-selected database 5", test.mode, options.DB)
 		}
 		if options.TLSConfig != nil && options.TLSConfig.InsecureSkipVerify != test.skipVerify {
 			t.Fatalf("mode %s skip verify = %v, want %v", test.mode, options.TLSConfig.InsecureSkipVerify, test.skipVerify)
@@ -129,11 +132,14 @@ func TestManagerBoundsScanCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Scan(context.Background(), instance.ID, ScanRequest{Pattern: "order:*", Count: 5000}); err != nil {
+	if _, err := manager.Scan(context.Background(), instance.ID, 7, ScanRequest{Pattern: "order:*", Count: 5000}); err != nil {
 		t.Fatal(err)
 	}
 	if backend.lastScan.Count != 200 {
 		t.Fatalf("scan count = %d, want 200", backend.lastScan.Count)
+	}
+	if backend.lastDatabase != 7 {
+		t.Fatalf("scan database = %d, want 7", backend.lastDatabase)
 	}
 }
 
@@ -153,8 +159,9 @@ func openTestDatabase(t *testing.T) *sql.DB {
 }
 
 type recordingBackend struct {
-	stored   []Instance
-	lastScan ScanRequest
+	stored       []Instance
+	lastScan     ScanRequest
+	lastDatabase int
 }
 
 func (backend *recordingBackend) StoreCredential(_ context.Context, instance Instance, _ string) error {
@@ -165,14 +172,17 @@ func (*recordingBackend) DeleteCredential(context.Context, string) error { retur
 func (*recordingBackend) Test(context.Context, Instance) (ConnectionTest, error) {
 	return ConnectionTest{OK: true}, nil
 }
-func (*recordingBackend) Overview(context.Context, Instance) (Overview, error) {
+func (backend *recordingBackend) Overview(_ context.Context, _ Instance, database int) (Overview, error) {
+	backend.lastDatabase = database
 	return Overview{}, nil
 }
-func (backend *recordingBackend) Scan(_ context.Context, _ Instance, request ScanRequest) (ScanPage, error) {
+func (backend *recordingBackend) Scan(_ context.Context, _ Instance, database int, request ScanRequest) (ScanPage, error) {
+	backend.lastDatabase = database
 	backend.lastScan = request
 	return ScanPage{}, nil
 }
-func (backend *recordingBackend) ReadKey(_ context.Context, _ Instance, key string) (KeyValue, error) {
+func (backend *recordingBackend) ReadKey(_ context.Context, _ Instance, database int, key string) (KeyValue, error) {
+	backend.lastDatabase = database
 	return KeyValue{Name: key, Type: "string", Value: "preview"}, nil
 }
 
@@ -182,15 +192,18 @@ func TestManagerReadKeyValidatesNameAndReturnsPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "cache", Host: "127.0.0.1", Port: 6379, Database: 0, TLSMode: TLSDisabled})
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "cache", Host: "127.0.0.1", Port: 6379, TLSMode: TLSDisabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := manager.ReadKey(context.Background(), instance.ID, "qa:string")
+	value, err := manager.ReadKey(context.Background(), instance.ID, 9, "qa:string")
 	if err != nil || value.Value != "preview" || value.Name != "qa:string" {
 		t.Fatalf("read preview = %#v, %v", value, err)
 	}
-	if _, err := manager.ReadKey(context.Background(), instance.ID, "bad\nkey"); err == nil {
+	if backend.lastDatabase != 9 {
+		t.Fatalf("read key database = %d, want 9", backend.lastDatabase)
+	}
+	if _, err := manager.ReadKey(context.Background(), instance.ID, 9, "bad\nkey"); err == nil {
 		t.Fatal("control characters in Redis key must be rejected")
 	}
 }

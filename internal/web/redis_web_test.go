@@ -15,9 +15,10 @@ import (
 )
 
 type redisWebBackend struct {
-	lastScan    redismanager.ScanRequest
-	lastKey     string
-	overviewErr error
+	lastScan     redismanager.ScanRequest
+	lastKey      string
+	lastDatabase int
+	overviewErr  error
 }
 
 func (redisWebBackend) StoreCredential(context.Context, redismanager.Instance, string) error {
@@ -28,17 +29,20 @@ func (redisWebBackend) Test(context.Context, redismanager.Instance) (redismanage
 	return redismanager.ConnectionTest{OK: true, Version: "8.0.0", CanInfo: true, CanScan: true}, nil
 }
 
-func (backend redisWebBackend) Overview(context.Context, redismanager.Instance) (redismanager.Overview, error) {
+func (backend *redisWebBackend) Overview(_ context.Context, _ redismanager.Instance, database int) (redismanager.Overview, error) {
+	backend.lastDatabase = database
 	if backend.overviewErr != nil {
 		return redismanager.Overview{}, backend.overviewErr
 	}
 	return redismanager.Overview{Version: "8.0.0", KeyCount: 42, UsedMemory: 4 << 20}, nil
 }
-func (backend *redisWebBackend) Scan(_ context.Context, _ redismanager.Instance, request redismanager.ScanRequest) (redismanager.ScanPage, error) {
+func (backend *redisWebBackend) Scan(_ context.Context, _ redismanager.Instance, database int, request redismanager.ScanRequest) (redismanager.ScanPage, error) {
+	backend.lastDatabase = database
 	backend.lastScan = request
 	return redismanager.ScanPage{Cursor: 73, Keys: []redismanager.KeySummary{{Name: "order::42", Type: "hash", SizeBytes: 512}, {Name: "session::7", Type: "string", SizeBytes: 16}, {Name: "cache:item", Type: "string", SizeBytes: 12}, {Name: "ungrouped", Type: "string", SizeBytes: 8}}}, nil
 }
-func (backend *redisWebBackend) ReadKey(_ context.Context, _ redismanager.Instance, key string) (redismanager.KeyValue, error) {
+func (backend *redisWebBackend) ReadKey(_ context.Context, _ redismanager.Instance, database int, key string) (redismanager.KeyValue, error) {
+	backend.lastDatabase = database
 	backend.lastKey = key
 	return redismanager.KeyValue{Name: key, Type: "hash", Items: []redismanager.KeyValueItem{{Field: "status", Value: "paid"}}}, nil
 }
@@ -55,7 +59,7 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	_ = response.Body.Close()
 	response, err = client.PostForm(serverURL+"/resources/databases/redis/instances", url.Values{
 		"name": {"Missing CSRF"}, "environment": {"production"}, "host": {"redis.internal"},
-		"port": {"6379"}, "database": {"0"}, "tls_mode": {"disabled"},
+		"port": {"6379"}, "tls_mode": {"disabled"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +70,7 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	}
 	response, err = client.PostForm(serverURL+"/resources/databases/redis/instances", url.Values{
 		"csrf_token": {formToken(t, body)}, "name": {"Cache production"}, "environment": {"production"},
-		"host": {"redis.internal"}, "port": {"6379"}, "username": {"scriptboard"}, "database": {"2"},
+		"host": {"redis.internal"}, "port": {"6379"}, "username": {"scriptboard"},
 		"password": {"redis-password"}, "tls_mode": {"insecure_skip_verify"},
 	})
 	if err != nil {
@@ -103,9 +107,12 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 			t.Fatalf("Redis edit drawer missing %q: %s", expected, page)
 		}
 	}
+	if strings.Contains(page, `<label>Database index<input name="database"`) {
+		t.Fatalf("Redis connection form still includes a database field: %s", page)
+	}
 	response, err = client.PostForm(serverURL+"/resources/databases/redis/instances", url.Values{
 		"csrf_token": {formToken(t, body)}, "id": {instanceID}, "name": {"Cache renamed"}, "environment": {"development"},
-		"host": {"redis.internal"}, "port": {"6379"}, "username": {"scriptboard"}, "database": {"2"},
+		"host": {"redis.internal"}, "port": {"6379"}, "username": {"scriptboard"},
 		"password": {""}, "tls_mode": {"insecure_skip_verify"},
 	})
 	if err != nil {
@@ -119,7 +126,7 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	if !strings.Contains(edited, "Cache renamed") || !strings.Contains(edited, "development") {
 		t.Fatalf("edited Redis connection was not rendered: %s", edited)
 	}
-	keyspace := string(getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&pattern=order::*&key=order::42", http.StatusOK))
+	keyspace := string(getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&database=5&pattern=order::*&key=order::42", http.StatusOK))
 	for _, expected := range []string{`data-redis-scan-form`, "Scan keyspace", "Match pattern", `data-redis-key-namespace="order"`, `data-redis-key-namespace="session"`, "Ungrouped keys", "cache:item", `data-redis-value-inspector`, "order::42", "status", "paid"} {
 		if !strings.Contains(keyspace, expected) {
 			t.Fatalf("Redis key browser missing %q: %s", expected, keyspace)
@@ -128,18 +135,28 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	if strings.Contains(keyspace, `data-redis-key-namespace="cache"`) {
 		t.Fatalf("single-colon key was incorrectly split into a namespace: %s", keyspace)
 	}
+	if backend.lastDatabase != 5 || !strings.Contains(keyspace, `name="database" type="number"`) || !strings.Contains(keyspace, `value="5"`) {
+		t.Fatalf("Redis operation database was not selected and preserved: database=%d page=%s", backend.lastDatabase, keyspace)
+	}
 	if !strings.Contains(keyspace, `name="cursor" value="73"`) {
 		t.Fatalf("Redis key browser does not expose the next SCAN cursor: %s", keyspace)
 	}
-	_ = getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&cursor=73", http.StatusOK)
+	_ = getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&database=8&cursor=73", http.StatusOK)
 	if backend.lastScan.Cursor != 73 {
 		t.Fatalf("continued Redis scan cursor=%d, want 73", backend.lastScan.Cursor)
 	}
+	if backend.lastDatabase != 8 {
+		t.Fatalf("continued Redis scan database=%d, want 8", backend.lastDatabase)
+	}
 	paddedKey := "  padded Redis key  "
-	_ = getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&key="+url.QueryEscape(paddedKey), http.StatusOK)
+	_ = getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&database=11&key="+url.QueryEscape(paddedKey), http.StatusOK)
 	if backend.lastKey != paddedKey {
 		t.Fatalf("Redis key preview received %q, want exact key %q", backend.lastKey, paddedKey)
 	}
+	if backend.lastDatabase != 11 {
+		t.Fatalf("Redis key preview database=%d, want 11", backend.lastDatabase)
+	}
+	_ = getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&database=-1", http.StatusBadRequest)
 	for _, endpoint := range []string{"test", "delete"} {
 		response, err = client.PostForm(serverURL+"/resources/databases/redis/instances/"+instanceID+"/"+endpoint, nil)
 		if err != nil {
@@ -158,7 +175,7 @@ func TestRedisOverviewTimeoutShowsActionableConnectionError(t *testing.T) {
 	landing := getBody(t, client, serverURL+"/resources/databases?engine=redis", http.StatusOK)
 	response, err := client.PostForm(serverURL+"/resources/databases/redis/instances", url.Values{
 		"csrf_token": {formToken(t, landing)}, "name": {"Slow cache"}, "environment": {"production"},
-		"host": {"redis.internal"}, "port": {"6379"}, "database": {"0"}, "tls_mode": {"disabled"},
+		"host": {"redis.internal"}, "port": {"6379"}, "tls_mode": {"disabled"},
 	})
 	if err != nil {
 		t.Fatal(err)

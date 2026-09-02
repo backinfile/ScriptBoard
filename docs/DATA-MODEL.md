@@ -532,7 +532,7 @@ schema 44 收敛了并行开发期间重复使用 35–43 版本号的两条数�
 
 schema 45 增加 `custom_dashboard_registry_operations`。Registry 连接在 Broker 中 prepare 后，卡片配置和操作 ID 在同一 SQLite 事务提交；随后 Broker 幂等激活连接并删除操作行。启动时残留行会被重放，因此数据库不会把尚未激活的连接误报为已经完成，也不会把新 Endpoint 与旧密码组合使用。
 
-schema 54 增加 `redis_instances`，只保存连接名称、环境、地址、ACL 用户、数据库索引、TLS 策略、CA 路径、凭据已配置事实和最近连接状态。密码使用用途绑定的 AES-GCM 密封保存在独立凭据文件中，不进入 SQLite、HTML、审计或错误信息。受管部署的 Web 只提交元数据，Privileged Broker 在执行前将完整连接配置与已提交行逐项校验；凭据写入和删除要求近期身份验证并记录不含明文密码的摘要审计。
+schema 54 增加 `redis_instances`；schema 64 将逻辑数据库改为读取操作参数。连接仅保存名称、环境、地址、ACL 用户、TLS 策略、CA 路径、凭据已配置事实和最近连接状态，同一连接可按需选择不同数据库。密码使用用途绑定的 AES-GCM 密封保存在独立凭据文件中，不进入 SQLite、HTML、审计或错误信息。受管部署的 Web 只提交元数据，Privileged Broker 在执行前将完整连接配置与已提交行逐项校验；凭据写入和删除要求近期身份验证并记录不含明文密码的摘要审计。
 
 schema 58 在 Entry 增加默认关闭的 `require_approval`，并增加 `external_trigger_approvals`。需要审批的调用先保存动作类型、配置修订快照和经过类型校验的输入；上传内容以私有固定文件缓存并记录实际大小与 SHA-256。审批详情只读解析这些快照；上传预览从对应审批目录读取有界前缀，完整下载以只读句柄流式返回，两者都不移动、不领取 payload。批准先原子领取 `pending` 行，再复核全局开关、Key、分组、Entry 和配置修订后执行一次；拒绝直接删除缓存。进程在执行中退出时，审批与调用记录恢复为 `failed/unknown`，处理中或孤立 payload 会被删除以避免重放。
 

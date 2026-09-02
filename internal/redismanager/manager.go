@@ -32,7 +32,7 @@ const (
 type Instance struct {
 	ID, Name, Host, Username, CAPath string
 	Environment                      Environment
-	Port, Database                   int
+	Port                             int
 	TLSMode                          TLSMode
 	CredentialConfigured             bool
 	ConnectionState                  ConnectionState
@@ -42,7 +42,7 @@ type Instance struct {
 type InstanceInput struct {
 	ID, Name, Host, Username, Password, CAPath string
 	Environment                                Environment
-	Port, Database                             int
+	Port                                       int
 	TLSMode                                    TLSMode
 }
 
@@ -87,9 +87,9 @@ type Backend interface {
 	StoreCredential(context.Context, Instance, string) error
 	DeleteCredential(context.Context, string) error
 	Test(context.Context, Instance) (ConnectionTest, error)
-	Overview(context.Context, Instance) (Overview, error)
-	Scan(context.Context, Instance, ScanRequest) (ScanPage, error)
-	ReadKey(context.Context, Instance, string) (KeyValue, error)
+	Overview(context.Context, Instance, int) (Overview, error)
+	Scan(context.Context, Instance, int, ScanRequest) (ScanPage, error)
+	ReadKey(context.Context, Instance, int, string) (KeyValue, error)
 }
 
 type Options struct {
@@ -133,8 +133,8 @@ func New(options Options) (*Manager, error) {
 
 func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instance, error) {
 	input.Name, input.Host, input.Username, input.CAPath = strings.TrimSpace(input.Name), strings.TrimSpace(input.Host), strings.TrimSpace(input.Username), strings.TrimSpace(input.CAPath)
-	if input.Name == "" || input.Host == "" || input.Port < 1 || input.Port > 65535 || input.Database < 0 {
-		return Instance{}, errors.New("Redis name, host, port, and non-negative database are required")
+	if input.Name == "" || input.Host == "" || input.Port < 1 || input.Port > 65535 {
+		return Instance{}, errors.New("Redis name, host, and port are required")
 	}
 	if net.ParseIP(input.Host) == nil && len(input.Host) > 253 {
 		return Instance{}, errors.New("Redis host is too long")
@@ -168,26 +168,26 @@ func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instan
 		if !configured {
 			configured = previous.CredentialConfigured
 		}
-		if input.Password == "" && (previous.Host != input.Host || previous.Port != input.Port || previous.Username != input.Username || previous.Database != input.Database || previous.TLSMode != input.TLSMode || previous.CAPath != input.CAPath) {
+		if input.Password == "" && (previous.Host != input.Host || previous.Port != input.Port || previous.Username != input.Username || previous.TLSMode != input.TLSMode || previous.CAPath != input.CAPath) {
 			return Instance{}, errors.New("Redis password is required when connection or TLS settings change")
 		}
 	}
 	now := m.now().UTC()
 	if creating {
-		_, err = m.db.ExecContext(ctx, `INSERT INTO redis_instances(id,name,environment,host,port,username,database_index,tls_mode,ca_path,credential_configured,connection_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, input.Name, input.Environment, input.Host, input.Port, input.Username, input.Database, input.TLSMode, input.CAPath, configured, state, now.UnixNano(), now.UnixNano())
+		_, err = m.db.ExecContext(ctx, `INSERT INTO redis_instances(id,name,environment,host,port,username,tls_mode,ca_path,credential_configured,connection_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, input.Name, input.Environment, input.Host, input.Port, input.Username, input.TLSMode, input.CAPath, configured, state, now.UnixNano(), now.UnixNano())
 	} else {
-		_, err = m.db.ExecContext(ctx, `UPDATE redis_instances SET name=?,environment=?,host=?,port=?,username=?,database_index=?,tls_mode=?,ca_path=?,credential_configured=?,connection_state=?,updated_at=? WHERE id=?`, input.Name, input.Environment, input.Host, input.Port, input.Username, input.Database, input.TLSMode, input.CAPath, configured, state, now.UnixNano(), id)
+		_, err = m.db.ExecContext(ctx, `UPDATE redis_instances SET name=?,environment=?,host=?,port=?,username=?,tls_mode=?,ca_path=?,credential_configured=?,connection_state=?,updated_at=? WHERE id=?`, input.Name, input.Environment, input.Host, input.Port, input.Username, input.TLSMode, input.CAPath, configured, state, now.UnixNano(), id)
 	}
 	if err != nil {
 		return Instance{}, err
 	}
 	if creating || input.Password != "" {
-		instance := Instance{ID: id, Name: input.Name, Environment: input.Environment, Host: input.Host, Port: input.Port, Username: input.Username, Database: input.Database, TLSMode: input.TLSMode, CAPath: input.CAPath, CredentialConfigured: true}
+		instance := Instance{ID: id, Name: input.Name, Environment: input.Environment, Host: input.Host, Port: input.Port, Username: input.Username, TLSMode: input.TLSMode, CAPath: input.CAPath, CredentialConfigured: true}
 		if err := m.backend.StoreCredential(ctx, instance, input.Password); err != nil {
 			if creating {
 				_, _ = m.db.ExecContext(context.Background(), "DELETE FROM redis_instances WHERE id=?", id)
 			} else {
-				_, _ = m.db.ExecContext(context.Background(), `UPDATE redis_instances SET name=?,environment=?,host=?,port=?,username=?,database_index=?,tls_mode=?,ca_path=?,credential_configured=?,connection_state=?,updated_at=? WHERE id=?`, previous.Name, previous.Environment, previous.Host, previous.Port, previous.Username, previous.Database, previous.TLSMode, previous.CAPath, previous.CredentialConfigured, previous.ConnectionState, previous.UpdatedAt.UnixNano(), previous.ID)
+				_, _ = m.db.ExecContext(context.Background(), `UPDATE redis_instances SET name=?,environment=?,host=?,port=?,username=?,tls_mode=?,ca_path=?,credential_configured=?,connection_state=?,updated_at=? WHERE id=?`, previous.Name, previous.Environment, previous.Host, previous.Port, previous.Username, previous.TLSMode, previous.CAPath, previous.CredentialConfigured, previous.ConnectionState, previous.UpdatedAt.UnixNano(), previous.ID)
 			}
 			return Instance{}, err
 		}
@@ -199,14 +199,14 @@ func scanInstance(scanner interface{ Scan(...any) error }) (Instance, error) {
 	var i Instance
 	var configured bool
 	var created, updated int64
-	err := scanner.Scan(&i.ID, &i.Name, &i.Environment, &i.Host, &i.Port, &i.Username, &i.Database, &i.TLSMode, &i.CAPath, &configured, &i.ConnectionState, &created, &updated)
+	err := scanner.Scan(&i.ID, &i.Name, &i.Environment, &i.Host, &i.Port, &i.Username, &i.TLSMode, &i.CAPath, &configured, &i.ConnectionState, &created, &updated)
 	i.CredentialConfigured = configured
 	i.CreatedAt = time.Unix(0, created).UTC()
 	i.UpdatedAt = time.Unix(0, updated).UTC()
 	return i, err
 }
 
-const instanceColumns = `id,name,environment,host,port,username,database_index,tls_mode,ca_path,credential_configured,connection_state,created_at,updated_at`
+const instanceColumns = `id,name,environment,host,port,username,tls_mode,ca_path,credential_configured,connection_state,created_at,updated_at`
 
 func (m *Manager) Instance(ctx context.Context, id string) (Instance, error) {
 	return scanInstance(m.db.QueryRowContext(ctx, `SELECT `+instanceColumns+` FROM redis_instances WHERE id=?`, id))
@@ -247,14 +247,20 @@ func (m *Manager) TestInstance(ctx context.Context, id string) (ConnectionTest, 
 	_, _ = m.db.ExecContext(context.Background(), "UPDATE redis_instances SET connection_state=? WHERE id=?", state, id)
 	return r, e
 }
-func (m *Manager) Overview(ctx context.Context, id string) (Overview, error) {
+func (m *Manager) Overview(ctx context.Context, id string, database int) (Overview, error) {
+	if err := validateDatabase(database); err != nil {
+		return Overview{}, err
+	}
 	i, e := m.Instance(ctx, id)
 	if e != nil {
 		return Overview{}, e
 	}
-	return m.backend.Overview(ctx, i)
+	return m.backend.Overview(ctx, i, database)
 }
-func (m *Manager) Scan(ctx context.Context, id string, r ScanRequest) (ScanPage, error) {
+func (m *Manager) Scan(ctx context.Context, id string, database int, r ScanRequest) (ScanPage, error) {
+	if err := validateDatabase(database); err != nil {
+		return ScanPage{}, err
+	}
 	if r.Count <= 0 || r.Count > 500 {
 		r.Count = 200
 	}
@@ -265,9 +271,12 @@ func (m *Manager) Scan(ctx context.Context, id string, r ScanRequest) (ScanPage,
 	if e != nil {
 		return ScanPage{}, e
 	}
-	return m.backend.Scan(ctx, i, r)
+	return m.backend.Scan(ctx, i, database, r)
 }
-func (m *Manager) ReadKey(ctx context.Context, id, key string) (KeyValue, error) {
+func (m *Manager) ReadKey(ctx context.Context, id string, database int, key string) (KeyValue, error) {
+	if err := validateDatabase(database); err != nil {
+		return KeyValue{}, err
+	}
 	// Do not normalize Redis key bytes: surrounding spaces are part of the stored key name.
 	if key == "" || len(key) > 512 || strings.ContainsAny(key, "\r\n\x00") {
 		return KeyValue{}, errors.New("Redis key is invalid")
@@ -276,6 +285,12 @@ func (m *Manager) ReadKey(ctx context.Context, id, key string) (KeyValue, error)
 	if e != nil {
 		return KeyValue{}, e
 	}
-	return m.backend.ReadKey(ctx, i, key)
+	return m.backend.ReadKey(ctx, i, database, key)
+}
+func validateDatabase(database int) error {
+	if database < 0 || database > 1<<20 {
+		return errors.New("Redis database is invalid")
+	}
+	return nil
 }
 func randomID() string { b := make([]byte, 16); _, _ = rand.Read(b); return hex.EncodeToString(b) }

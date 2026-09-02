@@ -14,6 +14,7 @@ import (
 type redisWireRequest struct {
 	Instance redismanager.Instance    `json:"instance"`
 	Password string                   `json:"password,omitempty"`
+	Database int                      `json:"database,omitempty"`
 	Scan     redismanager.ScanRequest `json:"scan"`
 	Key      string                   `json:"key,omitempty"`
 }
@@ -35,7 +36,7 @@ func NewBrokerRedisService(db *sql.DB, backend redismanager.Backend) RedisServic
 func (s *brokerRedisService) ValidateInstance(ctx context.Context, requested redismanager.Instance) error {
 	var actual redismanager.Instance
 	var configured bool
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,environment,host,port,username,database_index,tls_mode,ca_path,credential_configured FROM redis_instances WHERE id=?`, requested.ID).Scan(&actual.ID, &actual.Name, &actual.Environment, &actual.Host, &actual.Port, &actual.Username, &actual.Database, &actual.TLSMode, &actual.CAPath, &configured)
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,environment,host,port,username,tls_mode,ca_path,credential_configured FROM redis_instances WHERE id=?`, requested.ID).Scan(&actual.ID, &actual.Name, &actual.Environment, &actual.Host, &actual.Port, &actual.Username, &actual.TLSMode, &actual.CAPath, &configured)
 	actual.CredentialConfigured = configured
 	if err != nil {
 		return err
@@ -43,7 +44,7 @@ func (s *brokerRedisService) ValidateInstance(ctx context.Context, requested red
 	requested.ConnectionState = ""
 	requested.CreatedAt = time.Time{}
 	requested.UpdatedAt = time.Time{}
-	returnEqual := actual.ID == requested.ID && actual.Name == requested.Name && actual.Environment == requested.Environment && actual.Host == requested.Host && actual.Port == requested.Port && actual.Username == requested.Username && actual.Database == requested.Database && actual.TLSMode == requested.TLSMode && actual.CAPath == requested.CAPath && actual.CredentialConfigured == requested.CredentialConfigured
+	returnEqual := actual.ID == requested.ID && actual.Name == requested.Name && actual.Environment == requested.Environment && actual.Host == requested.Host && actual.Port == requested.Port && actual.Username == requested.Username && actual.TLSMode == requested.TLSMode && actual.CAPath == requested.CAPath && actual.CredentialConfigured == requested.CredentialConfigured
 	if !returnEqual {
 		return errors.New("Redis instance mismatch")
 	}
@@ -93,15 +94,15 @@ func (s *Server) redisOperation(ctx context.Context, request wireRequest) wireRe
 		response.Redis.Test = &v
 	case operationRedisOverview:
 		var v redismanager.Overview
-		v, err = s.redis.Overview(ctx, payload.Instance)
+		v, err = s.redis.Overview(ctx, payload.Instance, payload.Database)
 		response.Redis.Overview = &v
 	case operationRedisScan:
 		var v redismanager.ScanPage
-		v, err = s.redis.Scan(ctx, payload.Instance, payload.Scan)
+		v, err = s.redis.Scan(ctx, payload.Instance, payload.Database, payload.Scan)
 		response.Redis.Scan = &v
 	case operationRedisReadKey:
 		var v redismanager.KeyValue
-		v, err = s.redis.ReadKey(ctx, payload.Instance, payload.Key)
+		v, err = s.redis.ReadKey(ctx, payload.Instance, payload.Database, payload.Key)
 		response.Redis.KeyValue = &v
 	}
 	result := "succeeded"
@@ -157,13 +158,17 @@ func validateRedisRequest(request wireRequest) error {
 	if (request.Operation == operationRedisReadKey) != (strings.TrimSpace(p.Key) != "") {
 		return errors.New("Redis key is missing or unrelated")
 	}
+	databaseOperation := request.Operation == operationRedisOverview || request.Operation == operationRedisScan || request.Operation == operationRedisReadKey
+	if p.Database < 0 || p.Database > 1<<20 || (!databaseOperation && p.Database != 0) {
+		return errors.New("Redis database is invalid or unrelated")
+	}
 	return nil
 }
 
 func validRedisInstance(instance redismanager.Instance) bool {
 	validTLS := instance.TLSMode == redismanager.TLSDisabled || instance.TLSMode == redismanager.TLSVerifyIdentity || instance.TLSMode == redismanager.TLSInsecureSkipVerify
 	validEnvironment := instance.Environment == redismanager.EnvironmentProduction || instance.Environment == redismanager.EnvironmentDevelopment || instance.Environment == redismanager.EnvironmentUnspecified
-	return validRemoteWebsiteID(instance.ID) && instance.Name != "" && len(instance.Name) <= 160 && instance.Host != "" && len(instance.Host) <= 253 && instance.Port >= 1 && instance.Port <= 65535 && instance.Database >= 0 && instance.Database <= 1<<20 && len(instance.Username) <= 256 && len(instance.CAPath) <= 4096 && validTLS && validEnvironment && instance.CredentialConfigured && !strings.ContainsAny(instance.Name+instance.Host+instance.Username+instance.CAPath, "\r\n\x00")
+	return validRemoteWebsiteID(instance.ID) && instance.Name != "" && len(instance.Name) <= 160 && instance.Host != "" && len(instance.Host) <= 253 && instance.Port >= 1 && instance.Port <= 65535 && len(instance.Username) <= 256 && len(instance.CAPath) <= 4096 && validTLS && validEnvironment && instance.CredentialConfigured && !strings.ContainsAny(instance.Name+instance.Host+instance.Username+instance.CAPath, "\r\n\x00")
 }
 
 type RedisBackend struct{ client *Client }
@@ -201,22 +206,22 @@ func (b *RedisBackend) Test(ctx context.Context, i redismanager.Instance) (redis
 	}
 	return *v.Test, e
 }
-func (b *RedisBackend) Overview(ctx context.Context, i redismanager.Instance) (redismanager.Overview, error) {
-	v, e := b.call(ctx, operationRedisOverview, redisWireRequest{Instance: i})
+func (b *RedisBackend) Overview(ctx context.Context, i redismanager.Instance, database int) (redismanager.Overview, error) {
+	v, e := b.call(ctx, operationRedisOverview, redisWireRequest{Instance: i, Database: database})
 	if v.Overview == nil {
 		return redismanager.Overview{}, errors.Join(e, errors.New("missing Redis overview"))
 	}
 	return *v.Overview, e
 }
-func (b *RedisBackend) Scan(ctx context.Context, i redismanager.Instance, r redismanager.ScanRequest) (redismanager.ScanPage, error) {
-	v, e := b.call(ctx, operationRedisScan, redisWireRequest{Instance: i, Scan: r})
+func (b *RedisBackend) Scan(ctx context.Context, i redismanager.Instance, database int, r redismanager.ScanRequest) (redismanager.ScanPage, error) {
+	v, e := b.call(ctx, operationRedisScan, redisWireRequest{Instance: i, Database: database, Scan: r})
 	if v.Scan == nil {
 		return redismanager.ScanPage{}, errors.Join(e, errors.New("missing Redis scan"))
 	}
 	return *v.Scan, e
 }
-func (b *RedisBackend) ReadKey(ctx context.Context, i redismanager.Instance, key string) (redismanager.KeyValue, error) {
-	v, e := b.call(ctx, operationRedisReadKey, redisWireRequest{Instance: i, Key: key})
+func (b *RedisBackend) ReadKey(ctx context.Context, i redismanager.Instance, database int, key string) (redismanager.KeyValue, error) {
+	v, e := b.call(ctx, operationRedisReadKey, redisWireRequest{Instance: i, Database: database, Key: key})
 	if v.KeyValue == nil {
 		return redismanager.KeyValue{}, errors.Join(e, errors.New("missing Redis key value"))
 	}

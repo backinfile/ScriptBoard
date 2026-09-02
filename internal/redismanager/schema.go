@@ -8,7 +8,6 @@ var SchemaStatements = []string{
 		host TEXT NOT NULL,
 		port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
 		username TEXT NOT NULL DEFAULT '',
-		database_index INTEGER NOT NULL DEFAULT 0 CHECK(database_index >= 0),
 		tls_mode TEXT NOT NULL CHECK(tls_mode IN ('disabled','verify_identity','insecure_skip_verify')),
 		ca_path TEXT NOT NULL DEFAULT '',
 		credential_configured INTEGER NOT NULL DEFAULT 0 CHECK(credential_configured IN (0,1)),

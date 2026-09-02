@@ -90,7 +90,7 @@ func TestDatabasesPageCombinesMySQLAndRedisConnectionsAndOffersOneAddFlow(t *tes
 	_ = response.Body.Close()
 	response, err = client.PostForm(serverURL+"/resources/databases/redis/instances", url.Values{
 		"csrf_token": {csrfToken}, "name": {"Alpha Cache"}, "environment": {"production"},
-		"host": {"redis.internal"}, "port": {"6379"}, "database": {"0"}, "tls_mode": {"disabled"},
+		"host": {"redis.internal"}, "port": {"6379"}, "tls_mode": {"disabled"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +114,9 @@ func TestDatabasesPageCombinesMySQLAndRedisConnectionsAndOffersOneAddFlow(t *tes
 		if !strings.Contains(redisAddPage, expected) {
 			t.Fatalf("Redis choice in the shared add flow is missing %q: %s", expected, redisAddPage)
 		}
+	}
+	if strings.Contains(redisAddPage, `<label>Database index<input name="database"`) {
+		t.Fatalf("Redis add connection form still contains a database index: %s", redisAddPage)
 	}
 }
 

@@ -20,3 +20,15 @@ func TestRedisProtocolAcceptsExplicitTransportModesAndRejectsFieldSmuggling(t *t
 		}
 	}
 }
+
+func TestRedisProtocolScopesDatabaseSelectionToReadOperations(t *testing.T) {
+	instance := redismanager.Instance{ID: "instance-one", Name: "cache", Environment: redismanager.EnvironmentProduction, Host: "redis.internal", Port: 6379, TLSMode: redismanager.TLSDisabled, CredentialConfigured: true}
+	overview := wireRequest{Version: ProtocolVersion, Operation: operationRedisOverview, RequestID: "redis-database", SessionToken: strings.Repeat("s", 32), Redis: &redisWireRequest{Instance: instance, Database: 7}}
+	if err := validateRedisRequest(overview); err != nil {
+		t.Fatalf("operation-scoped Redis database rejected: %v", err)
+	}
+	store := wireRequest{Version: ProtocolVersion, Operation: operationRedisStore, RequestID: "redis-store", SessionToken: strings.Repeat("s", 32), Redis: &redisWireRequest{Instance: instance, Password: "secret", Database: 7}}
+	if err := validateRedisRequest(store); err == nil {
+		t.Fatal("Redis connection storage accepted a database selection")
+	}
+}

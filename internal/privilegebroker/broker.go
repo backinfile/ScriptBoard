@@ -613,7 +613,8 @@ func (server *Server) handle(connection net.Conn) {
 		}()
 		response = server.mysqlOperation(operationContext, request)
 		cancelOperation()
-	case operationRedisStore, operationRedisDelete, operationRedisTest, operationRedisOverview, operationRedisScan:
+	// Keep key previews on the Redis dispatch path so operation-scoped database selection reaches the Broker backend.
+	case operationRedisStore, operationRedisDelete, operationRedisTest, operationRedisOverview, operationRedisScan, operationRedisReadKey:
 		response = server.redisOperation(context.Background(), request)
 	case operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
 		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesPermissions, operationHostFilesSetPermissions,

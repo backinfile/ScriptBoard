@@ -19,12 +19,12 @@ import (
 )
 
 type credentialRecord struct {
-	Password       string
-	Host           string
-	Port, Database int
-	Username       string
-	TLSMode        TLSMode
-	CAPath         string
+	Password string
+	Host     string
+	Port     int
+	Username string
+	TLSMode  TLSMode
+	CAPath   string
 }
 type credentialStore struct {
 	path  string
@@ -91,7 +91,7 @@ func (s *credentialStore) set(i Instance, p string) error {
 	if e != nil {
 		return e
 	}
-	v[i.ID] = credentialRecord{Password: p, Host: i.Host, Port: i.Port, Database: i.Database, Username: i.Username, TLSMode: i.TLSMode, CAPath: i.CAPath}
+	v[i.ID] = credentialRecord{Password: p, Host: i.Host, Port: i.Port, Username: i.Username, TLSMode: i.TLSMode, CAPath: i.CAPath}
 	return s.write(v)
 }
 func (s *credentialStore) delete(id string) error {
@@ -115,7 +115,7 @@ func (s *credentialStore) get(i Instance) (string, error) {
 	if !ok {
 		return "", errors.New("Redis credential is unavailable")
 	}
-	if r.Host != i.Host || r.Port != i.Port || r.Database != i.Database || r.Username != i.Username || r.TLSMode != i.TLSMode || r.CAPath != i.CAPath {
+	if r.Host != i.Host || r.Port != i.Port || r.Username != i.Username || r.TLSMode != i.TLSMode || r.CAPath != i.CAPath {
 		return "", errors.New("Redis credential binding does not match the requested instance")
 	}
 	return r.Password, nil
@@ -129,12 +129,12 @@ func (b *localBackend) StoreCredential(_ context.Context, i Instance, p string) 
 func (b *localBackend) DeleteCredential(_ context.Context, id string) error {
 	return b.credentials.delete(id)
 }
-func (b *localBackend) client(i Instance) (*redis.Client, error) {
+func (b *localBackend) client(i Instance, database int) (*redis.Client, error) {
 	p, e := b.credentials.get(i)
 	if e != nil {
 		return nil, e
 	}
-	o := &redis.Options{Addr: fmt.Sprintf("%s:%d", i.Host, i.Port), Username: i.Username, Password: p, DB: i.Database, DialTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, Protocol: 2}
+	o := &redis.Options{Addr: fmt.Sprintf("%s:%d", i.Host, i.Port), Username: i.Username, Password: p, DB: database, DialTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, Protocol: 2}
 	if i.TLSMode != TLSDisabled {
 		c := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: i.Host, InsecureSkipVerify: i.TLSMode == TLSInsecureSkipVerify}
 		if i.CAPath != "" {
@@ -153,7 +153,7 @@ func (b *localBackend) client(i Instance) (*redis.Client, error) {
 	return redis.NewClient(o), nil
 }
 func (b *localBackend) Test(ctx context.Context, i Instance) (ConnectionTest, error) {
-	c, e := b.client(i)
+	c, e := b.client(i, 0)
 	if e != nil {
 		return ConnectionTest{}, e
 	}
@@ -179,8 +179,8 @@ func (b *localBackend) Test(ctx context.Context, i Instance) (ConnectionTest, er
 	}
 	return r, nil
 }
-func (b *localBackend) Overview(ctx context.Context, i Instance) (Overview, error) {
-	c, e := b.client(i)
+func (b *localBackend) Overview(ctx context.Context, i Instance, database int) (Overview, error) {
+	c, e := b.client(i, database)
 	if e != nil {
 		return Overview{}, e
 	}
@@ -201,7 +201,7 @@ func (b *localBackend) Overview(ctx context.Context, i Instance) (Overview, erro
 	if hits+misses > 0 {
 		o.HitRate = hits / (hits + misses) * 100
 	}
-	for _, part := range strings.Split(m[fmt.Sprintf("db%d", i.Database)], ",") {
+	for _, part := range strings.Split(m[fmt.Sprintf("db%d", database)], ",") {
 		kv := strings.SplitN(part, "=", 2)
 		if len(kv) == 2 {
 			if kv[0] == "keys" {
@@ -214,8 +214,8 @@ func (b *localBackend) Overview(ctx context.Context, i Instance) (Overview, erro
 	}
 	return o, nil
 }
-func (b *localBackend) Scan(ctx context.Context, i Instance, r ScanRequest) (ScanPage, error) {
-	c, e := b.client(i)
+func (b *localBackend) Scan(ctx context.Context, i Instance, database int, r ScanRequest) (ScanPage, error) {
+	c, e := b.client(i, database)
 	if e != nil {
 		return ScanPage{}, e
 	}
@@ -239,8 +239,8 @@ func (b *localBackend) Scan(ctx context.Context, i Instance, r ScanRequest) (Sca
 	}
 	return out, nil
 }
-func (b *localBackend) ReadKey(ctx context.Context, i Instance, key string) (KeyValue, error) {
-	c, e := b.client(i)
+func (b *localBackend) ReadKey(ctx context.Context, i Instance, database int, key string) (KeyValue, error) {
+	c, e := b.client(i, database)
 	if e != nil {
 		return KeyValue{}, e
 	}
