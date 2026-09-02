@@ -20,6 +20,7 @@ const files = `<!doctype html><html><head><title>ScriptBoard</title><link rel="s
     const page = await browser.newPage();
     page.setDefaultTimeout(3000);
     const errors = [];
+    let validationRequests = 0;
     page.on("pageerror", error => errors.push(error.message));
     await page.route("http://quick.test/assets/app-v2.js", route => route.fulfill({
       contentType: "application/javascript",
@@ -37,6 +38,7 @@ const files = `<!doctype html><html><head><title>ScriptBoard</title><link rel="s
       }),
     }));
     await page.route(/http:\/\/quick\.test\/resources\/files\/validate.*/, async route => {
+      validationRequests += 1;
       await new Promise(resolve => setTimeout(resolve, 500));
       await route.fulfill({ contentType: "application/json", body: JSON.stringify({ accessible: true }) });
     });
@@ -51,8 +53,12 @@ const files = `<!doctype html><html><head><title>ScriptBoard</title><link rel="s
     await page.getByRole("button", { name: /Operations/ }).click();
     const link = page.locator("[data-file-quick-list] .file-quick-row > a");
     await link.waitFor({ state: "attached" });
+    assert.equal(await link.getAttribute("href"), "/resources/files?path=%2Fautomation", "pending validation keeps native link intent");
+    await page.getByRole("button", { name: /Operations/ }).click();
+    await page.getByRole("button", { name: /Operations/ }).click();
     await link.click();
     await page.waitForURL("http://quick.test/resources/files?path=%2Fautomation", { timeout: 2000 });
+    assert.equal(validationRequests, 1, "re-rendered pins reuse the same validation request");
     assert.deepEqual(errors, [], `browser errors: ${errors.join("\n")}`);
     process.stdout.write("Grouped Quick access navigation passed.\n");
   } finally {

@@ -3,6 +3,7 @@ package web
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -145,15 +147,56 @@ func (a *App) downloadBatchFiles(response http.ResponseWriter, request *http.Req
 		writeHostFileError(response, "无法准备批量下载", err)
 		return
 	}
+	temporary, err := os.CreateTemp("", ".scriptboard-files-*.zip")
+	if err != nil {
+		writeHostFileError(response, "无法准备批量下载", err)
+		return
+	}
+	temporaryPath := temporary.Name()
+	defer func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+	}()
+	_ = temporary.Chmod(0o600)
+	// Build the complete archive before starting the response so source or ZIP
+	// failures never look like a successful but truncated download.
+	err = writeBatchArchive(temporary, manifest, func(path string) (io.ReadCloser, error) {
+		file, _, openErr := a.hostOpenRegular(request.Context(), path)
+		return file, openErr
+	})
+	if err != nil {
+		a.recordAuditForRequest(request, "download_entries", fmt.Sprintf("%d entries", len(items)), "failed")
+		writeHostFileError(response, "无法准备批量下载", err)
+		return
+	}
+	info, err := temporary.Stat()
+	if err == nil {
+		_, err = temporary.Seek(0, io.SeekStart)
+	}
+	if err != nil {
+		a.recordAuditForRequest(request, "download_entries", fmt.Sprintf("%d entries", len(items)), "failed")
+		writeHostFileError(response, "无法准备批量下载", err)
+		return
+	}
 	response.Header().Set("Content-Type", "application/zip")
 	response.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "scriptboard-files.zip"}))
+	response.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("X-Content-Type-Options", "nosniff")
-	archive := zip.NewWriter(response)
+	if _, err := io.Copy(response, temporary); err != nil {
+		a.recordAuditForRequest(request, "download_entries", fmt.Sprintf("%d entries", len(items)), "failed")
+		return
+	}
+	a.recordAuditForRequest(request, "download_entries", fmt.Sprintf("%d entries", len(items)), "succeeded")
+}
+
+func writeBatchArchive(destination io.Writer, manifest []batchArchiveEntry, openFile func(string) (io.ReadCloser, error)) (err error) {
+	archive := zip.NewWriter(destination)
+	defer func() { err = errors.Join(err, archive.Close()) }()
 	for _, entry := range manifest {
 		header, headerErr := zip.FileInfoHeader(entry.info)
 		if headerErr != nil {
-			return
+			return headerErr
 		}
 		header.Name = entry.name
 		if !entry.info.IsDir() {
@@ -161,23 +204,22 @@ func (a *App) downloadBatchFiles(response http.ResponseWriter, request *http.Req
 		}
 		target, createErr := archive.CreateHeader(header)
 		if createErr != nil {
-			return
+			return createErr
 		}
 		if entry.info.IsDir() {
 			continue
 		}
-		file, _, openErr := a.hostOpenRegular(request.Context(), entry.path)
+		file, openErr := openFile(entry.path)
 		if openErr != nil {
-			return
+			return openErr
 		}
 		_, copyErr := io.Copy(target, file)
 		closeErr := file.Close()
 		if copyErr != nil || closeErr != nil {
-			return
+			return errors.Join(copyErr, closeErr)
 		}
 	}
-	_ = archive.Close()
-	a.recordAuditForRequest(request, "download_entries", fmt.Sprintf("%d entries", len(items)), "succeeded")
+	return nil
 }
 
 func (a *App) moveBatchFiles(response http.ResponseWriter, request *http.Request) {

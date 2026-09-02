@@ -86,9 +86,9 @@ func TestMySQLUsesTypedAuthorizedBrokerOperations(t *testing.T) {
 	}
 }
 
-func TestBrokerMySQLServiceForwardsQueryBackend(t *testing.T) {
+func TestBrokerMySQLServicePromotesCombinedBackend(t *testing.T) {
 	backend := &fixtureQueryBackend{}
-	service := &brokerMySQLService{Backend: backend}
+	service := &brokerMySQLService{brokerMySQLBackend: backend}
 	instance := mysqlmanager.Instance{ID: "instance-one"}
 	if databases, err := service.DatabasesIncludingSystem(context.Background(), instance); err != nil || len(databases) != 1 || databases[0].Name != "system" {
 		t.Fatalf("DatabasesIncludingSystem() = %+v, %v", databases, err)
@@ -152,14 +152,14 @@ func TestBrokerArtifactVerificationRejectsSymlink(t *testing.T) {
 	if err := os.Symlink(outside, link); err != nil {
 		t.Skipf("symbolic links are unavailable: %v", err)
 	}
-	service := &brokerMySQLService{Backend: &fixtureMySQLService{}}
+	service := &brokerMySQLService{brokerMySQLBackend: &fixtureMySQLService{}}
 	if err := service.VerifyArtifact(context.Background(), link, strings.Repeat("0", 64), true); err == nil {
 		t.Fatal("Broker accepted a symbolic-link MySQL backup artifact")
 	}
 }
 
 func TestBrokerArtifactVerificationRejectsNonRegularFile(t *testing.T) {
-	service := &brokerMySQLService{Backend: &fixtureMySQLService{}}
+	service := &brokerMySQLService{brokerMySQLBackend: &fixtureMySQLService{}}
 	if err := service.VerifyArtifact(context.Background(), t.TempDir(), strings.Repeat("0", 64), true); err == nil {
 		t.Fatal("Broker accepted a non-regular MySQL backup artifact")
 	}
@@ -178,7 +178,7 @@ func TestBrokerPreparesOnlyConfiguredArtifactRoot(t *testing.T) {
 	if _, err := database.Exec("INSERT INTO mysql_settings(key,value) VALUES ('backup_root',?)", configured); err != nil {
 		t.Fatal(err)
 	}
-	service := &brokerMySQLService{Backend: &fixtureMySQLService{}, db: database, backupRoot: configured}
+	service := &brokerMySQLService{brokerMySQLBackend: &fixtureMySQLService{}, db: database, backupRoot: configured}
 	outside := filepath.Join(t.TempDir(), "outside")
 	if err := service.PrepareArtifactRoot(context.Background(), outside); err == nil {
 		t.Fatal("Broker prepared a directory other than the configured MySQL backup root")
@@ -339,6 +339,18 @@ func (service *fixtureMySQLService) Test(_ context.Context, instance mysqlmanage
 }
 func (*fixtureMySQLService) Databases(context.Context, mysqlmanager.Instance) ([]mysqlmanager.Database, error) {
 	return nil, nil
+}
+func (*fixtureMySQLService) DatabasesIncludingSystem(context.Context, mysqlmanager.Instance) ([]mysqlmanager.Database, error) {
+	return nil, nil
+}
+func (*fixtureMySQLService) Objects(context.Context, mysqlmanager.Instance, string) ([]mysqlmanager.DatabaseObject, error) {
+	return nil, nil
+}
+func (*fixtureMySQLService) ObjectDetails(context.Context, mysqlmanager.Instance, string, string) (mysqlmanager.ObjectDetails, error) {
+	return mysqlmanager.ObjectDetails{}, nil
+}
+func (*fixtureMySQLService) ExecuteSQL(context.Context, mysqlmanager.Instance, mysqlmanager.SQLRequest) (mysqlmanager.SQLResult, error) {
+	return mysqlmanager.SQLResult{}, nil
 }
 func (*fixtureMySQLService) Status(context.Context, mysqlmanager.Instance) (mysqlmanager.Status, error) {
 	return mysqlmanager.Status{}, nil

@@ -329,6 +329,7 @@ type RemoteWebsiteService interface {
 
 type MySQLService interface {
 	mysqlmanager.Backend
+	mysqlmanager.QueryBackend
 	ValidateInstance(context.Context, mysqlmanager.Instance) error
 	ValidateInstanceID(context.Context, string) error
 	CancelOperation(context.Context, string) error
