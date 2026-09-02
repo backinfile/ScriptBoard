@@ -857,6 +857,8 @@ html:not([data-pjax-swapped]) body[data-app-shell] .workspace > *:nth-child(3) {
 html:not([data-pjax-swapped]) body[data-app-shell] .workspace > *:nth-child(4) { animation-delay: 150ms; }
 html:not([data-pjax-swapped]) body[data-app-shell] .workspace > *:nth-child(5) { animation-delay: 200ms; }
 html:not([data-pjax-swapped]) body[data-app-shell] .workspace > *:nth-child(n/**/+6) { animation-delay: 250ms; }
+/* Keep fixed drawers viewport-bound instead of trapping them in an animated ancestor. */
+html:not([data-pjax-swapped]) body[data-app-shell] .workspace > *:has(.mysql-drawer[open]) { animation: none; }
 @keyframes paper-rise { from { opacity: 0; transform: translateY(12px); } }
 @media (prefers-reduced-motion: reduce) {
   html:not([data-pjax-swapped]) body[data-app-shell] .workspace > * { animation: none; }

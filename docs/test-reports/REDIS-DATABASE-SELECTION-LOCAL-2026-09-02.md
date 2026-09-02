@@ -23,13 +23,14 @@
 7. 验证非法数据库编号被拒绝。
 8. 验证连接测试、schema 迁移、静态检查、构建和全仓测试。
 9. 使用外部 Chrome 检查 Redis 匹配模式布局及 Redis、MySQL TLS 选项文案与顺序。
+10. 使用外部 Chrome 检查 Redis 与 MySQL 新增连接抽屉完整覆盖视口且不受首屏动画裁切。
 
 ## 保留部署
 
 | 项目 | 值 |
 | --- | --- |
 | ScriptBoard URL | `http://127.0.0.1:18964` |
-| ScriptBoard PID | `54792` |
+| ScriptBoard PID | `50620` |
 | 登录用户 | `admin` |
 | 初始密码 | State Root 私有文件 `secrets/initial-admin-password` |
 | 部署目录 | `.scratch/redis-database-selection-20260902` |
@@ -64,6 +65,7 @@
 | R10 | 真实连接测试 | 通过，Redis 8.2.9 |
 | R11 | “匹配模式”标签与输入框同行 | 通过，外部 Chrome 实测标签、控件中心线一致且无横向溢出 |
 | R12 | Redis 与 MySQL TLS 公共模式文案一致 | 通过，外部 Chrome 实测；MySQL 额外保留可回退的 Preferred 模式 |
+| R13 | Redis 与 MySQL 新增连接抽屉视口覆盖 | 通过，外部 Chrome 实测抽屉层和面板高度均为完整视口高度 |
 | M01 | schema 63 → 64 迁移 | 通过，移除索引列并保留连接 |
 | T01 | 目标包测试 | 通过 |
 | T02 | `go vet ./...` | 通过 |
