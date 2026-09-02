@@ -86,6 +86,27 @@ func TestMySQLUsesTypedAuthorizedBrokerOperations(t *testing.T) {
 	}
 }
 
+func TestBrokerMySQLServiceForwardsQueryBackend(t *testing.T) {
+	backend := &fixtureQueryBackend{}
+	service := &brokerMySQLService{Backend: backend}
+	instance := mysqlmanager.Instance{ID: "instance-one"}
+	if databases, err := service.DatabasesIncludingSystem(context.Background(), instance); err != nil || len(databases) != 1 || databases[0].Name != "system" {
+		t.Fatalf("DatabasesIncludingSystem() = %+v, %v", databases, err)
+	}
+	if objects, err := service.Objects(context.Background(), instance, "application"); err != nil || len(objects) != 1 || objects[0].Name != "player_card" {
+		t.Fatalf("Objects() = %+v, %v", objects, err)
+	}
+	if details, err := service.ObjectDetails(context.Background(), instance, "application", "player_card"); err != nil || details.Object.Name != "player_card" {
+		t.Fatalf("ObjectDetails() = %+v, %v", details, err)
+	}
+	if result, err := service.ExecuteSQL(context.Background(), instance, mysqlmanager.SQLRequest{Database: "application", Statement: "SELECT 1"}); err != nil || result.ReturnedRows != 1 {
+		t.Fatalf("ExecuteSQL() = %+v, %v", result, err)
+	}
+	if strings.Join(backend.calls, ",") != "databases,objects,details,sql" {
+		t.Fatalf("query forwarding calls = %v", backend.calls)
+	}
+}
+
 func TestBrokerCommitsUploadedArtifactAtomically(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "instance", "database", "backup.sql.gz")
@@ -279,6 +300,33 @@ type fixtureMySQLService struct {
 	artifactContent []byte
 	artifactChunks  int
 }
+
+type fixtureQueryBackend struct {
+	mysqlmanager.Backend
+	calls []string
+}
+
+func (backend *fixtureQueryBackend) DatabasesIncludingSystem(context.Context, mysqlmanager.Instance) ([]mysqlmanager.Database, error) {
+	backend.calls = append(backend.calls, "databases")
+	return []mysqlmanager.Database{{Name: "system"}}, nil
+}
+
+func (backend *fixtureQueryBackend) Objects(context.Context, mysqlmanager.Instance, string) ([]mysqlmanager.DatabaseObject, error) {
+	backend.calls = append(backend.calls, "objects")
+	return []mysqlmanager.DatabaseObject{{Name: "player_card"}}, nil
+}
+
+func (backend *fixtureQueryBackend) ObjectDetails(context.Context, mysqlmanager.Instance, string, string) (mysqlmanager.ObjectDetails, error) {
+	backend.calls = append(backend.calls, "details")
+	return mysqlmanager.ObjectDetails{Object: mysqlmanager.DatabaseObject{Name: "player_card"}}, nil
+}
+
+func (backend *fixtureQueryBackend) ExecuteSQL(context.Context, mysqlmanager.Instance, mysqlmanager.SQLRequest) (mysqlmanager.SQLResult, error) {
+	backend.calls = append(backend.calls, "sql")
+	return mysqlmanager.SQLResult{ReturnedRows: 1}, nil
+}
+
+var _ mysqlmanager.QueryBackend = (*fixtureQueryBackend)(nil)
 
 func (service *fixtureMySQLService) StoreCredential(_ context.Context, instance mysqlmanager.Instance, password string) error {
 	service.instance, service.password = instance, password
