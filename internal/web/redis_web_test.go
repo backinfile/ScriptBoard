@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,8 +15,9 @@ import (
 )
 
 type redisWebBackend struct {
-	lastScan redismanager.ScanRequest
-	lastKey  string
+	lastScan    redismanager.ScanRequest
+	lastKey     string
+	overviewErr error
 }
 
 func (redisWebBackend) StoreCredential(context.Context, redismanager.Instance, string) error {
@@ -25,7 +27,11 @@ func (redisWebBackend) DeleteCredential(context.Context, string) error { return 
 func (redisWebBackend) Test(context.Context, redismanager.Instance) (redismanager.ConnectionTest, error) {
 	return redismanager.ConnectionTest{OK: true, Version: "8.0.0", CanInfo: true, CanScan: true}, nil
 }
-func (redisWebBackend) Overview(context.Context, redismanager.Instance) (redismanager.Overview, error) {
+
+func (backend redisWebBackend) Overview(context.Context, redismanager.Instance) (redismanager.Overview, error) {
+	if backend.overviewErr != nil {
+		return redismanager.Overview{}, backend.overviewErr
+	}
 	return redismanager.Overview{Version: "8.0.0", KeyCount: 42, UsedMemory: 4 << 20}, nil
 }
 func (backend *redisWebBackend) Scan(_ context.Context, _ redismanager.Instance, request redismanager.ScanRequest) (redismanager.ScanPage, error) {
@@ -92,6 +98,27 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	if instanceID == "" {
 		t.Fatalf("Redis connection redirect missing instance id: %q", response.Header.Get("Location"))
 	}
+	for _, expected := range []string{`data-redis-edit-instance`, `name="id" value="` + instanceID + `"`, `name="host" value="redis.internal"`, `value="insecure_skip_verify" selected`} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("Redis edit drawer missing %q: %s", expected, page)
+		}
+	}
+	response, err = client.PostForm(serverURL+"/resources/databases/redis/instances", url.Values{
+		"csrf_token": {formToken(t, body)}, "id": {instanceID}, "name": {"Cache renamed"}, "environment": {"development"},
+		"host": {"redis.internal"}, "port": {"6379"}, "username": {"scriptboard"}, "database": {"2"},
+		"password": {""}, "tls_mode": {"insecure_skip_verify"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("edit Redis connection status=%d", response.StatusCode)
+	}
+	edited := string(getBody(t, client, serverURL+response.Header.Get("Location"), http.StatusOK))
+	if !strings.Contains(edited, "Cache renamed") || !strings.Contains(edited, "development") {
+		t.Fatalf("edited Redis connection was not rendered: %s", edited)
+	}
 	keyspace := string(getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&pattern=order::*&key=order::42", http.StatusOK))
 	for _, expected := range []string{`data-redis-scan-form`, "Scan keyspace", "Match pattern", `data-redis-key-namespace="order"`, `data-redis-key-namespace="session"`, "Ungrouped keys", "cache:item", `data-redis-value-inspector`, "order::42", "status", "paid"} {
 		if !strings.Contains(keyspace, expected) {
@@ -122,5 +149,26 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 		if response.StatusCode != http.StatusForbidden {
 			t.Fatalf("Redis %s without CSRF status=%d, want %d", endpoint, response.StatusCode, http.StatusForbidden)
 		}
+	}
+}
+
+func TestRedisOverviewTimeoutShowsActionableConnectionError(t *testing.T) {
+	backend := &redisWebBackend{overviewErr: errors.Join(context.DeadlineExceeded, errors.New("bounded JSONL record is invalid"))}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), RedisBackend: backend})
+	landing := getBody(t, client, serverURL+"/resources/databases?engine=redis", http.StatusOK)
+	response, err := client.PostForm(serverURL+"/resources/databases/redis/instances", url.Values{
+		"csrf_token": {formToken(t, landing)}, "name": {"Slow cache"}, "environment": {"production"},
+		"host": {"redis.internal"}, "port": {"6379"}, "database": {"0"}, "tls_mode": {"disabled"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	page := string(getBody(t, client, serverURL+response.Header.Get("Location")+"&lang=en", http.StatusOK))
+	if !strings.Contains(page, "Redis connection timed out") || !strings.Contains(page, "host, port, network access, and TLS mode") {
+		t.Fatalf("Redis timeout is not actionable: %s", page)
+	}
+	if strings.Contains(page, "bounded JSONL record is invalid") {
+		t.Fatalf("Redis timeout exposed Broker framing error: %s", page)
 	}
 }
