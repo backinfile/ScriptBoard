@@ -1464,9 +1464,9 @@ body.has-file-quick-edit-drawer { overflow: hidden; }
   margin: 28px 0 14px;
   border-top: 1px solid var(--rule-strong);
 }
-/* Keep website filter labels and compact controls on one aligned desktop row. */
+/* Keep website filter controls aligned while leaving localized selected text room to scale. */
 .website-filters label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .68rem; font-weight: 620; white-space: nowrap; }
-.website-filters select { min-width: 140px; height: var(--control-height-compact); min-height: var(--control-height-compact); }
+.website-filters select { min-width: 160px; height: var(--control-height-compact); min-height: var(--control-height-compact); }
 .website-filters > a,
 .website-filters .button { white-space: nowrap; }
 .website-filters .button { height: var(--control-height-compact); }

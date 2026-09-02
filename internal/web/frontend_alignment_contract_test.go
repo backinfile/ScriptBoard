@@ -213,7 +213,7 @@ func TestWebsiteCreateEditNginxAndDetailArePanelSafeTasks(t *testing.T) {
 	}
 	requireAlignmentFragments(t, stylesheet,
 		`.website-filters label { display: flex; align-items: center; gap: 8px;`,
-		`.website-filters select { min-width: 140px; height: var(--control-height-compact); min-height: var(--control-height-compact); }`,
+		`.website-filters select { min-width: 160px; height: var(--control-height-compact); min-height: var(--control-height-compact); }`,
 		`.website-filters .button { height: var(--control-height-compact); }`,
 	)
 	if count := bytes.Count(listPage, []byte(`href="/monitor/websites/new"`)); count != 1 {
