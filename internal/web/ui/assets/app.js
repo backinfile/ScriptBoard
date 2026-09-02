@@ -4476,6 +4476,7 @@
     const promotedDrawer = Boolean(drawerHost && drawerHost.parentElement !== document.body);
     if (promotedDrawer) document.body.append(drawerHost);
 	const validationController = new AbortController();
+	const validationCache = new Map();
 	cleanups.push(() => validationController.abort());
 
     const storageKey = "scriptboard.files.pinnedDirectories.v2";
@@ -4506,6 +4507,22 @@
 	let pins = [];
 	let groups = [];
 	const normalizeGroups = value => Array.isArray(value) ? value.filter(group => group && typeof group.ID === "string" && typeof group.Name === "string") : [];
+	const validatePin = pin => {
+	  let validation = validationCache.get(pin.path);
+	  if (validation) return validation;
+	  const validationURL = new URL(disclosure.dataset.validationUrl || "/resources/files/validate", location.origin);
+	  validationURL.searchParams.set("path", pin.path);
+	  validation = fetch(validationURL, { headers: { Accept: "application/json" }, signal: validationController.signal })
+		.then(response => response.ok ? response.json() : { accessible: false })
+		.then(result => Boolean(result?.accessible))
+		.catch(error => {
+		  if (error?.name === "AbortError") return false;
+		  validationCache.delete(pin.path);
+		  return false;
+		});
+	  validationCache.set(pin.path, validation);
+	  return validation;
+	};
 	const showSaveError = () => {
 	  status.textContent = disclosure.dataset.saveFailed;
 	  status.hidden = false;
@@ -4705,34 +4722,35 @@
         path.textContent = pin.path;
         copy.append(label, path);
 		link.append(icon, copy);
-		const validationURL = new URL(disclosure.dataset.validationUrl || "/resources/files/validate", location.origin);
-		validationURL.searchParams.set("path", pin.path);
-		const validation = fetch(validationURL, { headers: { Accept: "application/json" }, signal: validationController.signal })
-		  .then(response => response.ok ? response.json() : { accessible: false })
-		  .then(result => {
-			if (!result?.accessible || !pins.some(candidate => candidate.path === pin.path)) return false;
-			link.setAttribute("href", pin.href);
+		// Keep the real destination on the anchor while validation is pending so
+		// modified and middle clicks retain the browser's native navigation intent.
+		link.setAttribute("href", pin.href);
+		const validation = validatePin(pin);
+		validation.then(accessible => {
+		  if (!link.isConnected || !pins.some(candidate => candidate.path === pin.path)) return;
+		  if (accessible) {
 			link.removeAttribute("aria-disabled");
-			return true;
-		  })
-		  .catch(error => {
-			if (error?.name !== "AbortError") link.dataset.unavailable = "true";
-			return false;
-		  });
+			return;
+		  }
+		  link.removeAttribute("href");
+		  link.dataset.unavailable = "true";
+		});
 		let openWhenValidated = false;
 		link.addEventListener("click", event => {
-		  if (link.hasAttribute("href")) {
+		  if (!link.hasAttribute("aria-disabled")) {
 			disclosure.open = false;
 			return;
 		  }
+		  if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
 		  event.preventDefault();
 		  if (openWhenValidated) return;
 		  openWhenValidated = true;
-		  // Fix: grouped rows begin validation only when their collapsed group opens;
-		  // preserve an immediate click and finish it once the directory is accessible.
 		  validation.then(accessible => {
 			openWhenValidated = false;
-			if (accessible && link.isConnected) link.click();
+			if (accessible && link.isConnected) {
+			  disclosure.open = false;
+			  location.assign(pin.href);
+			}
 		  });
 		});
 

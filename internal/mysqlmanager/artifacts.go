@@ -19,6 +19,27 @@ type ArtifactResult struct {
 	SHA256    string
 }
 
+// InspectArtifact applies the shared regular-file, digest, and compressed SQL
+// checks used by local and privileged artifact adapters.
+func InspectArtifact(path string, compressed bool) (ArtifactResult, error) {
+	file, err := openRegularArtifact(path)
+	if err != nil {
+		return ArtifactResult{}, err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	size, err := io.Copy(hash, file)
+	if err != nil || size == 0 {
+		return ArtifactResult{}, errors.New("MySQL backup artifact is empty or unreadable")
+	}
+	if compressed {
+		if err := validateGzipSQL(file, maximumExpandedSQLBytes); err != nil {
+			return ArtifactResult{}, err
+		}
+	}
+	return ArtifactResult{SizeBytes: size, SHA256: hex.EncodeToString(hash.Sum(nil))}, nil
+}
+
 func fileSHA256(path string) (string, error) {
 	file, err := openRegularArtifact(path)
 	if err != nil {
@@ -123,22 +144,12 @@ func (*localBackend) StoreArtifact(_ context.Context, destinationPath string, so
 }
 
 func (*localBackend) VerifyArtifact(_ context.Context, path, expectedSHA256 string, compressed bool) error {
-	file, err := openRegularArtifact(path)
+	result, err := InspectArtifact(path, compressed)
 	if err != nil {
-		return fmt.Errorf("open backup for verification: %w", err)
+		return fmt.Errorf("inspect backup for verification: %w", err)
 	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return fmt.Errorf("read backup for verification: %w", err)
-	}
-	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), expectedSHA256) {
+	if !strings.EqualFold(result.SHA256, expectedSHA256) {
 		return errors.New("backup SHA-256 verification failed")
-	}
-	if compressed {
-		if err := validateGzipSQL(file, maximumExpandedSQLBytes); err != nil {
-			return fmt.Errorf("verify compressed backup: %w", err)
-		}
 	}
 	return nil
 }

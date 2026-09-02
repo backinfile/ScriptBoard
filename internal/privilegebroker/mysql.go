@@ -3,11 +3,9 @@ package privilegebroker
 import (
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -57,12 +55,17 @@ type mysqlWireResponse struct {
 const maxMySQLArtifactBytes int64 = (2 << 30) + 1
 
 type brokerMySQLService struct {
-	mysqlmanager.Backend
+	brokerMySQLBackend
 	db         *sql.DB
 	operations interface {
 		RequestCancel(context.Context, string) error
 	}
 	backupRoot string
+}
+
+type brokerMySQLBackend interface {
+	mysqlmanager.Backend
+	mysqlmanager.QueryBackend
 }
 
 func NewBrokerMySQLService(database *sql.DB, backend mysqlmanager.Backend, operations interface {
@@ -71,50 +74,11 @@ func NewBrokerMySQLService(database *sql.DB, backend mysqlmanager.Backend, opera
 	if database == nil || backend == nil || operations == nil || strings.TrimSpace(backupRoot) == "" {
 		return nil, errors.New("Broker MySQL database and execution backend are required")
 	}
-	return &brokerMySQLService{Backend: backend, db: database, operations: operations, backupRoot: backupRoot}, nil
-}
-
-func (service *brokerMySQLService) queryBackend() (mysqlmanager.QueryBackend, error) {
-	// Embedding Backend only promotes Backend's declared methods. Forward the
-	// query capability explicitly so managed object browsing and SQL execution
-	// reach the Broker-owned local backend.
-	backend, ok := service.Backend.(mysqlmanager.QueryBackend)
+	combined, ok := backend.(brokerMySQLBackend)
 	if !ok {
-		return nil, errors.New("MySQL query browsing is unavailable")
+		return nil, errors.New("Broker MySQL execution backend must support query browsing")
 	}
-	return backend, nil
-}
-
-func (service *brokerMySQLService) DatabasesIncludingSystem(ctx context.Context, instance mysqlmanager.Instance) ([]mysqlmanager.Database, error) {
-	backend, err := service.queryBackend()
-	if err != nil {
-		return nil, err
-	}
-	return backend.DatabasesIncludingSystem(ctx, instance)
-}
-
-func (service *brokerMySQLService) Objects(ctx context.Context, instance mysqlmanager.Instance, database string) ([]mysqlmanager.DatabaseObject, error) {
-	backend, err := service.queryBackend()
-	if err != nil {
-		return nil, err
-	}
-	return backend.Objects(ctx, instance, database)
-}
-
-func (service *brokerMySQLService) ObjectDetails(ctx context.Context, instance mysqlmanager.Instance, database, object string) (mysqlmanager.ObjectDetails, error) {
-	backend, err := service.queryBackend()
-	if err != nil {
-		return mysqlmanager.ObjectDetails{}, err
-	}
-	return backend.ObjectDetails(ctx, instance, database, object)
-}
-
-func (service *brokerMySQLService) ExecuteSQL(ctx context.Context, instance mysqlmanager.Instance, request mysqlmanager.SQLRequest) (mysqlmanager.SQLResult, error) {
-	backend, err := service.queryBackend()
-	if err != nil {
-		return mysqlmanager.SQLResult{}, err
-	}
-	return backend.ExecuteSQL(ctx, instance, request)
+	return &brokerMySQLService{brokerMySQLBackend: combined, db: database, operations: operations, backupRoot: backupRoot}, nil
 }
 
 func (service *brokerMySQLService) ValidateInstance(ctx context.Context, requested mysqlmanager.Instance) error {
@@ -167,7 +131,7 @@ func (service *brokerMySQLService) PrepareArtifactRoot(ctx context.Context, requ
 	}
 	// Root preparation stays in the Broker, but the requested path must first
 	// match the value committed in shared configuration to avoid arbitrary mkdir.
-	if err := service.Backend.PrepareArtifactRoot(ctx, configured); err != nil {
+	if err := service.brokerMySQLBackend.PrepareArtifactRoot(ctx, configured); err != nil {
 		return err
 	}
 	info, err := os.Lstat(configured)
@@ -260,7 +224,7 @@ func (service *brokerMySQLService) StoreArtifactChunk(_ context.Context, path st
 		_ = os.Remove(partial)
 		return mysqlmanager.ArtifactResult{}, errors.New("MySQL artifact destination already exists or is unavailable")
 	}
-	result, err := inspectBrokerArtifact(partial, true)
+	result, err := mysqlmanager.InspectArtifact(partial, true)
 	if err != nil {
 		_ = os.Remove(partial)
 		return mysqlmanager.ArtifactResult{}, err
@@ -276,47 +240,8 @@ func (service *brokerMySQLService) StoreArtifactChunk(_ context.Context, path st
 	return result, nil
 }
 
-func inspectBrokerArtifact(path string, validateCompressed bool) (mysqlmanager.ArtifactResult, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return mysqlmanager.ArtifactResult{}, err
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return mysqlmanager.ArtifactResult{}, errors.New("MySQL backup artifact is not a regular file")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return mysqlmanager.ArtifactResult{}, err
-	}
-	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
-		return mysqlmanager.ArtifactResult{}, errors.New("MySQL backup artifact changed while opening")
-	}
-	hash := sha256.New()
-	size, err := io.Copy(hash, file)
-	if err != nil || size == 0 {
-		return mysqlmanager.ArtifactResult{}, errors.New("MySQL backup artifact is empty or unreadable")
-	}
-	if validateCompressed {
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return mysqlmanager.ArtifactResult{}, err
-		}
-		reader, err := gzip.NewReader(file)
-		if err != nil {
-			return mysqlmanager.ArtifactResult{}, fmt.Errorf("invalid gzip backup: %w", err)
-		}
-		written, copyErr := io.Copy(io.Discard, io.LimitReader(reader, (8<<30)+1))
-		closeErr := reader.Close()
-		if copyErr != nil || closeErr != nil || written == 0 || written > 8<<30 {
-			return mysqlmanager.ArtifactResult{}, errors.New("compressed SQL backup is invalid or exceeds the 8 GiB limit")
-		}
-	}
-	return mysqlmanager.ArtifactResult{SizeBytes: size, SHA256: fmt.Sprintf("%x", hash.Sum(nil))}, nil
-}
-
 func (service *brokerMySQLService) VerifyArtifact(_ context.Context, path, expectedSHA256 string, compressed bool) error {
-	result, err := inspectBrokerArtifact(path, compressed)
+	result, err := mysqlmanager.InspectArtifact(path, compressed)
 	if err != nil {
 		return err
 	}
@@ -335,41 +260,41 @@ func (service *brokerMySQLService) SetTools(ctx context.Context, tools mysqlmana
 	if err != nil {
 		return err
 	}
-	return service.Backend.SetTools(ctx, mysqlmanager.ToolSettings{DumpExecutable: dump, ClientExecutable: client})
+	return service.brokerMySQLBackend.SetTools(ctx, mysqlmanager.ToolSettings{DumpExecutable: dump, ClientExecutable: client})
 }
 
 func (service *brokerMySQLService) Dump(ctx context.Context, instance mysqlmanager.Instance, database, path string) (mysqlmanager.DumpResult, error) {
-	tools := service.Backend.Tools()
+	tools := service.brokerMySQLBackend.Tools()
 	resolved, err := trustedMySQLExecutable(tools.DumpExecutable, true)
 	if err != nil {
 		return mysqlmanager.DumpResult{}, err
 	}
 	if resolved != tools.DumpExecutable {
 		tools.DumpExecutable = resolved
-		if err := service.Backend.SetTools(ctx, tools); err != nil {
+		if err := service.brokerMySQLBackend.SetTools(ctx, tools); err != nil {
 			return mysqlmanager.DumpResult{}, err
 		}
 	}
-	return service.Backend.Dump(ctx, instance, database, path)
+	return service.brokerMySQLBackend.Dump(ctx, instance, database, path)
 }
 
 func (service *brokerMySQLService) Import(ctx context.Context, instance mysqlmanager.Instance, database, path string) error {
-	tools := service.Backend.Tools()
+	tools := service.brokerMySQLBackend.Tools()
 	resolved, err := trustedMySQLExecutable(tools.ClientExecutable, false)
 	if err != nil {
 		return err
 	}
 	if resolved != tools.ClientExecutable {
 		tools.ClientExecutable = resolved
-		if err := service.Backend.SetTools(ctx, tools); err != nil {
+		if err := service.brokerMySQLBackend.SetTools(ctx, tools); err != nil {
 			return err
 		}
 	}
-	return service.Backend.Import(ctx, instance, database, path)
+	return service.brokerMySQLBackend.Import(ctx, instance, database, path)
 }
 
 func (service *brokerMySQLService) TestTools(ctx context.Context) mysqlmanager.ToolStatus {
-	tools := service.Backend.Tools()
+	tools := service.brokerMySQLBackend.Tools()
 	result := mysqlmanager.ToolStatus{DumpExecutable: tools.DumpExecutable, ClientExecutable: tools.ClientExecutable}
 	dump, dumpErr := trustedMySQLExecutable(tools.DumpExecutable, true)
 	client, clientErr := trustedMySQLExecutable(tools.ClientExecutable, false)
@@ -377,11 +302,11 @@ func (service *brokerMySQLService) TestTools(ctx context.Context) mysqlmanager.T
 		return result
 	}
 	if dump != tools.DumpExecutable || client != tools.ClientExecutable {
-		if err := service.Backend.SetTools(ctx, mysqlmanager.ToolSettings{DumpExecutable: dump, ClientExecutable: client}); err != nil {
+		if err := service.brokerMySQLBackend.SetTools(ctx, mysqlmanager.ToolSettings{DumpExecutable: dump, ClientExecutable: client}); err != nil {
 			return result
 		}
 	}
-	return service.Backend.TestTools(ctx)
+	return service.brokerMySQLBackend.TestTools(ctx)
 }
 
 func trustedMySQLExecutable(value string, dump bool) (string, error) {
@@ -452,23 +377,18 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 	case operationMySQLDatabases:
 		response.MySQL.Databases, err = server.mysql.Databases(ctx, payload.Instance)
 	case operationMySQLDatabasesAll, operationMySQLObjects, operationMySQLObjectDetails, operationMySQLExecuteSQL:
-		queryBackend, ok := server.mysql.(mysqlmanager.QueryBackend)
-		if !ok {
-			err = errors.New("MySQL query browsing is unavailable")
-			break
-		}
 		switch request.Operation {
 		case operationMySQLDatabasesAll:
-			response.MySQL.Databases, err = queryBackend.DatabasesIncludingSystem(ctx, payload.Instance)
+			response.MySQL.Databases, err = server.mysql.DatabasesIncludingSystem(ctx, payload.Instance)
 		case operationMySQLObjects:
-			response.MySQL.Objects, err = queryBackend.Objects(ctx, payload.Instance, payload.Database)
+			response.MySQL.Objects, err = server.mysql.Objects(ctx, payload.Instance, payload.Database)
 		case operationMySQLObjectDetails:
 			var value mysqlmanager.ObjectDetails
-			value, err = queryBackend.ObjectDetails(ctx, payload.Instance, payload.Database, payload.Object)
+			value, err = server.mysql.ObjectDetails(ctx, payload.Instance, payload.Database, payload.Object)
 			response.MySQL.ObjectDetails = &value
 		case operationMySQLExecuteSQL:
 			var value mysqlmanager.SQLResult
-			value, err = queryBackend.ExecuteSQL(ctx, payload.Instance, payload.SQL)
+			value, err = server.mysql.ExecuteSQL(ctx, payload.Instance, payload.SQL)
 			response.MySQL.SQLResult = &value
 		}
 	case operationMySQLStatus:
