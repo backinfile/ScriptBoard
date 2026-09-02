@@ -1466,13 +1466,13 @@ body.has-file-quick-edit-drawer { overflow: hidden; }
 }
 /* Keep website filter controls aligned while leaving localized selected text room to scale. */
 .website-filters label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .68rem; font-weight: 620; white-space: nowrap; }
-.website-filters select { min-width: 160px; height: var(--control-height-compact); min-height: var(--control-height-compact); }
+.website-filters select { min-width: 160px; height: var(--control-height-field); min-height: var(--control-height-field); }
 .website-filters > a,
 .website-filters .button { white-space: nowrap; }
-.website-filters .button { height: var(--control-height-compact); }
+.website-filters .button { height: var(--control-height-field); }
 .website-filters > span {
   display: inline-flex;
-  min-height: var(--control-height-compact);
+  min-height: var(--control-height-field);
   align-items: center;
   margin-left: auto;
   color: var(--muted);
