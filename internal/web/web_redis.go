@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"sort"
@@ -36,6 +37,14 @@ type redisKeyGroup struct {
 	Namespace string
 	Root      bool
 	Keys      []redismanager.KeySummary
+}
+
+func redisLoadError(locale webLocale, err error) string {
+	// Redis page deadlines used to surface the interrupted Broker JSONL read instead of the connection timeout users can act on.
+	if errors.Is(err, context.DeadlineExceeded) {
+		return webText(locale, "redis.connection_timeout")
+	}
+	return secretredaction.String(err.Error())
 }
 
 func groupRedisKeys(keys []redismanager.KeySummary) []redisKeyGroup {
@@ -175,14 +184,14 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 			// Preserve Redis' opaque cursor so large keyspaces remain browsable without an unbounded server-side scan.
 			scan, scanErr := a.redis.Scan(ctx, id, redismanager.ScanRequest{Cursor: data.ScanCursor, Pattern: data.Pattern, Count: 200})
 			if scanErr != nil {
-				data.LoadError = secretredaction.String(scanErr.Error())
+				data.LoadError = redisLoadError(data.Locale, scanErr)
 			} else {
 				data.Scan = &scan
 				data.KeyGroups = groupRedisKeys(scan.Keys)
 				if data.SelectedKey != "" {
 					value, valueErr := a.redis.ReadKey(ctx, id, data.SelectedKey)
 					if valueErr != nil {
-						data.LoadError = secretredaction.String(valueErr.Error())
+						data.LoadError = redisLoadError(data.Locale, valueErr)
 					} else {
 						data.KeyValue = &value
 					}
@@ -191,7 +200,7 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 		case "overview":
 			overview, overviewErr := a.redis.Overview(ctx, id)
 			if overviewErr != nil {
-				data.LoadError = secretredaction.String(overviewErr.Error())
+				data.LoadError = redisLoadError(data.Locale, overviewErr)
 			} else {
 				data.Overview = &overview
 			}
@@ -238,7 +247,7 @@ func (a *App) testRedisInstance(response http.ResponseWriter, request *http.Requ
 	result, err := a.redis.TestInstance(request.Context(), request.PathValue("id"))
 	response.Header().Set("Content-Type", "application/json")
 	if err != nil {
-		http.Error(response, secretredaction.String(err.Error()), http.StatusBadGateway)
+		http.Error(response, redisLoadError(resolveWebLocale(request), err), http.StatusBadGateway)
 		return
 	}
 	_ = json.NewEncoder(response).Encode(struct {

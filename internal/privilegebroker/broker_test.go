@@ -70,6 +70,28 @@ func TestProtocolRejectsDuplicateKeys(t *testing.T) {
 	}
 }
 
+func TestClientPreservesContextDeadlineWhenBrokerResponseIsInterrupted(t *testing.T) {
+	clientSide, brokerSide := net.Pipe()
+	defer brokerSide.Close()
+	client := NewClient(ClientOptions{Dial: func(context.Context) (net.Conn, error) { return clientSide, nil }})
+	go func() {
+		var request wireRequest
+		_ = json.NewDecoder(brokerSide).Decode(&request)
+		var probe [1]byte
+		_, _ = brokerSide.Read(probe[:])
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err := client.call(ctx, wireRequest{Version: ProtocolVersion, Operation: operationRedisOverview, RequestID: "redis-timeout"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("broker timeout error = %v, want context deadline exceeded", err)
+	}
+	if strings.Contains(err.Error(), "bounded JSONL record is invalid") {
+		t.Fatalf("broker timeout leaked framing error: %v", err)
+	}
+}
+
 func brokerFixture(t *testing.T, authorizer Authorizer, executor Executor) (*Server, *Client) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

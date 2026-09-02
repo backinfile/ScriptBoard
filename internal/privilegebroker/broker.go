@@ -1202,6 +1202,13 @@ func (client *Client) call(ctx context.Context, request wireRequest) (wireRespon
 	}
 	response, err := readWireResponse(connection)
 	if err != nil {
+		// Preserve the caller deadline when it closes IPC mid-response so Redis timeouts are not misreported as broken JSONL framing.
+		if contextErr := ctx.Err(); contextErr != nil {
+			return wireResponse{}, fmt.Errorf("read privileged Broker response: %w", contextErr)
+		}
+		if contextDeadline, ok := ctx.Deadline(); ok && !time.Now().Before(contextDeadline) {
+			return wireResponse{}, fmt.Errorf("read privileged Broker response: %w", context.DeadlineExceeded)
+		}
 		return wireResponse{}, fmt.Errorf("read privileged Broker response: %w", err)
 	}
 	if response.Status != statusOK {
