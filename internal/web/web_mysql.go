@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -619,16 +618,12 @@ func (a *App) downloadMySQLBackup(response http.ResponseWriter, request *http.Re
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-%s.sql.gz"`, sanitizeDownloadName(backup.Database), backup.ID))
-	if downloader, ok := a.mysql.ExecutionBackend().(interface {
-		DownloadBackup(context.Context, string, io.Writer) (string, int64, error)
-	}); ok {
-		response.Header().Set("Content-Type", "application/gzip")
-		response.Header().Set("Content-Length", strconv.FormatInt(backup.SizeBytes, 10))
-		if _, _, err := downloader.DownloadBackup(request.Context(), backup.ID, response); err != nil {
-			return
-		}
-	} else {
-		http.ServeFile(response, request, backup.Path)
+	response.Header().Set("Content-Type", "application/gzip")
+	response.Header().Set("Content-Length", strconv.FormatInt(backup.SizeBytes, 10))
+	// MySQL backup roots may be readable only by the privileged Broker; Web must
+	// stream through the domain interface instead of opening Backup.Path.
+	if _, _, err := a.mysql.DownloadBackup(request.Context(), backup.ID, response); err != nil {
+		return
 	}
 	a.recordAuditForRequest(request, "download_mysql_backup", backup.ID, "succeeded")
 }

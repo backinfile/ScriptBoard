@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -84,6 +83,7 @@ type BackupService interface {
 	Backups(context.Context, string, string) ([]Backup, error)
 	BackupDatabases(context.Context, string) ([]string, error)
 	BackupByID(context.Context, string) (Backup, error)
+	DownloadBackup(context.Context, string, io.Writer) (string, int64, error)
 	DeleteBackup(context.Context, string) error
 }
 
@@ -152,13 +152,7 @@ func New(options Options) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(backupRoot, 0o700); err != nil {
-		return nil, fmt.Errorf("prepare MySQL backup root: %w", err)
-	}
 	backupRoot = loadBackupRoot(context.Background(), options.DB, backupRoot)
-	if err := os.MkdirAll(backupRoot, 0o700); err != nil {
-		return nil, fmt.Errorf("prepare configured MySQL backup root: %w", err)
-	}
 	dumpTool := loadSetting(context.Background(), options.DB, "dump_executable", defaultString(strings.TrimSpace(options.DumpExecutable), "mysqldump"))
 	clientTool := loadSetting(context.Background(), options.DB, "client_executable", defaultString(strings.TrimSpace(options.ClientExecutable), "mysql"))
 	now := options.Now
@@ -193,6 +187,9 @@ func New(options Options) (*Manager, error) {
 	manager.runner = osCommandRunner{}
 	manager.server = &mysqlDatabaseServer{}
 	manager.backend = &localBackend{manager: manager}
+	if err := manager.backend.PrepareArtifactRoot(context.Background(), backupRoot); err != nil {
+		return nil, fmt.Errorf("prepare configured MySQL backup root: %w", err)
+	}
 	return manager, nil
 }
 

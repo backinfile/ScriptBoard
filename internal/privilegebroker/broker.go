@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	ProtocolVersion                     = 9
+	ProtocolVersion                     = 10
 	MaxRequestBytes                     = 3 << 20
 	MaxResponseBytes                    = 5 << 20
 	capabilityLifetime                  = 30 * time.Second
@@ -80,6 +80,11 @@ const (
 	operationMySQLTestTools             = "mysql_test_tools"
 	operationMySQLCancel                = "mysql_cancel"
 	operationMySQLBackupChunk           = "mysql_backup_chunk"
+	operationMySQLArtifactPrepare       = "mysql_artifact_prepare"
+	operationMySQLArtifactStoreChunk    = "mysql_artifact_store_chunk"
+	operationMySQLArtifactVerify        = "mysql_artifact_verify"
+	operationMySQLArtifactDelete        = "mysql_artifact_delete"
+	operationMySQLArtifactCleanup       = "mysql_artifact_cleanup"
 	operationMySQLDatabasesAll          = "mysql_databases_all"
 	operationMySQLObjects               = "mysql_objects"
 	operationMySQLObjectDetails         = "mysql_object_details"
@@ -329,6 +334,7 @@ type MySQLService interface {
 	CancelOperation(context.Context, string) error
 	ArtifactRoot(context.Context) (string, error)
 	ReadBackupChunk(context.Context, string, int64, int) ([]byte, int64, string, error)
+	StoreArtifactChunk(context.Context, string, []byte, int64, bool) (mysqlmanager.ArtifactResult, error)
 }
 
 type RedisService interface {
@@ -594,7 +600,8 @@ func (server *Server) handle(connection net.Conn) {
 	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
 		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLClear, operationMySQLDump,
 		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk,
-		operationMySQLDatabasesAll, operationMySQLObjects, operationMySQLObjectDetails, operationMySQLExecuteSQL:
+		operationMySQLDatabasesAll, operationMySQLObjects, operationMySQLObjectDetails, operationMySQLExecuteSQL,
+		operationMySQLArtifactPrepare, operationMySQLArtifactStoreChunk, operationMySQLArtifactVerify, operationMySQLArtifactDelete, operationMySQLArtifactCleanup:
 		_ = connection.SetDeadline(server.now().Add(2 * time.Hour))
 		operationContext, cancelOperation := context.WithCancel(context.Background())
 		peerClosed := make(chan struct{})
@@ -1469,7 +1476,8 @@ func isMySQLOperation(operation string) bool {
 	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
 		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLClear, operationMySQLDump,
 		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk,
-		operationMySQLDatabasesAll, operationMySQLObjects, operationMySQLObjectDetails, operationMySQLExecuteSQL:
+		operationMySQLDatabasesAll, operationMySQLObjects, operationMySQLObjectDetails, operationMySQLExecuteSQL,
+		operationMySQLArtifactPrepare, operationMySQLArtifactStoreChunk, operationMySQLArtifactVerify, operationMySQLArtifactDelete, operationMySQLArtifactCleanup:
 		return true
 	default:
 		return false

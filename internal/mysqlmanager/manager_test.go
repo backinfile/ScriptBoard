@@ -108,6 +108,41 @@ func TestManagedBackendOwnsCredentialAndDatabaseCapabilities(t *testing.T) {
 	}
 }
 
+func TestManagedBackendOwnsBackupArtifactAccess(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	backend := &recordingBackend{dumpResult: DumpResult{SizeBytes: 128, SHA256: strings.Repeat("a", 64)}}
+	manager, err := New(Options{DB: database, StateRoot: stateRoot, Backend: backend})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{
+		Name: "Managed", Host: "db.internal", Port: 3306, Username: "scriptboard",
+		Password: "broker-only-secret", TLSMode: TLSRequired,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := manager.Backup(context.Background(), BackupRequest{InstanceID: instance.ID, Database: "application"})
+	if err != nil {
+		t.Fatalf("managed backup tried to access the Broker-owned artifact: %v", err)
+	}
+	if backup.SizeBytes != backend.dumpResult.SizeBytes || backup.SHA256 != backend.dumpResult.SHA256 {
+		t.Fatalf("backup metadata = %+v, want Broker result %+v", backup, backend.dumpResult)
+	}
+	if backend.dumpPath != backup.Path {
+		t.Fatalf("Broker dump path = %q, want %q", backend.dumpPath, backup.Path)
+	}
+	if _, err := os.Stat(filepath.Join(stateRoot, "database-backups")); !os.IsNotExist(err) {
+		t.Fatalf("managed Web touched the Broker-owned backup root: %v", err)
+	}
+}
+
 func TestOperationExclusionSpansManagerProcesses(t *testing.T) {
 	stateRoot := t.TempDir()
 	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
@@ -136,6 +171,8 @@ func TestOperationExclusionSpansManagerProcesses(t *testing.T) {
 
 type recordingBackend struct {
 	storedID, storedPassword, testedID string
+	dumpPath                           string
+	dumpResult                         DumpResult
 }
 
 func (backend *recordingBackend) StoreCredential(_ context.Context, instance Instance, password string) error {
@@ -160,13 +197,24 @@ func (*recordingBackend) CreateDatabase(context.Context, Instance, CreateDatabas
 func (*recordingBackend) ReplaceDatabase(context.Context, Instance, string) error { return nil }
 func (*recordingBackend) DropDatabase(context.Context, Instance, string) error    { return nil }
 func (*recordingBackend) ClearDatabase(context.Context, Instance, string) error   { return nil }
-func (*recordingBackend) Dump(context.Context, Instance, string, string) (DumpResult, error) {
-	return DumpResult{}, nil
+func (backend *recordingBackend) Dump(_ context.Context, _ Instance, _, path string) (DumpResult, error) {
+	backend.dumpPath = path
+	return backend.dumpResult, nil
 }
 func (*recordingBackend) Import(context.Context, Instance, string, string) error { return nil }
-func (*recordingBackend) Tools() ToolSettings                                    { return ToolSettings{} }
-func (*recordingBackend) SetTools(context.Context, ToolSettings) error           { return nil }
-func (*recordingBackend) TestTools(context.Context) ToolStatus                   { return ToolStatus{} }
+func (*recordingBackend) PrepareArtifactRoot(context.Context, string) error      { return nil }
+func (*recordingBackend) StoreArtifact(context.Context, string, io.Reader, bool) (ArtifactResult, error) {
+	return ArtifactResult{SizeBytes: 1, SHA256: strings.Repeat("b", 64)}, nil
+}
+func (*recordingBackend) VerifyArtifact(context.Context, string, string, bool) error { return nil }
+func (*recordingBackend) DeleteArtifact(context.Context, string) error               { return nil }
+func (*recordingBackend) CleanupArtifacts(context.Context, string) error             { return nil }
+func (*recordingBackend) DownloadBackup(context.Context, string, io.Writer) (string, int64, error) {
+	return "fixture.sql.gz", 1, nil
+}
+func (*recordingBackend) Tools() ToolSettings                          { return ToolSettings{} }
+func (*recordingBackend) SetTools(context.Context, ToolSettings) error { return nil }
+func (*recordingBackend) TestTools(context.Context) ToolStatus         { return ToolStatus{} }
 
 func mustReadFile(t *testing.T, path string) []byte {
 	t.Helper()

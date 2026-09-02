@@ -1,10 +1,13 @@
 package privilegebroker
 
 import (
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -30,6 +33,9 @@ type mysqlWireRequest struct {
 	Limit       int                              `json:"limit,omitempty"`
 	Object      string                           `json:"object,omitempty"`
 	SQL         mysqlmanager.SQLRequest          `json:"sql"`
+	Content     []byte                           `json:"content,omitempty"`
+	Final       bool                             `json:"final,omitempty"`
+	SHA256      string                           `json:"sha256,omitempty"`
 }
 
 type mysqlWireResponse struct {
@@ -45,7 +51,10 @@ type mysqlWireResponse struct {
 	Objects        []mysqlmanager.DatabaseObject `json:"objects,omitempty"`
 	ObjectDetails  *mysqlmanager.ObjectDetails   `json:"object_details,omitempty"`
 	SQLResult      *mysqlmanager.SQLResult       `json:"sql_result,omitempty"`
+	Artifact       *mysqlmanager.ArtifactResult  `json:"artifact,omitempty"`
 }
+
+const maxMySQLArtifactBytes int64 = (2 << 30) + 1
 
 type brokerMySQLService struct {
 	mysqlmanager.Backend
@@ -101,6 +110,30 @@ func (service *brokerMySQLService) ArtifactRoot(ctx context.Context) (string, er
 	return filepath.Clean(configured), nil
 }
 
+func (service *brokerMySQLService) PrepareArtifactRoot(ctx context.Context, requested string) error {
+	configured, err := service.ArtifactRoot(ctx)
+	if err != nil || filepath.Clean(requested) != filepath.Clean(configured) {
+		return errors.New("MySQL artifact root does not match the configured backup root")
+	}
+	if info, statErr := os.Lstat(configured); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return errors.New("configured MySQL backup root is not a regular directory")
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	// Root preparation stays in the Broker, but the requested path must first
+	// match the value committed in shared configuration to avoid arbitrary mkdir.
+	if err := service.Backend.PrepareArtifactRoot(ctx, configured); err != nil {
+		return err
+	}
+	info, err := os.Lstat(configured)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errors.New("configured MySQL backup root is not a regular directory")
+	}
+	return nil
+}
+
 func (service *brokerMySQLService) ReadBackupChunk(ctx context.Context, id string, offset int64, limit int) ([]byte, int64, string, error) {
 	var path, database string
 	var total int64
@@ -130,6 +163,124 @@ func (service *brokerMySQLService) ReadBackupChunk(ctx context.Context, id strin
 		return nil, 0, "", readErr
 	}
 	return buffer[:read], total, database + "-" + id + ".sql.gz", nil
+}
+
+func (service *brokerMySQLService) StoreArtifactChunk(_ context.Context, path string, content []byte, offset int64, final bool) (mysqlmanager.ArtifactResult, error) {
+	if offset < 0 || offset > maxMySQLArtifactBytes || int64(len(content)) > maxMySQLArtifactBytes-offset {
+		return mysqlmanager.ArtifactResult{}, errors.New("MySQL artifact upload exceeds the 2 GiB limit")
+	}
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return mysqlmanager.ArtifactResult{}, err
+	}
+	partial := path + ".upload.partial"
+	flags := os.O_WRONLY
+	if offset == 0 {
+		flags |= os.O_CREATE | os.O_EXCL
+	} else {
+		info, err := os.Lstat(partial)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return mysqlmanager.ArtifactResult{}, errors.New("MySQL artifact upload partial is not a regular file")
+		}
+	}
+	file, err := os.OpenFile(partial, flags, 0o600)
+	if err != nil {
+		return mysqlmanager.ArtifactResult{}, err
+	}
+	info, err := file.Stat()
+	if err == nil && (!info.Mode().IsRegular() || info.Size() != offset) {
+		err = errors.New("MySQL artifact upload offset does not match")
+	}
+	if err == nil && offset > 0 {
+		linkInfo, linkErr := os.Lstat(partial)
+		if linkErr != nil || !os.SameFile(linkInfo, info) {
+			err = errors.New("MySQL artifact upload partial changed while opening")
+		}
+	}
+	if err == nil && len(content) > 0 {
+		_, err = file.WriteAt(content, offset)
+	}
+	if syncErr := file.Sync(); err == nil {
+		err = syncErr
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(partial)
+		return mysqlmanager.ArtifactResult{}, err
+	}
+	if !final {
+		return mysqlmanager.ArtifactResult{}, nil
+	}
+	if _, destinationErr := os.Lstat(path); !errors.Is(destinationErr, os.ErrNotExist) {
+		_ = os.Remove(partial)
+		return mysqlmanager.ArtifactResult{}, errors.New("MySQL artifact destination already exists or is unavailable")
+	}
+	result, err := inspectBrokerArtifact(partial, true)
+	if err != nil {
+		_ = os.Remove(partial)
+		return mysqlmanager.ArtifactResult{}, err
+	}
+	if err := os.Link(partial, path); err != nil {
+		_ = os.Remove(partial)
+		return mysqlmanager.ArtifactResult{}, err
+	}
+	if err := os.Remove(partial); err != nil {
+		_ = os.Remove(path)
+		return mysqlmanager.ArtifactResult{}, err
+	}
+	return result, nil
+}
+
+func inspectBrokerArtifact(path string, validateCompressed bool) (mysqlmanager.ArtifactResult, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return mysqlmanager.ArtifactResult{}, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return mysqlmanager.ArtifactResult{}, errors.New("MySQL backup artifact is not a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return mysqlmanager.ArtifactResult{}, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return mysqlmanager.ArtifactResult{}, errors.New("MySQL backup artifact changed while opening")
+	}
+	hash := sha256.New()
+	size, err := io.Copy(hash, file)
+	if err != nil || size == 0 {
+		return mysqlmanager.ArtifactResult{}, errors.New("MySQL backup artifact is empty or unreadable")
+	}
+	if validateCompressed {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return mysqlmanager.ArtifactResult{}, err
+		}
+		reader, err := gzip.NewReader(file)
+		if err != nil {
+			return mysqlmanager.ArtifactResult{}, fmt.Errorf("invalid gzip backup: %w", err)
+		}
+		written, copyErr := io.Copy(io.Discard, io.LimitReader(reader, (8<<30)+1))
+		closeErr := reader.Close()
+		if copyErr != nil || closeErr != nil || written == 0 || written > 8<<30 {
+			return mysqlmanager.ArtifactResult{}, errors.New("compressed SQL backup is invalid or exceeds the 8 GiB limit")
+		}
+	}
+	return mysqlmanager.ArtifactResult{SizeBytes: size, SHA256: fmt.Sprintf("%x", hash.Sum(nil))}, nil
+}
+
+func (service *brokerMySQLService) VerifyArtifact(_ context.Context, path, expectedSHA256 string, compressed bool) error {
+	result, err := inspectBrokerArtifact(path, compressed)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(result.SHA256, expectedSHA256) {
+		return errors.New("backup SHA-256 verification failed")
+	}
+	return nil
 }
 
 func (service *brokerMySQLService) SetTools(ctx context.Context, tools mysqlmanager.ToolSettings) error {
@@ -221,15 +372,22 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 	if err != nil {
 		return wireResponse{Status: statusError, ErrorCode: "mysql_forbidden", Message: "MySQL operation is not authorized"}
 	}
-	if request.Operation == operationMySQLDump || request.Operation == operationMySQLImport {
+	if request.Operation == operationMySQLDump || request.Operation == operationMySQLImport || request.Operation == operationMySQLArtifactStoreChunk ||
+		request.Operation == operationMySQLArtifactVerify || request.Operation == operationMySQLArtifactDelete || request.Operation == operationMySQLArtifactCleanup {
 		root, rootErr := server.mysql.ArtifactRoot(context.Background())
-		if rootErr != nil || !pathWithinRoot(root, payload.Path) {
+		allowed := pathWithinRoot(root, payload.Path)
+		if request.Operation == operationMySQLDump || request.Operation == operationMySQLArtifactStoreChunk {
+			allowed = pathWithinRootForCreate(root, payload.Path)
+		}
+		if rootErr != nil || !allowed {
 			return wireResponse{Status: statusError, ErrorCode: "mysql_path_forbidden", Message: "MySQL artifact path is outside the configured backup root"}
 		}
 	}
 	ctx, cancel := context.WithTimeout(parent, 2*time.Hour)
 	defer cancel()
-	if request.Operation != operationMySQLDelete && request.Operation != operationMySQLTestTools && request.Operation != operationMySQLSetTools && request.Operation != operationMySQLCancel && request.Operation != operationMySQLBackupChunk {
+	artifactOperation := request.Operation == operationMySQLArtifactPrepare || request.Operation == operationMySQLArtifactStoreChunk ||
+		request.Operation == operationMySQLArtifactVerify || request.Operation == operationMySQLArtifactDelete || request.Operation == operationMySQLArtifactCleanup
+	if request.Operation != operationMySQLDelete && request.Operation != operationMySQLTestTools && request.Operation != operationMySQLSetTools && request.Operation != operationMySQLCancel && request.Operation != operationMySQLBackupChunk && !artifactOperation {
 		if err := server.mysql.ValidateInstance(ctx, payload.Instance); err != nil {
 			return wireResponse{Status: statusError, ErrorCode: "mysql_instance_mismatch", Message: "MySQL instance does not match committed metadata"}
 		}
@@ -299,6 +457,18 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 		err = server.mysql.CancelOperation(ctx, payload.OperationID)
 	case operationMySQLBackupChunk:
 		response.MySQL.Content, response.MySQL.TotalBytes, response.MySQL.Filename, err = server.mysql.ReadBackupChunk(ctx, payload.BackupID, payload.Offset, payload.Limit)
+	case operationMySQLArtifactPrepare:
+		err = server.mysql.PrepareArtifactRoot(ctx, payload.Path)
+	case operationMySQLArtifactStoreChunk:
+		var value mysqlmanager.ArtifactResult
+		value, err = server.mysql.StoreArtifactChunk(ctx, payload.Path, payload.Content, payload.Offset, payload.Final)
+		response.MySQL.Artifact = &value
+	case operationMySQLArtifactVerify:
+		err = server.mysql.VerifyArtifact(ctx, payload.Path, payload.SHA256, true)
+	case operationMySQLArtifactDelete:
+		err = server.mysql.DeleteArtifact(ctx, payload.Path)
+	case operationMySQLArtifactCleanup:
+		err = server.mysql.CleanupArtifacts(ctx, payload.Path)
 	}
 	result := "succeeded"
 	if err != nil {
@@ -345,6 +515,9 @@ func (server *Server) authorizeMySQLOperation(request wireRequest) (Actor, Actio
 	resource := payload.Instance.ID
 	if request.Operation == operationMySQLBackupChunk {
 		resource = payload.BackupID
+	} else if request.Operation == operationMySQLArtifactPrepare || request.Operation == operationMySQLArtifactStoreChunk ||
+		request.Operation == operationMySQLArtifactVerify || request.Operation == operationMySQLArtifactDelete || request.Operation == operationMySQLArtifactCleanup {
+		resource = payload.Path
 	}
 	authorization := AuthorizationRequest{SessionToken: request.SessionToken, RequestID: request.RequestID, Action: action,
 		Resource: resource, Revision: "mysql-instance-v1", ParametersSHA256: parametersDigest(body)}
@@ -382,6 +555,12 @@ func mysqlAction(operation string) (Action, bool) {
 		return ActionMySQLCancel, false
 	case operationMySQLExecuteSQL:
 		return ActionMySQLExecute, false
+	case operationMySQLArtifactStoreChunk, operationMySQLArtifactDelete:
+		return ActionMySQLImport, true
+	case operationMySQLArtifactPrepare:
+		return ActionMySQLSetTools, true
+	case operationMySQLArtifactVerify, operationMySQLArtifactCleanup:
+		return ActionMySQLDump, false
 	default:
 		return ActionMySQLRead, false
 	}
@@ -404,19 +583,48 @@ func pathWithinRoot(root, candidate string) bool {
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
 }
 
+func pathWithinRootForCreate(root, candidate string) bool {
+	if strings.TrimSpace(root) == "" || !filepath.IsAbs(candidate) {
+		return false
+	}
+	cleanRoot, cleanCandidate := filepath.Clean(root), filepath.Clean(candidate)
+	relative, err := filepath.Rel(cleanRoot, cleanCandidate)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return false
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(cleanRoot)
+	if err != nil {
+		return false
+	}
+	ancestor := filepath.Dir(cleanCandidate)
+	for {
+		canonicalAncestor, evalErr := filepath.EvalSymlinks(ancestor)
+		if evalErr == nil {
+			relative, err = filepath.Rel(canonicalRoot, canonicalAncestor)
+			return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
+		}
+		if !errors.Is(evalErr, os.ErrNotExist) || ancestor == filepath.Dir(ancestor) {
+			return false
+		}
+		ancestor = filepath.Dir(ancestor)
+	}
+}
+
 func validateMySQLRequest(request wireRequest) error {
 	if request.MySQL == nil || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
 		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.Redis != nil || request.HostFiles != nil {
 		return errors.New("MySQL request contains unrelated fields")
 	}
 	payload := request.MySQL
+	artifactOperation := request.Operation == operationMySQLArtifactPrepare || request.Operation == operationMySQLArtifactStoreChunk ||
+		request.Operation == operationMySQLArtifactVerify || request.Operation == operationMySQLArtifactDelete || request.Operation == operationMySQLArtifactCleanup
 	minimalInstance := request.Operation == operationMySQLDelete || request.Operation == operationMySQLTestTools || request.Operation == operationMySQLSetTools
-	minimalInstance = minimalInstance || request.Operation == operationMySQLCancel || request.Operation == operationMySQLBackupChunk
+	minimalInstance = minimalInstance || request.Operation == operationMySQLCancel || request.Operation == operationMySQLBackupChunk || artifactOperation
 	validMinimalInstance := validRemoteWebsiteID(payload.Instance.ID)
-	if request.Operation == operationMySQLBackupChunk {
+	if request.Operation == operationMySQLBackupChunk || artifactOperation {
 		validMinimalInstance = payload.Instance == (mysqlmanager.Instance{})
 	}
-	if (!minimalInstance && !validMySQLInstance(payload.Instance)) || (minimalInstance && !validMinimalInstance) || len(payload.Password) > 8<<10 || len(payload.Database) > 64 || len(payload.Object) > 64 || len(payload.SQL.Database) > 64 || strings.ContainsAny(payload.Database+payload.Object+payload.SQL.Database+payload.Path+payload.OperationID+payload.BackupID, "\r\n\x00") || len(payload.Path) > 4096 || len(payload.OperationID) > 160 || len(payload.BackupID) > 160 || len(payload.SQL.Statement) > 256<<10 {
+	if (!minimalInstance && !validMySQLInstance(payload.Instance)) || (minimalInstance && !validMinimalInstance) || len(payload.Password) > 8<<10 || len(payload.Database) > 64 || len(payload.Object) > 64 || len(payload.SQL.Database) > 64 || strings.ContainsAny(payload.Database+payload.Object+payload.SQL.Database+payload.Path+payload.OperationID+payload.BackupID+payload.SHA256, "\r\n\x00") || len(payload.Path) > 4096 || len(payload.OperationID) > 160 || len(payload.BackupID) > 160 || len(payload.SQL.Statement) > 256<<10 || len(payload.Content) > 1<<20 || len(payload.SHA256) > 64 {
 		return errors.New("MySQL request fields are invalid")
 	}
 	if !validCredentialSessionToken(request.SessionToken) {
@@ -425,8 +633,17 @@ func validateMySQLRequest(request wireRequest) error {
 	if request.Operation != operationMySQLCancel && payload.OperationID != "" {
 		return errors.New("MySQL request contains an unrelated operation ID")
 	}
-	if request.Operation != operationMySQLBackupChunk && (payload.BackupID != "" || payload.Offset != 0 || payload.Limit != 0) {
+	if request.Operation != operationMySQLBackupChunk && payload.BackupID != "" {
 		return errors.New("MySQL request contains unrelated backup download fields")
+	}
+	if request.Operation != operationMySQLBackupChunk && request.Operation != operationMySQLArtifactStoreChunk && (payload.Offset != 0 || payload.Limit != 0) {
+		return errors.New("MySQL request contains unrelated artifact offset fields")
+	}
+	if request.Operation != operationMySQLArtifactStoreChunk && (len(payload.Content) != 0 || payload.Final) {
+		return errors.New("MySQL request contains unrelated artifact content")
+	}
+	if request.Operation != operationMySQLArtifactVerify && payload.SHA256 != "" {
+		return errors.New("MySQL request contains an unrelated artifact digest")
 	}
 	emptyCreate := payload.Create == (mysqlmanager.CreateDatabaseInput{})
 	emptyTools := payload.Tools == (mysqlmanager.ToolSettings{})
@@ -482,6 +699,18 @@ func validateMySQLRequest(request wireRequest) error {
 	case operationMySQLBackupChunk:
 		if payload.Password != "" || payload.Database != "" || payload.Path != "" || payload.BackupID == "" || payload.Offset < 0 || payload.Limit <= 0 || payload.Limit > 3<<20 || !emptyCreate || !emptyTools {
 			return errors.New("MySQL backup download request is invalid")
+		}
+	case operationMySQLArtifactPrepare, operationMySQLArtifactDelete, operationMySQLArtifactCleanup:
+		if payload.Password != "" || payload.Database != "" || payload.Object != "" || payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.Offset != 0 || payload.Limit != 0 || !emptyCreate || !emptyTools || !emptySQL {
+			return errors.New("MySQL artifact operation request is invalid")
+		}
+	case operationMySQLArtifactStoreChunk:
+		if payload.Password != "" || payload.Database != "" || payload.Object != "" || payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.Offset < 0 || payload.Limit != 0 || !emptyCreate || !emptyTools || !emptySQL {
+			return errors.New("MySQL artifact upload request is invalid")
+		}
+	case operationMySQLArtifactVerify:
+		if payload.Password != "" || payload.Database != "" || payload.Object != "" || payload.Path == "" || !filepath.IsAbs(payload.Path) || len(payload.SHA256) != 64 || !emptyCreate || !emptyTools || !emptySQL {
+			return errors.New("MySQL artifact verification request is invalid")
 		}
 	}
 	return nil
@@ -558,6 +787,66 @@ func (backend *MySQLBackend) DownloadBackup(ctx context.Context, id string, dest
 			return "", 0, io.ErrUnexpectedEOF
 		}
 	}
+}
+
+func (backend *MySQLBackend) PrepareArtifactRoot(ctx context.Context, root string) error {
+	_, err := backend.call(ctx, operationMySQLArtifactPrepare, mysqlWireRequest{Path: root})
+	return err
+}
+
+func (backend *MySQLBackend) StoreArtifact(ctx context.Context, path string, source io.Reader, compressed bool) (mysqlmanager.ArtifactResult, error) {
+	reader := source
+	var pipeReader *io.PipeReader
+	if !compressed {
+		var pipeWriter *io.PipeWriter
+		pipeReader, pipeWriter = io.Pipe()
+		reader = pipeReader
+		go func() {
+			writer := gzip.NewWriter(pipeWriter)
+			_, copyErr := io.Copy(writer, source)
+			closeErr := writer.Close()
+			_ = pipeWriter.CloseWithError(errors.Join(copyErr, closeErr))
+		}()
+		defer pipeReader.Close()
+	}
+	buffer := make([]byte, 1<<20)
+	var offset int64
+	for {
+		read, readErr := io.ReadFull(reader, buffer)
+		final := errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF)
+		if readErr != nil && !final {
+			_ = backend.DeleteArtifact(context.WithoutCancel(ctx), path)
+			return mysqlmanager.ArtifactResult{}, readErr
+		}
+		value, err := backend.call(ctx, operationMySQLArtifactStoreChunk, mysqlWireRequest{Path: path, Content: buffer[:read], Offset: offset, Final: final})
+		if err != nil {
+			_ = backend.DeleteArtifact(context.WithoutCancel(ctx), path)
+			return mysqlmanager.ArtifactResult{}, err
+		}
+		offset += int64(read)
+		if final {
+			if value.Artifact == nil {
+				_ = backend.DeleteArtifact(context.WithoutCancel(ctx), path)
+				return mysqlmanager.ArtifactResult{}, errors.New("privileged Broker returned no MySQL artifact result")
+			}
+			return *value.Artifact, nil
+		}
+	}
+}
+
+func (backend *MySQLBackend) VerifyArtifact(ctx context.Context, path, sha256 string, _ bool) error {
+	_, err := backend.call(ctx, operationMySQLArtifactVerify, mysqlWireRequest{Path: path, SHA256: sha256})
+	return err
+}
+
+func (backend *MySQLBackend) DeleteArtifact(ctx context.Context, path string) error {
+	_, err := backend.call(ctx, operationMySQLArtifactDelete, mysqlWireRequest{Path: path})
+	return err
+}
+
+func (backend *MySQLBackend) CleanupArtifacts(ctx context.Context, root string) error {
+	_, err := backend.call(ctx, operationMySQLArtifactCleanup, mysqlWireRequest{Path: root})
+	return err
 }
 
 func (backend *MySQLBackend) StoreCredential(ctx context.Context, instance mysqlmanager.Instance, password string) error {

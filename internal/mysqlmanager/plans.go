@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -205,7 +204,7 @@ func (m *Manager) applyRetention(ctx context.Context, planID, database string, k
 	_ = rows.Close()
 	for _, value := range values {
 		if pathWithin(m.BackupRoot(), value.path) {
-			if err := os.Remove(value.path); err != nil && !os.IsNotExist(err) {
+			if err := m.backend.DeleteArtifact(ctx, value.path); err != nil {
 				continue
 			}
 			_, _ = m.db.ExecContext(ctx, "DELETE FROM mysql_backups WHERE id=?", value.id)

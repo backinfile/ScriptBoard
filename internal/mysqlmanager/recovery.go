@@ -3,9 +3,8 @@ package mysqlmanager
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -14,12 +13,7 @@ import (
 // lost. Destructive operations prefer restoring their safety backup over
 // guessing how far the server mutation progressed.
 func (m *Manager) RecoverInterrupted(ctx context.Context) error {
-	_ = filepath.WalkDir(m.BackupRoot(), func(path string, entry fs.DirEntry, err error) error {
-		if err == nil && !entry.IsDir() && (strings.HasSuffix(entry.Name(), ".partial") || strings.HasPrefix(entry.Name(), ".mysql-backup-")) {
-			_ = os.Remove(path)
-		}
-		return nil
-	})
+	_ = m.backend.CleanupArtifacts(ctx, m.BackupRoot())
 	rows, err := m.db.QueryContext(ctx, `SELECT id FROM mysql_operations WHERE phase NOT IN
 		('completed','cancelled','failed','rolled_back','needs_attention','skipped_overlap') ORDER BY created_at`)
 	if err != nil {
@@ -51,7 +45,7 @@ func (m *Manager) RecoverInterrupted(ctx context.Context) error {
 			_ = m.updateOperation(ctx, id, "needs_attention", "service restarted during a destructive MySQL operation", "safety backup is unavailable", operation.BytesTotal, operation.BytesCompleted)
 			continue
 		}
-		if err := verifyBackupFile(safety); err != nil {
+		if err := m.verifyBackupFile(ctx, safety); err != nil {
 			_ = m.updateOperation(ctx, id, "needs_attention", "service restarted during a destructive MySQL operation", err.Error(), operation.BytesTotal, operation.BytesCompleted)
 			m.recordAudit(AuditEvent{Action: "mysql_restore_recovery", Target: operation.InstanceID + "/" + operation.TargetDatabase, Result: "needs_attention", Actor: operation.Actor})
 			continue
@@ -82,17 +76,28 @@ func (m *Manager) SetBackupRoot(ctx context.Context, root string) (string, error
 		return "", fmt.Errorf("MySQL backup root must be an absolute path")
 	}
 	root = filepath.Clean(root)
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	previous := m.BackupRoot()
+	if err := m.storeBackupRoot(ctx, root); err != nil {
 		return "", err
 	}
-	if _, err := m.db.ExecContext(ctx, `INSERT INTO mysql_settings(key,value,updated_at) VALUES ('backup_root',?,?)
-		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, root, m.now().UTC().UnixNano()); err != nil {
+	// The Broker validates root preparation against committed configuration;
+	// restore the previous value if the privileged preparation cannot complete.
+	if err := m.backend.PrepareArtifactRoot(ctx, root); err != nil {
+		if rollbackErr := m.storeBackupRoot(context.WithoutCancel(ctx), previous); rollbackErr != nil {
+			return "", errors.Join(err, fmt.Errorf("restore previous MySQL backup root: %w", rollbackErr))
+		}
 		return "", err
 	}
 	m.mu.Lock()
 	m.backupRoot = root
 	m.mu.Unlock()
 	return root, nil
+}
+
+func (m *Manager) storeBackupRoot(ctx context.Context, root string) error {
+	_, err := m.db.ExecContext(ctx, `INSERT INTO mysql_settings(key,value,updated_at) VALUES ('backup_root',?,?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, root, m.now().UTC().UnixNano())
+	return err
 }
 
 func loadBackupRoot(ctx context.Context, database *sql.DB, fallback string) string {
