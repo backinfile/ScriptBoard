@@ -4520,20 +4520,37 @@
         const path = document.createElement("small");
         path.textContent = pin.path;
         copy.append(label, path);
-        link.append(icon, copy);
-		link.addEventListener("click", () => {
-		  if (link.hasAttribute("href")) disclosure.open = false;
-		});
+		link.append(icon, copy);
 		const validationURL = new URL(disclosure.dataset.validationUrl || "/resources/files/validate", location.origin);
 		validationURL.searchParams.set("path", pin.path);
-		fetch(validationURL, { headers: { Accept: "application/json" }, signal: validationController.signal })
+		const validation = fetch(validationURL, { headers: { Accept: "application/json" }, signal: validationController.signal })
 		  .then(response => response.ok ? response.json() : { accessible: false })
 		  .then(result => {
-			if (!result?.accessible || !pins.some(candidate => candidate.path === pin.path)) return;
+			if (!result?.accessible || !pins.some(candidate => candidate.path === pin.path)) return false;
 			link.setAttribute("href", pin.href);
 			link.removeAttribute("aria-disabled");
+			return true;
 		  })
-		  .catch(error => { if (error?.name !== "AbortError") link.dataset.unavailable = "true"; });
+		  .catch(error => {
+			if (error?.name !== "AbortError") link.dataset.unavailable = "true";
+			return false;
+		  });
+		let openWhenValidated = false;
+		link.addEventListener("click", event => {
+		  if (link.hasAttribute("href")) {
+			disclosure.open = false;
+			return;
+		  }
+		  event.preventDefault();
+		  if (openWhenValidated) return;
+		  openWhenValidated = true;
+		  // Fix: grouped rows begin validation only when their collapsed group opens;
+		  // preserve an immediate click and finish it once the directory is accessible.
+		  validation.then(accessible => {
+			openWhenValidated = false;
+			if (accessible && link.isConnected) link.click();
+		  });
+		});
 
         const remove = document.createElement("button");
         remove.className = "icon-button";
