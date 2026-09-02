@@ -201,6 +201,21 @@ func TestWebsiteCreateEditNginxAndDetailArePanelSafeTasks(t *testing.T) {
 		`class="page-eyebrow"`,
 		`class="heading-actions website-heading-actions"`,
 	)
+
+	response, err = client.Get(serverURL + "/assets/app-v2.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stylesheet, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireAlignmentFragments(t, stylesheet,
+		`.website-filters label { display: flex; align-items: center; gap: 8px;`,
+		`.website-filters select { min-width: 160px; height: var(--control-height-field); min-height: var(--control-height-field); }`,
+		`.website-filters .button { height: var(--control-height-field); }`,
+	)
 	if count := bytes.Count(listPage, []byte(`href="/monitor/websites/new"`)); count != 1 {
 		t.Fatalf("website add action count=%d, want one page-level action", count)
 	}
