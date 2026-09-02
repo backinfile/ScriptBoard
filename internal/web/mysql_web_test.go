@@ -118,6 +118,14 @@ func TestDatabasesPageCombinesMySQLAndRedisConnectionsAndOffersOneAddFlow(t *tes
 	if strings.Contains(redisAddPage, `<label>Database index<input name="database"`) {
 		t.Fatalf("Redis add connection form still contains a database index: %s", redisAddPage)
 	}
+	for name, rendered := range map[string]string{"mysql": page, "redis": redisAddPage} {
+		verify := strings.Index(rendered, "TLS, verify certificate and hostname")
+		skip := strings.Index(rendered, "TLS, skip certificate verification")
+		plaintext := strings.Index(rendered, "Plaintext connection")
+		if verify < 0 || skip < verify || plaintext < skip {
+			t.Fatalf("%s TLS modes do not use the shared secure-to-plaintext order: %s", name, rendered)
+		}
+	}
 }
 
 func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T) {
@@ -141,7 +149,7 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 			t.Fatalf("database workspace is missing partial-refresh region %q: %s", expected, body)
 		}
 	}
-	if !strings.Contains(string(body), "TLS can be disabled, preferred, or required. Disabling TLS sends credentials and database traffic in plaintext.") {
+	if !strings.Contains(string(body), "Preferred mode may fall back to plaintext; skipping certificate verification risks man-in-the-middle attacks; plaintext exposes credentials and data.") {
 		t.Fatalf("database form does not explain plaintext mode: %s", body)
 	}
 	response, err = client.PostForm(serverURL+"/resources/databases/instances", url.Values{

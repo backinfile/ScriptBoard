@@ -9,7 +9,8 @@
 - 总览和键空间在连接后选择逻辑数据库；数据库编号会在页签、SCAN 续页、键选择和值预览之间保持。
 - 连接测试固定验证服务器端点的 DB 0；总览、SCAN 和键值读取使用各自请求选择的数据库。
 - schema 64 移除 `redis_instances.database_index`，旧连接元数据和凭据仍保留；数据库不再参与加密凭据绑定。
-- 明文、验证身份与显式跳过证书验证三种连接模式保持不变。
+- Redis 与 MySQL 的 TLS 公共模式统一为“验证证书与主机名 / 跳过证书验证 / 明文连接”；MySQL 保留协议特有的“优先 TLS（可能回退明文）”。
+- Redis 键空间的“匹配模式”标签与输入框保持同一水平行。
 
 ## 测试清单
 
@@ -21,13 +22,14 @@
 6. 验证 SCAN、键链接和值预览保持所选数据库。
 7. 验证非法数据库编号被拒绝。
 8. 验证连接测试、schema 迁移、静态检查、构建和全仓测试。
+9. 使用外部 Chrome 检查 Redis 匹配模式布局及 Redis、MySQL TLS 选项文案与顺序。
 
 ## 保留部署
 
 | 项目 | 值 |
 | --- | --- |
 | ScriptBoard URL | `http://127.0.0.1:18964` |
-| ScriptBoard PID | `51036` |
+| ScriptBoard PID | `54792` |
 | 登录用户 | `admin` |
 | 初始密码 | State Root 私有文件 `secrets/initial-admin-password` |
 | 部署目录 | `.scratch/redis-database-selection-20260902` |
@@ -60,6 +62,8 @@
 | R08 | 数据库选择器和导航参数保持 | 通过，保持 `database=5` |
 | R09 | 非法 `database=-1` | 通过，HTTP 400 |
 | R10 | 真实连接测试 | 通过，Redis 8.2.9 |
+| R11 | “匹配模式”标签与输入框同行 | 通过，外部 Chrome 实测标签、控件中心线一致且无横向溢出 |
+| R12 | Redis 与 MySQL TLS 公共模式文案一致 | 通过，外部 Chrome 实测；MySQL 额外保留可回退的 Preferred 模式 |
 | M01 | schema 63 → 64 迁移 | 通过，移除索引列并保留连接 |
 | T01 | 目标包测试 | 通过 |
 | T02 | `go vet ./...` | 通过 |
