@@ -130,24 +130,7 @@ LockPersonality=true
 [Install]
 WantedBy=multi-user.target
 `, systemdQuote(executable), systemdQuote(configPath))
-	brokerUnit := fmt.Sprintf(`[Unit]
-Description=ScriptBoard privileged operation Broker
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=%s --config %s --state-root %s --allowed-identity scriptboard-web
-Restart=on-failure
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-RestrictSUIDSGID=true
-LockPersonality=true
-
-[Install]
-WantedBy=multi-user.target
-`, systemdQuote(brokerExecutable), systemdQuote(configPath), systemdQuote(stateRoot))
+	brokerUnit := linuxBrokerServiceUnit(brokerExecutable, configPath, stateRoot)
 	runnerUser, runnerGroup := linuxRunnerServiceAccount(runnerIdentityMode)
 	runnerPolicy := linuxRunnerServicePolicy(runnerIdentityMode)
 	runnerUnit := fmt.Sprintf(`[Unit]
@@ -213,6 +196,28 @@ TimeoutStartSec=0
 		return err
 	}
 	return systemctl("enable", "scriptboard.service")
+}
+
+func linuxBrokerServiceUnit(executable, configPath, stateRoot string) string {
+	// Host Files is Broker-owned, so its mount namespace must retain the host view of /root and /home.
+	return fmt.Sprintf(`[Unit]
+Description=ScriptBoard privileged operation Broker
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=%s --config %s --state-root %s --allowed-identity scriptboard-web
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=false
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
+`, systemdQuote(executable), systemdQuote(configPath), systemdQuote(stateRoot))
 }
 
 func prepareLinuxWebServiceIdentity(configPath, stateRoot string, webReadPaths ...string) error {
