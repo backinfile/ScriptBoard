@@ -115,6 +115,7 @@
                 <option value="name" {{if eq .SortField "name"}}selected{{end}}>{{t .Locale "common.name"}}</option>
                 <option value="type" {{if eq .SortField "type"}}selected{{end}}>{{t .Locale "files.sort.type"}}</option>
                 <option value="size" {{if eq .SortField "size"}}selected{{end}}>{{t .Locale "common.size"}}</option>
+                <option value="created" {{if eq .SortField "created"}}selected{{end}}>{{t .Locale "files.sort.created"}}</option>
                 <option value="modified" {{if eq .SortField "modified"}}selected{{end}}>{{t .Locale "common.modified"}}</option>
               </select>
             </label>
@@ -158,12 +159,59 @@
       <a class="button button--quiet" href="{{.ClearURL}}" data-focus-after-navigation="[data-search-input]">{{t .Locale "files.clear_search"}}</a>
     </section>
     {{else}}
+    {{if .Entries}}
+    <div class="file-list-toolbar" data-file-selection data-current-path="{{.CurrentPath}}" data-copy-success="{{t .Locale "files.selected_paths_copied"}}" data-copy-failed="{{t .Locale "files.path_copy_failed"}}" data-trash-confirm="{{t .Locale "files.batch_trash_confirm"}}">
+      <span class="file-list-toolbar__summary">{{.Pagination.Total}} {{t .Locale "common.records"}}</span>
+      <button class="button button--quiet button--compact" type="button" data-file-selection-start hidden><span data-lucide="list-checks" aria-hidden="true"></span>{{t .Locale "files.select_multiple"}}</button>
+      <div class="file-selection-actions" role="toolbar" aria-label="{{t .Locale "files.select_multiple"}}" data-file-selection-actions hidden>
+        <strong><span data-file-selection-count>0</span> {{t .Locale "files.selected_items"}}</strong>
+        <button class="button button--compact" type="button" data-file-selection-download disabled><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "files.batch_download"}}</button>
+        {{if .CanWrite}}<button class="button button--compact" type="button" data-file-selection-move disabled><span data-lucide="folder-input" aria-hidden="true"></span>{{t .Locale "files.batch_move"}}</button>
+        <button class="button button--compact button--danger" type="button" data-file-selection-trash disabled><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "files.batch_trash"}}</button>{{end}}
+        <button class="button button--compact" type="button" data-file-selection-copy disabled><span data-lucide="copy" aria-hidden="true"></span><span data-file-selection-copy-label>{{t .Locale "files.copy_selected_paths"}}</span></button>
+        <button class="button button--quiet button--compact" type="button" data-file-selection-clear disabled>{{t .Locale "files.clear_selection"}}</button>
+        <button class="button button--quiet button--compact" type="button" data-file-selection-cancel><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "files.cancel_selection"}}</button>
+      </div>
+      <span class="sr-only" role="status" aria-live="polite" data-file-selection-status></span>
+    </div>
+    <form method="post" action="/resources/files/batch-download" data-file-batch-download-form data-native hidden><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"></form>
+    {{if .CanWrite}}
+    <form method="post" action="/resources/files/batch-delete" data-file-batch-trash-form data-async hidden><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="confirm_references" value="yes"><button class="danger-action" type="submit" data-file-batch-trash-submit>{{t .Locale "files.batch_trash"}}</button></form>
+    <dialog class="action-dialog file-batch-move-dialog" data-file-batch-move-dialog aria-labelledby="file-batch-move-title">
+      <form class="action-dialog__sheet file-batch-move-sheet" method="post" action="/resources/files/batch-move" data-file-batch-move-form data-async>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <header>
+          <span class="action-dialog__mark"><span data-lucide="folder-input" aria-hidden="true"></span></span>
+          <div><h2 id="file-batch-move-title">{{t .Locale "files.batch_move_title"}}</h2><p>{{t .Locale "files.batch_move_description"}}</p></div>
+          <button class="icon-button icon-button--quiet" type="button" data-file-batch-move-close aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></button>
+        </header>
+        <div class="file-batch-move-sheet__body">
+          <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}">
+            <input type="hidden" name="working_directory" value="{{.CurrentPath}}" required>
+            <div class="directory-tree-picker__heading"><span>{{t .Locale "task.move_file.destination"}}</span><code data-directory-selection>{{.CurrentPath}}</code></div>
+            <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.move_file.destination"}}"></div>
+          </div>
+          <p class="file-batch-move-sheet__note"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "files.batch_move_conflict_note"}}</p>
+        </div>
+        <footer><button class="button button--quiet" type="button" data-file-batch-move-close>{{t .Locale "common.cancel"}}</button><button class="button button--primary" type="submit"><span data-lucide="folder-input" aria-hidden="true"></span>{{t .Locale "files.batch_move_confirm"}}</button></footer>
+      </form>
+    </dialog>
+    {{end}}
+    {{end}}
     <div class="table-shell">
-      <table class="records-table file-table">
-        <thead><tr><th>{{t .Locale "common.name"}}</th><th>{{t .Locale "common.size"}}</th><th>{{t .Locale "common.modified"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
+      <table class="records-table file-table" data-file-table>
+        <thead><tr>
+          <th class="file-select-column"><input type="checkbox" aria-label="{{t .Locale "files.select_all"}}" data-file-select-all></th>
+          <th aria-sort="{{index .SortStates "name"}}"><a class="file-table-sort" href="{{index .SortURLs "name"}}" data-focus-after-navigation=".file-table th[aria-sort]:not([aria-sort='none']) .file-table-sort"><span>{{t .Locale "common.name"}}</span><span data-lucide="arrow-up-down" aria-hidden="true"></span></a></th>
+          <th aria-sort="{{index .SortStates "size"}}"><a class="file-table-sort" href="{{index .SortURLs "size"}}" data-focus-after-navigation=".file-table th[aria-sort]:not([aria-sort='none']) .file-table-sort"><span>{{t .Locale "common.size"}}</span><span data-lucide="arrow-up-down" aria-hidden="true"></span></a></th>
+          <th aria-sort="{{index .SortStates "created"}}"><a class="file-table-sort" href="{{index .SortURLs "created"}}" data-focus-after-navigation=".file-table th[aria-sort]:not([aria-sort='none']) .file-table-sort"><span>{{t .Locale "files.sort.created"}}</span><span data-lucide="arrow-up-down" aria-hidden="true"></span></a></th>
+          <th aria-sort="{{index .SortStates "modified"}}"><a class="file-table-sort" href="{{index .SortURLs "modified"}}" data-focus-after-navigation=".file-table th[aria-sort]:not([aria-sort='none']) .file-table-sort"><span>{{t .Locale "common.modified"}}</span><span data-lucide="arrow-up-down" aria-hidden="true"></span></a></th>
+          <th><span class="sr-only">{{t .Locale "common.actions"}}</span></th>
+        </tr></thead>
         <tbody>
         {{range .Entries}}
-          <tr{{if .Focused}} class="file-row--focused" tabindex="-1" data-file-focus{{end}}>
+          <tr data-file-selection-row data-file-path="{{.Path}}" data-file-mutable="{{if .CanMutate}}true{{else}}false{{end}}"{{if .Focused}} class="file-row--focused" tabindex="-1" data-file-focus{{end}}>
+            <td class="file-select-column" data-label="{{t $.Locale "files.select_multiple"}}"><input type="checkbox" aria-label="{{t $.Locale "files.select_item"}} {{.Name}}" data-file-select></td>
             <td data-label="{{t $.Locale "common.name"}}" class="record-primary">
               <div class="record-primary__content">
                 <span class="record-icon file-icon" aria-hidden="true" data-lucide="{{.IconClass}}"></span>
@@ -171,6 +219,7 @@
               </div>
             </td>
             <td data-label="{{t $.Locale "common.size"}}" class="file-size">{{.Size}}</td>
+            <td data-label="{{t $.Locale "files.sort.created"}}" class="file-created">{{if .CreatedAt.IsZero}}{{t $.Locale "files.created_unavailable"}}{{else}}<time datetime="{{machineTime .CreatedAt}}" data-local-time>{{localTime $.Locale .CreatedAt}}</time>{{end}}</td>
             <td data-label="{{t $.Locale "common.modified"}}" class="file-modified"><time datetime="{{machineTime .ModifiedAt}}" data-local-time>{{localTime $.Locale .ModifiedAt}}</time></td>
             <td class="record-actions">
               <div class="record-actions__group">
@@ -196,7 +245,7 @@
             </td>
           </tr>
         {{else}}
-          <tr class="records-table__empty"><td colspan="4"><div class="empty-inline"><span data-lucide="folder-open" aria-hidden="true"></span><span>{{t .Locale "files.empty"}}</span>{{if .CanMutateCurrent}}<a href="/resources/files/upload?path={{urlquery .CurrentPath}}" data-task-link>{{t .Locale "files.upload"}}</a>{{end}}</div></td></tr>
+          <tr class="records-table__empty"><td colspan="6"><div class="empty-inline"><span data-lucide="folder-open" aria-hidden="true"></span><span>{{t .Locale "files.empty"}}</span>{{if .CanMutateCurrent}}<a href="/resources/files/upload?path={{urlquery .CurrentPath}}" data-task-link>{{t .Locale "files.upload"}}</a>{{end}}</div></td></tr>
         {{end}}
         </tbody>
       </table>

@@ -302,7 +302,11 @@ func prepareFileListingWithContent(entries []hostfiles.Entry, query, sortField, 
 	sort.SliceStable(result, func(left, right int) bool {
 		comparison := compareListedFiles(result[left], result[right], sortField)
 		if direction == "desc" && result[left].visibleCategory() != fileCategoryDirectory && result[right].visibleCategory() != fileCategoryDirectory {
-			comparison = -comparison
+			// Unavailable creation timestamps stay last in both directions; reversing
+			// them would make missing metadata look newer than real timestamps.
+			if sortField != "created" || result[left].CreatedAt.IsZero() == result[right].CreatedAt.IsZero() {
+				comparison = -comparison
+			}
 		}
 		return comparison < 0
 	})
@@ -311,7 +315,7 @@ func prepareFileListingWithContent(entries []hostfiles.Entry, query, sortField, 
 
 func normalizeFileSort(field, direction string) (string, string) {
 	switch field {
-	case "name", "type", "size", "modified":
+	case "name", "type", "size", "created", "modified":
 	default:
 		field = ""
 	}
@@ -336,6 +340,8 @@ func compareListedFiles(left, right listedFile, field string) int {
 		comparison = cmp.Compare(fileCategoryRank(leftCategory), fileCategoryRank(rightCategory))
 	case "size":
 		comparison = cmp.Compare(left.Size, right.Size)
+	case "created":
+		comparison = compareOptionalTime(left.CreatedAt, right.CreatedAt)
 	case "modified":
 		comparison = left.ModifiedAt.Compare(right.ModifiedAt)
 	}
@@ -343,6 +349,16 @@ func compareListedFiles(left, right listedFile, field string) int {
 		comparison = naturalNameCompare(left.Name, right.Name)
 	}
 	return comparison
+}
+
+func compareOptionalTime(left, right time.Time) int {
+	if left.IsZero() && !right.IsZero() {
+		return 1
+	}
+	if !left.IsZero() && right.IsZero() {
+		return -1
+	}
+	return left.Compare(right)
 }
 
 func classifyFile(entry hostfiles.Entry, path string) fileCategory {
@@ -446,6 +462,29 @@ func filesStateURL(relative, query, sortField, direction string, showHidden bool
 		return "/resources/files"
 	}
 	return "/resources/files?" + values.Encode()
+}
+
+func fileHeaderSortURLs(relative, query, sortField, direction string, showHidden bool) map[string]string {
+	result := make(map[string]string, 4)
+	for _, field := range []string{"name", "size", "created", "modified"} {
+		nextDirection := "asc"
+		if sortField == field && direction == "asc" {
+			nextDirection = "desc"
+		}
+		result[field] = filesStateURL(relative, query, field, nextDirection, showHidden, 0)
+	}
+	return result
+}
+
+func fileHeaderSortStates(sortField, direction string) map[string]string {
+	result := make(map[string]string, 4)
+	for _, field := range []string{"name", "size", "created", "modified"} {
+		result[field] = "none"
+		if sortField == field {
+			result[field] = direction + "ending"
+		}
+	}
+	return result
 }
 
 func naturalNameCompare(left, right string) int {

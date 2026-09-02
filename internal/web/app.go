@@ -4843,6 +4843,8 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		SortField          string
 		Direction          string
 		SortSummary        string
+		SortURLs           map[string]string
+		SortStates         map[string]string
 		RootURL            string
 		ClearURL           string
 		SearchURL          string
@@ -4860,6 +4862,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	}{
 		Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative,
 		Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
+		SortURLs: fileHeaderSortURLs(relative, query, sortField, direction, showHidden), SortStates: fileHeaderSortStates(sortField, direction),
 		RootURL: filesStateURL("", "", sortField, direction, showHidden, 0), ClearURL: filesStateURL(relative, "", sortField, direction, showHidden, 0),
 		SearchURL:  "/resources/files",
 		Pagination: pagination, ParentURL: parentURL,

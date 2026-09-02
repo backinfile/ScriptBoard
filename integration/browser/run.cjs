@@ -2073,6 +2073,67 @@ async function assertExternalInterfaces(page, fixture) {
     await renamedUploadResultsDialog.getByRole("link", { name: "Close", exact: true }).last().click();
     await renamedUploadResultsDialog.waitFor({ state: "detached" });
     await page.getByRole("link", { name: "drag-upload (2).txt", exact: true }).waitFor();
+    const fileHeaders = await page.locator(".file-table thead th").allTextContents();
+    assert.deepEqual(fileHeaders.map(label => label.trim()), ["", "Name", "Size", "Created", "Modified", "Actions"]);
+    assert.equal(await page.locator('.file-table th[aria-sort="none"]').count(), 4);
+    await Promise.all([
+      page.waitForURL(url => url.searchParams.get("sort") === "created" && url.searchParams.get("direction") === "asc"),
+      page.getByRole("link", { name: "Created", exact: true }).click(),
+    ]);
+    assert.equal((await page.locator('.file-table th[aria-sort="ascending"]').innerText()).trim().toLowerCase(), "created");
+    await page.goto(hostFilesWorkspaceURL);
+
+    await page.getByRole("button", { name: "Select multiple", exact: true }).click();
+    const fileSelectionChecks = page.locator("[data-file-select]");
+    await fileSelectionChecks.nth(0).click();
+    await fileSelectionChecks.nth(2).click({ modifiers: ["Shift"] });
+    assert.equal((await page.locator("[data-file-selection-count]").textContent()).trim(), "3");
+    assert.equal(await page.locator('.file-table tbody tr[aria-selected="true"]').count(), 3);
+    assert.equal(await page.locator("[data-file-select-all]").evaluate(input => input.indeterminate), true);
+    const selectedPaths = await page.locator('.file-table tbody tr[aria-selected="true"]').evaluateAll(rows => rows.map(row => row.dataset.filePath));
+    await page.getByRole("button", { name: "Copy paths", exact: true }).click();
+    assert.equal((await page.evaluate(() => navigator.clipboard.readText())).replaceAll("\r\n", "\n"), selectedPaths.join("\n"));
+    await saveSnapshot(page, "files-selection");
+    const [batchDownload] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("button", { name: "Download ZIP", exact: true }).click(),
+    ]);
+    assert.equal(batchDownload.suggestedFilename(), "scriptboard-files.zip");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator("[data-file-selection-actions]").isHidden(), true);
+
+    await page.getByRole("button", { name: "Select multiple", exact: true }).click();
+    for (const name of ["drag-upload.txt", "drag-upload (2).txt"]) {
+      await page.locator(".file-table tbody tr").filter({ hasText: name }).locator("[data-file-select]").click();
+    }
+    await page.getByRole("button", { name: "Move", exact: true }).click();
+    const batchMoveDialog = page.locator("[data-file-batch-move-dialog][open]");
+    await batchMoveDialog.waitFor();
+    await batchMoveDialog.locator('[role="treeitem"][aria-selected="true"]').click();
+    await batchMoveDialog.getByRole("treeitem", { name: /automation/ }).click();
+    await Promise.all([
+      page.waitForURL(url => url.pathname === "/resources/files" && url.searchParams.get("path")?.endsWith(`${path.sep}automation`)),
+      batchMoveDialog.getByRole("button", { name: "Move selected items", exact: true }).click(),
+    ]);
+    for (const name of ["drag-upload.txt", "drag-upload (2).txt"]) {
+      await page.getByRole("link", { name, exact: true }).waitFor();
+    }
+    await page.getByRole("button", { name: "Select multiple", exact: true }).click();
+    for (const name of ["drag-upload.txt", "drag-upload (2).txt"]) {
+      await page.locator(".file-table tbody tr").filter({ hasText: name }).locator("[data-file-select]").click();
+    }
+    await page.getByRole("button", { name: "Move to Trash", exact: true }).click();
+    const batchTrashDialog = page.locator("dialog.action-dialog[open]");
+    await batchTrashDialog.waitFor();
+    assert.match((await batchTrashDialog.locator("[id$='-message']").textContent()).trim(), /2 selected items/);
+    await Promise.all([
+      page.waitForURL(url => url.pathname === "/resources/trash"),
+      batchTrashDialog.getByRole("button", { name: "Move to Trash", exact: true }).click(),
+    ]);
+    for (const name of ["drag-upload.txt", "drag-upload (2).txt"]) {
+      await page.locator(".records-table tbody tr").filter({ hasText: name }).waitFor();
+    }
+    await page.goto(hostFilesWorkspaceURL);
     await assertNoTableHorizontalScrollbar(page, "files desktop");
     await assertTableRowsAligned(page, ".file-table", "files desktop");
     const lastFileActionMenu = page.locator(".file-table tbody tr").last().locator(".action-menu");
@@ -2218,6 +2279,17 @@ async function assertExternalInterfaces(page, fixture) {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(hostFilesWorkspaceURL);
     await assertNoHorizontalOverflow(page, "files mobile");
+    await page.getByRole("button", { name: "Select multiple", exact: true }).click();
+    await page.locator("[data-file-select]").nth(0).click();
+    await page.locator("[data-file-select]").nth(1).click();
+    assert.equal((await page.locator("[data-file-selection-count]").textContent()).trim(), "2");
+    await assertNoHorizontalOverflow(page, "files mobile selection");
+    await page.evaluate(() => {
+      document.activeElement?.blur();
+      window.scrollTo(0, 0);
+    });
+    await saveSnapshot(page, "files-mobile-selection");
+    await page.keyboard.press("Escape");
     const fileDropMobileMetrics = await page.locator("[data-file-drop-zone]").evaluate(element => {
       const bounds = element.getBoundingClientRect();
       return {

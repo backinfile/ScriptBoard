@@ -19,6 +19,33 @@ func TestGlobalKeyboardShortcutGuardsMissingEventKey(t *testing.T) {
 	}
 }
 
+func TestFileMultiSelectionKeepsKeyboardAndRangeSelectionContracts(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatalf("read application script: %v", err)
+	}
+	source := string(script)
+	for _, contract := range []string{
+		`function initFileSelection(root = document, cleanups = [])`,
+		`event.shiftKey && lastCheckedIndex >= 0`,
+		`event.key === "Escape" && toolbar.hasAttribute("data-selection-mode")`,
+		`selectAll.indeterminate = selected.length > 0 && selected.length < rows.length`,
+		`copyTextToClipboard(paths.join("\n"))`,
+		`downloadForm.requestSubmit()`,
+		`moveDialog.showModal()`,
+		`event.key === "Escape" && moveDialog?.open`,
+		`trashForm.requestSubmit(trashSubmit)`,
+		`selected.every(row => row.dataset.fileMutable === "true")`,
+		`initFileSelection(document, cleanups)`,
+	} {
+		if !strings.Contains(source, contract) {
+			t.Fatalf("file multi-selection no longer satisfies contract %q", contract)
+		}
+	}
+}
+
 func TestSecurityFirewallSortReplacesOnlyItsProgressiveSegment(t *testing.T) {
 	t.Parallel()
 

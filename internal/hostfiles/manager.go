@@ -46,6 +46,7 @@ type Entry struct {
 	Kind       Kind
 	VolumeType string
 	Size       int64
+	CreatedAt  time.Time
 	ModifiedAt time.Time
 	Hidden     bool
 }
@@ -201,7 +202,7 @@ func (m *Manager) List(path string) ([]Entry, error) {
 		}
 		entries = append(entries, Entry{
 			Name: directoryEntry.Name(), Path: candidate, Kind: kind,
-			Size: info.Size(), ModifiedAt: info.ModTime(), Hidden: entryHidden(candidate, info),
+			Size: info.Size(), CreatedAt: fileCreatedAt(candidate, info), ModifiedAt: info.ModTime(), Hidden: entryHidden(candidate, info),
 		})
 	}
 	sort.SliceStable(entries, func(left, right int) bool {
