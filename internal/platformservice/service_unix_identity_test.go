@@ -41,6 +41,16 @@ func TestLinuxRunnerDefaultsToPrivilegedRoot(t *testing.T) {
 	}
 }
 
+func TestLinuxBrokerCanAccessHostHomeDirectories(t *testing.T) {
+	unit := linuxBrokerServiceUnit("/opt/scriptboard/scriptboard-broker", "/etc/scriptboard/config.yaml", "/var/lib/scriptboard")
+	if !strings.Contains(unit, "User=root") {
+		t.Fatal("Linux Broker no longer runs with the host identity required by Host Files")
+	}
+	if !strings.Contains(unit, "ProtectHome=false") || strings.Contains(unit, "ProtectHome=true") {
+		t.Fatalf("Linux Broker unit hides host home directories: %q", unit)
+	}
+}
+
 func TestLinuxManagedWebRuntimeRejectsRootAndOtherUsers(t *testing.T) {
 	if err := validateLinuxWebRuntimeIdentity(0, 1200); err == nil {
 		t.Fatal("root identity was accepted")
