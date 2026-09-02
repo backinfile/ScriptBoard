@@ -59,7 +59,7 @@ func (m *Manager) Restore(ctx context.Context, request RestoreRequest) (Operatio
 		safety, err = m.runBackup(ctx, operation, instance, BackupRequest{
 			InstanceID: instance.ID, Database: request.TargetDatabase, Kind: BackupSafety,
 			ActorUserID: request.Actor.UserID, ActorUsername: request.Actor.Username,
-		}, false)
+		}, "", false)
 		if err != nil {
 			result, _ := m.Operation(ctx, operation.ID)
 			return result, err

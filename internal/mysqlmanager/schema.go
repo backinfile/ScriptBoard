@@ -33,6 +33,7 @@ var SchemaStatements = []string{
 		instance_id TEXT NOT NULL,
 		database_name TEXT NOT NULL,
 		plan_id TEXT NOT NULL DEFAULT '',
+		source_name TEXT NOT NULL DEFAULT '',
 		kind TEXT NOT NULL CHECK (kind IN ('manual', 'scheduled', 'imported', 'safety')),
 		path TEXT NOT NULL UNIQUE,
 		size_bytes INTEGER NOT NULL,

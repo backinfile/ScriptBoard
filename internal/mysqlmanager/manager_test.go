@@ -650,6 +650,44 @@ func TestImportAndPlanRetentionNeverDeleteManualBackups(t *testing.T) {
 	}
 }
 
+func TestScheduledBackupKeepsThePlanNameAsItsSource(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.server = &fakeServer{}
+	manager.runner = &recordingRunner{output: "CREATE TABLE scheduled_copy (id INT);\n"}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "Source", Host: "localhost", Port: 3306, Username: "admin", Password: "secret", TLSMode: TLSPreferred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := manager.SavePlan(context.Background(), PlanInput{Name: "Nightly inventory", InstanceID: instance.ID, Databases: []string{"inventory"}, Expression: "0 2 * * *", RetentionCount: 1, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := manager.Backup(context.Background(), BackupRequest{InstanceID: instance.ID, Database: "inventory", PlanID: plan.ID, Kind: BackupScheduled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.SavePlan(context.Background(), PlanInput{ID: plan.ID, Name: "Renamed plan", InstanceID: instance.ID, Databases: []string{"inventory"}, Expression: "0 2 * * *", RetentionCount: 1, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := manager.BackupByID(context.Background(), backup.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SourceName != "Nightly inventory" {
+		t.Fatalf("scheduled backup source name = %q", stored.SourceName)
+	}
+}
+
 func TestDropDatabaseRequiresAndKeepsSafetyBackup(t *testing.T) {
 	stateRoot := t.TempDir()
 	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))

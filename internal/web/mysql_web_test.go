@@ -316,6 +316,13 @@ func TestBackupRecordsFilterAndOpenConfirmationDrawers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	_, err = database.Exec(`INSERT INTO mysql_backups
+		(id, instance_id, database_name, plan_id, source_name, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username)
+		VALUES ('backup-scheduled-source', ?, 'inventory', 'plan-source', 'Nightly inventory', 'scheduled', ?, 256, 'fixture-sha', '', ?, '', 'system')`,
+		instanceID, filepath.Join(stateRoot, "backup-scheduled-source.sql"), time.Now().Add(time.Minute).UnixNano())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	response, err = client.Get(serverURL + "/resources/databases?instance=" + instanceID + "&tab=backups&database=inventory")
 	if err != nil {
@@ -328,6 +335,7 @@ func TestBackupRecordsFilterAndOpenConfirmationDrawers(t *testing.T) {
 		`name="database"`, `<option value="inventory" selected>inventory</option>`, `backup-inventory-12`,
 		`database=inventory`, `data-mysql-backup-restore-trigger`, `data-mysql-backup-delete-trigger`,
 		`data-mysql-backup-restore-drawer`, `data-mysql-backup-delete-drawer`, `data-mysql-backup-restore-form`, `data-mysql-backup-delete-form`,
+		`Source`, `Backup plan`, `Nightly inventory`, `Manual backup`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("filtered backup page missing %q: %s", expected, page)
