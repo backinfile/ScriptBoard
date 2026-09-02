@@ -74,6 +74,49 @@ func NewBrokerMySQLService(database *sql.DB, backend mysqlmanager.Backend, opera
 	return &brokerMySQLService{Backend: backend, db: database, operations: operations, backupRoot: backupRoot}, nil
 }
 
+func (service *brokerMySQLService) queryBackend() (mysqlmanager.QueryBackend, error) {
+	// Embedding Backend only promotes Backend's declared methods. Forward the
+	// query capability explicitly so managed object browsing and SQL execution
+	// reach the Broker-owned local backend.
+	backend, ok := service.Backend.(mysqlmanager.QueryBackend)
+	if !ok {
+		return nil, errors.New("MySQL query browsing is unavailable")
+	}
+	return backend, nil
+}
+
+func (service *brokerMySQLService) DatabasesIncludingSystem(ctx context.Context, instance mysqlmanager.Instance) ([]mysqlmanager.Database, error) {
+	backend, err := service.queryBackend()
+	if err != nil {
+		return nil, err
+	}
+	return backend.DatabasesIncludingSystem(ctx, instance)
+}
+
+func (service *brokerMySQLService) Objects(ctx context.Context, instance mysqlmanager.Instance, database string) ([]mysqlmanager.DatabaseObject, error) {
+	backend, err := service.queryBackend()
+	if err != nil {
+		return nil, err
+	}
+	return backend.Objects(ctx, instance, database)
+}
+
+func (service *brokerMySQLService) ObjectDetails(ctx context.Context, instance mysqlmanager.Instance, database, object string) (mysqlmanager.ObjectDetails, error) {
+	backend, err := service.queryBackend()
+	if err != nil {
+		return mysqlmanager.ObjectDetails{}, err
+	}
+	return backend.ObjectDetails(ctx, instance, database, object)
+}
+
+func (service *brokerMySQLService) ExecuteSQL(ctx context.Context, instance mysqlmanager.Instance, request mysqlmanager.SQLRequest) (mysqlmanager.SQLResult, error) {
+	backend, err := service.queryBackend()
+	if err != nil {
+		return mysqlmanager.SQLResult{}, err
+	}
+	return backend.ExecuteSQL(ctx, instance, request)
+}
+
 func (service *brokerMySQLService) ValidateInstance(ctx context.Context, requested mysqlmanager.Instance) error {
 	var actual mysqlmanager.Instance
 	if err := service.db.QueryRowContext(ctx, `SELECT id,name,host,port,username,tls_mode,ca_path,credential_configured FROM mysql_instances WHERE id=?`, requested.ID).
@@ -958,3 +1001,4 @@ func (backend *MySQLBackend) CancelOperation(ctx context.Context, id string) err
 
 var _ mysqlmanager.Backend = (*MySQLBackend)(nil)
 var _ mysqlmanager.QueryBackend = (*MySQLBackend)(nil)
+var _ mysqlmanager.QueryBackend = (*brokerMySQLService)(nil)
