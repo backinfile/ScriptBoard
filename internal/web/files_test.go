@@ -1140,6 +1140,8 @@ func TestFilesPageOffersSortableDateHeadersAndMultiSelection(t *testing.T) {
 		`action="/resources/files/batch-download"`,
 		`action="/resources/files/batch-move"`,
 		`action="/resources/files/batch-delete"`,
+		`action="/resources/files/batch-delete" data-file-batch-trash-form data-async data-async-refresh="[data-deferred-region]"`,
+		`action="/resources/files/delete" data-async data-async-refresh="[data-deferred-region]"`,
 		`data-file-batch-move-dialog`,
 		`data-directory-picker data-endpoint="/resources/directories"`,
 		`<option value="created" selected>Created</option>`,
@@ -2256,15 +2258,17 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read files: %v", err)
 	}
+	returnTo := hostFileHref("/resources/files", hostRoot) + "&sort=name&direction=desc"
 	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
 		"path":       {filepath.Join(hostRoot, "recover.txt")},
 		"csrf_token": {formToken(t, page)},
+		"return_to":  {returnTo},
 	})
 	if err != nil {
 		t.Fatalf("delete file: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/trash" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != returnTo {
 		t.Fatalf("delete response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	if _, err := os.Stat(filepath.Join(hostRoot, "recover.txt")); !os.IsNotExist(err) {

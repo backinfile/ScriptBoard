@@ -173,17 +173,19 @@ func TestBatchTrashMovesEverySelectionAndRejectsNestedDuplicates(t *testing.T) {
 	body, _ := io.ReadAll(page.Body)
 	_ = page.Body.Close()
 
+	returnTo := hostFileHref("/resources/files", hostRoot) + "&sort=name&direction=desc"
 	response, err := client.PostForm(serverURL+"/resources/files/batch-delete", url.Values{
 		"csrf_token":         {formToken(t, body)},
 		"confirm_references": {"yes"},
 		"path":               {directory, child, standalone},
+		"return_to":          {returnTo},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("batch trash status=%d", response.StatusCode)
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != returnTo {
+		t.Fatalf("batch trash status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	for _, path := range []string{directory, standalone} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {

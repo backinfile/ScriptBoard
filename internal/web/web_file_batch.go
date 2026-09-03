@@ -447,5 +447,11 @@ func (a *App) trashBatchFiles(response http.ResponseWriter, request *http.Reques
 	for _, moved := range trashed {
 		a.recordAuditForRequest(request, "trash_entry", moved.OriginalPath, "succeeded")
 	}
-	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
+	returnDirectory, _ := hostPathParent(items[0].path)
+	destination := filesURL(returnDirectory)
+	if returnTo := safeFilesReturnTo(request.FormValue("return_to")); returnTo != "" {
+		destination = returnTo
+	}
+	// Keep batch deletion in the originating file workspace so the list refreshes in place.
+	http.Redirect(response, request, destination, http.StatusSeeOther)
 }
