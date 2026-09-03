@@ -18,8 +18,8 @@
     </div>
     <div class="heading-actions">
       <a class="button" href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "common.download"}}</a>
-      <a class="button" href="{{.LogURL}}"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "logs.follow"}}</a>
-      <a class="button button--primary" href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "common.edit"}}</a>
+      {{if .LogURL}}<a class="button" href="{{.LogURL}}"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "logs.follow"}}</a>{{end}}
+      {{if .EditURL}}<a class="button button--primary" href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "common.edit"}}</a>{{end}}
     </div>
   </header>
   {{if .Markdown}}<article class="markdown-preview" data-markdown-preview data-markdown-base="{{.MarkdownBaseURL}}" hidden></article>

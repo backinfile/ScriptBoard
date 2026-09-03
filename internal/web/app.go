@@ -4096,21 +4096,34 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 		writeHostFileError(response, "无法预览文件", err)
 		return
 	}
-	chunk, err := a.readTextPreviewChunk(request.Context(), relative, 0, "")
+	forceTXT := request.URL.Query().Get("format") == "txt"
+	chunk, err := a.readTextPreviewChunk(request.Context(), relative, 0, "", forceTXT)
 	if err != nil {
 		writeHostFileError(response, "无法预览文件", err)
 		return
 	}
 	parent, _ := hostPathParent(relative)
-	markdown := strings.EqualFold(hostfiles.Extension(relative), ".md")
-	highlightLanguage := highlightLanguageForPath(relative)
+	markdown := !forceTXT && strings.EqualFold(hostfiles.Extension(relative), ".md")
+	highlightLanguage := ""
+	if !forceTXT {
+		highlightLanguage = highlightLanguageForPath(relative)
+	}
 	title := webText(resolveWebLocale(request), "editor.preview_title")
-	if markdown {
+	if forceTXT {
+		title = webText(resolveWebLocale(request), "editor.txt_preview_title")
+	} else if markdown {
 		title = webText(resolveWebLocale(request), "editor.markdown_preview_title")
 	} else if highlightLanguage != "" {
 		title = webText(resolveWebLocale(request), "editor.script_preview_title")
 	}
 	markdownBaseURL := parent
+	editURL, logURL := routeFileURL("/resources/files/edit", relative), "/resources/files/log?"+url.Values{"path": {relative}}.Encode()
+	contentURL := routeFileURL("/resources/files/view/content", relative)
+	if forceTXT {
+		// Forced TXT preview is deliberately read-only and keeps the mode while paging.
+		editURL, logURL = "", ""
+		contentURL += "&format=txt"
+	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = textPreviewTemplate.Execute(response, struct {
 		Path, Content, BackURL, EditURL, DownloadURL string
@@ -4120,9 +4133,8 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 		Locale                                       webLocale
 	}{
 		Path: relative, Content: chunk.Content, BackURL: filesURL(parent),
-		EditURL: routeFileURL("/resources/files/edit", relative), DownloadURL: routeFileURL("/resources/files/download", relative),
-		LogURL:     "/resources/files/log?" + url.Values{"path": {relative}}.Encode(),
-		ContentURL: routeFileURL("/resources/files/view/content", relative), NextOffset: chunk.NextOffset, Version: chunk.Version, HasMore: chunk.HasMore,
+		EditURL: editURL, DownloadURL: routeFileURL("/resources/files/download", relative),
+		LogURL: logURL, ContentURL: contentURL, NextOffset: chunk.NextOffset, Version: chunk.Version, HasMore: chunk.HasMore,
 		Title: title, Markdown: markdown, MarkdownBaseURL: markdownBaseURL, HighlightLanguage: highlightLanguage, Locale: resolveWebLocale(request),
 	})
 }
@@ -4779,12 +4791,12 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	}
 	type fileView struct {
 		hostfiles.Entry
-		Path, BrowseURL, PinURL, DownloadURL, EditURL, PreviewURL, ViewURL, RunURL, QuickRunURL, RenameURL, MoveURL, PermissionsURL string
-		LogURL                                                                                                                      string
-		Protection, IconClass                                                                                                       string
-		Runnable, IsHidden, CanMutate, Focused                                                                                      bool
-		NameParts                                                                                                                   []fileNamePart
-		CategoryLabel                                                                                                               string
+		Path, BrowseURL, PinURL, DownloadURL, EditURL, PreviewURL, ViewURL, TXTPreviewURL, RunURL, QuickRunURL, RenameURL, MoveURL, PermissionsURL string
+		LogURL                                                                                                                                     string
+		Protection, IconClass                                                                                                                      string
+		Runnable, IsHidden, CanMutate, Focused                                                                                                     bool
+		NameParts                                                                                                                                  []fileNamePart
+		CategoryLabel                                                                                                                              string
 	}
 	pageEntries := listing[pagination.Start:pagination.End]
 	views := make([]fileView, 0, pagination.End-pagination.Start)
@@ -4841,6 +4853,9 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 					view.RunURL = routeFileURL("/resources/files/run", path)
 					view.QuickRunURL = routeFileURL("/resources/files/quick-run", path) + "&return_to=" + url.QueryEscape(request.URL.RequestURI())
 				}
+			}
+			if view.ViewURL == "" {
+				view.TXTPreviewURL = routeFileURL("/resources/files/view", path) + "&format=txt"
 			}
 		}
 		views = append(views, view)

@@ -681,7 +681,8 @@ func TestFileWorkspaceOffersPreviewForUnknownTextButNotUnknownBinary(t *testing.
 	if err := os.WriteFile(textPath, []byte("unknown extension, readable content\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(binaryPath, []byte("%PDF-1.7\nvalid ASCII but binary"), 0o600); err != nil {
+	binaryContent := append([]byte("%PDF-1.7\n\x00\xffvalid ASCII but binary"), bytes.Repeat([]byte{0xff}, (16<<10)+100)...)
+	if err := os.WriteFile(binaryPath, binaryContent, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(misleadingTextPath, []byte("%PDF-1.7\nvalid ASCII but binary"), 0o600); err != nil {
@@ -713,6 +714,10 @@ func TestFileWorkspaceOffersPreviewForUnknownTextButNotUnknownBinary(t *testing.
 	}
 	if strings.Contains(html, `href="`+hostFileHref("/resources/files/edit", textPath)+`"`) {
 		t.Fatalf("content-detected text unexpectedly has an edit link: %s", html)
+	}
+	forcedBinaryPreview := hostFileHref("/resources/files/view", binaryPath) + "&amp;format=txt"
+	if !strings.Contains(html, `href="`+forcedBinaryPreview+`"`) || !strings.Contains(html, ">Preview as TXT</a>") {
+		t.Fatalf("unknown binary is missing the explicit TXT preview action %q: %s", forcedBinaryPreview, html)
 	}
 	for _, expected := range []string{
 		`>notes.payload</a><small class="file-meta"><span class="file-type-badge">Previewable text</span>`,
@@ -751,6 +756,28 @@ func TestFileWorkspaceOffersPreviewForUnknownTextButNotUnknownBinary(t *testing.
 	}
 	if response.StatusCode != http.StatusOK || !bytes.Contains(preview, []byte("unknown extension, readable content")) {
 		t.Fatalf("unknown text preview status=%d body=%s", response.StatusCode, preview)
+	}
+
+	response, err = client.Get(hostFileRequestURL(serverURL, "/resources/files/view", binaryPath) + "&format=txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forcedPreview, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !bytes.Contains(forcedPreview, []byte("TXT preview")) || !bytes.Contains(forcedPreview, []byte("%PDF-1.7")) {
+		t.Fatalf("forced TXT preview status=%d body=%s", response.StatusCode, forcedPreview)
+	}
+	if bytes.Contains(forcedPreview, []byte(`href="`+hostFileHref("/resources/files/edit", binaryPath)+`"`)) {
+		t.Fatalf("forced TXT preview unexpectedly offers binary editing: %s", forcedPreview)
+	}
+	if !bytes.Contains(forcedPreview, []byte("data-text-preview-url=\""+hostFileHref("/resources/files/view/content", binaryPath)+"&amp;format=txt\"")) {
+		t.Fatalf("forced TXT preview does not preserve the format for subsequent chunks: %s", forcedPreview)
+	}
+	if !bytes.Contains(forcedPreview, []byte(`data-text-preview-next="16384"`)) {
+		t.Fatalf("forced TXT preview did not advance across invalid UTF-8 bytes: %s", forcedPreview)
 	}
 }
 

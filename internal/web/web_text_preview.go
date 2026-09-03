@@ -27,7 +27,7 @@ type textPreviewChunk struct {
 	HasMore    bool   `json:"hasMore"`
 }
 
-func (a *App) readTextPreviewChunk(ctx context.Context, path string, offset int64, expectedVersion string) (textPreviewChunk, error) {
+func (a *App) readTextPreviewChunk(ctx context.Context, path string, offset int64, expectedVersion string, forceTXT bool) (textPreviewChunk, error) {
 	file, info, err := a.hostOpenRegular(ctx, path)
 	if err != nil {
 		return textPreviewChunk{}, err
@@ -57,21 +57,35 @@ func (a *App) readTextPreviewChunk(ctx context.Context, path string, offset int6
 	length := min(len(content), textPreviewChunkBytes)
 	if int64(length) == remaining {
 		length = len(content)
-	} else {
+	} else if !forceTXT {
 		for length > 0 && !utf8.Valid(content[:length]) {
 			length--
 		}
 	}
 	content = content[:length]
-	if (offset == 0 && !hostfiles.IsLikelyTextContent(content)) || (offset > 0 && !safeTextPreviewChunk(content)) {
+	rawLength := len(content)
+	if forceTXT {
+		// Explicit TXT preview keeps arbitrary regular files viewable without relaxing normal text detection.
+		content = sanitizeForcedTXTPreview(content)
+	} else if (offset == 0 && !hostfiles.IsLikelyTextContent(content)) || (offset > 0 && !safeTextPreviewChunk(content)) {
 		return textPreviewChunk{}, errors.New("file is not safe UTF-8 text")
 	}
-	next := offset + int64(len(content))
+	next := offset + int64(rawLength)
 	chunk := textPreviewChunk{Content: string(content), Version: version, HasMore: next < info.Size()}
 	if chunk.HasMore {
 		chunk.NextOffset = strconv.FormatInt(next, 10)
 	}
 	return chunk, nil
+}
+
+func sanitizeForcedTXTPreview(content []byte) []byte {
+	text := strings.ToValidUTF8(string(content), "\uFFFD")
+	return []byte(strings.Map(func(value rune) rune {
+		if unicode.IsControl(value) && value != '\t' && value != '\n' && value != '\r' && value != '\f' {
+			return '\uFFFD'
+		}
+		return value
+	}, text))
 }
 
 func safeTextPreviewChunk(content []byte) bool {
@@ -99,7 +113,7 @@ func (a *App) textPreviewContent(response http.ResponseWriter, request *http.Req
 		http.Error(response, "invalid text preview cursor", http.StatusBadRequest)
 		return
 	}
-	chunk, err := a.readTextPreviewChunk(request.Context(), relative, offset, strings.TrimSpace(request.URL.Query().Get("version")))
+	chunk, err := a.readTextPreviewChunk(request.Context(), relative, offset, strings.TrimSpace(request.URL.Query().Get("version")), request.URL.Query().Get("format") == "txt")
 	if err != nil {
 		status := http.StatusBadRequest
 		if strings.Contains(err.Error(), "source changed") {
