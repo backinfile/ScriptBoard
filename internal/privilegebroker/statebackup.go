@@ -111,13 +111,14 @@ func (server *Server) stateBackupOperation(request wireRequest) wireResponse {
 	defer clearTransientBytes(backupRequest.Passphrase)
 	if request.Operation == operationStateBackupList {
 		if _, err := server.authorizeStateBackupRead(request); err != nil {
+			server.logOperationFailure(request, "authorization", "authorization_denied", err)
 			return wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "state backup authorization denied"}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		stages, err := server.stateBackups.List(ctx)
 		cancel()
 		if err != nil {
-			return wireResponse{Status: statusError, ErrorCode: "state_backup_failed", Message: "state backup stage list failed"}
+			return server.operationFailureResponse(request, "state_backup", "state_backup_failed", "state backup stage list failed", err)
 		}
 		for index := range stages {
 			stages[index].Manifest = publicBackupManifest(stages[index].Manifest)
@@ -156,11 +157,14 @@ func (server *Server) stateBackupOperation(request wireRequest) wireResponse {
 	if err != nil {
 		result = "failed"
 	}
-	if auditErr := server.recordCredentialMutation(*mutation, result); auditErr != nil && err == nil {
-		return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "state backup operation completed but result audit failed"}
+	if auditErr := server.recordCredentialMutation(*mutation, result); auditErr != nil {
+		if err == nil {
+			return server.operationFailureResponse(request, "audit", "audit_failed_after_execution", "state backup operation completed but result audit failed", auditErr)
+		}
+		server.logOperationFailure(request, "audit", "audit_failed_after_execution", auditErr)
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "state_backup_failed", Message: "state backup operation failed"}
+		return server.operationFailureResponse(request, "state_backup", "state_backup_failed", "state backup operation failed", err)
 	}
 	return response
 }

@@ -127,7 +127,7 @@ func (server *Server) observabilityOperation(request wireRequest) wireResponse {
 		}
 		report, err := server.serviceLogs.List(ctx, request.ServiceLogs.Query)
 		if err != nil {
-			return wireResponse{Status: statusError, ErrorCode: "service_logs_failed", Message: "service log collection failed"}
+			return server.operationFailureResponse(request, "service_logs", "service_logs_failed", "service log collection failed", err)
 		}
 		return wireResponse{Status: statusOK, ServiceLogs: &serviceLogsWireResponse{Report: &report}}
 	}
@@ -154,7 +154,7 @@ func (server *Server) observabilityOperation(request wireRequest) wireResponse {
 		response.Bans = &page
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "host_security_failed", Message: "host security collection failed"}
+		return server.operationFailureResponse(request, "host_security", "host_security_failed", "host security collection failed", err)
 	}
 	return wireResponse{Status: statusOK, HostSecurity: response}
 }

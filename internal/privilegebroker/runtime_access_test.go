@@ -1,10 +1,12 @@
 package privilegebroker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -318,14 +320,18 @@ func (factory fixtureKubernetesFactory) OpenCandidate(ctx context.Context, conne
 }
 
 type fixtureKubernetesClient struct {
-	snapshot clusterstatus.Snapshot
-	detail   clusterstatus.Detail
-	logs     []clusterstatus.LogLine
-	operated clusterstatus.Operation
+	snapshot        clusterstatus.Snapshot
+	detail          clusterstatus.Detail
+	logs            []clusterstatus.LogLine
+	operated        clusterstatus.Operation
+	capabilitiesErr error
 }
 
 func (client *fixtureKubernetesClient) Close() error { return nil }
 func (client *fixtureKubernetesClient) Capabilities(context.Context) (clusterstatus.Capabilities, error) {
+	if client.capabilitiesErr != nil {
+		return clusterstatus.Capabilities{}, client.capabilitiesErr
+	}
 	return clusterstatus.Capabilities{Workloads: true, Nodes: true, Redeploy: true, Scale: true, RunCron: true}, nil
 }
 func (client *fixtureKubernetesClient) Fingerprint() string { return "cluster-fingerprint" }
@@ -360,6 +366,32 @@ func TestKubernetesFactoryReadsClusterSnapshotThroughBroker(t *testing.T) {
 	}
 	if actual.ServerVersion != "v1.35.0" || len(actual.Workloads) != 1 || actual.Workloads[0].Name != "api" {
 		t.Fatalf("broker Kubernetes snapshot = %#v", actual)
+	}
+}
+
+func TestKubernetesOperationFailureReturnsCauseAndWritesDiagnosticLog(t *testing.T) {
+	connection := clusterstatus.Connection{ID: "k8s-local", Name: "local", KubeconfigPath: filepath.Join(t.TempDir(), "kubeconfig.yaml"), Context: "default", Mode: clusterstatus.ModeObserve}
+	server, brokerClient := brokerFixture(t, &fixtureAuthorizer{}, &fixtureExecutor{})
+	server.kubernetes = fixtureKubernetesFactory{client: &fixtureKubernetesClient{capabilitiesErr: errors.New("Kubernetes POST selfsubjectaccessreviews returned 403 Forbidden: token=secret-value")}, connection: connection}
+	var diagnostics bytes.Buffer
+	server.errorLogger = log.New(&diagnostics, "", 0)
+	defer server.Close()
+
+	_, err := NewKubernetesFactory(brokerClient).Open(context.Background(), connection)
+	if err == nil || !strings.Contains(err.Error(), "403 Forbidden") {
+		t.Fatalf("Kubernetes operation error = %v", err)
+	}
+	if strings.Contains(err.Error(), "secret-value") || !strings.Contains(err.Error(), "token=[REDACTED]") {
+		t.Fatalf("Kubernetes operation response was not redacted: %v", err)
+	}
+	logged := diagnostics.String()
+	for _, expected := range []string{`operation="kubernetes_open"`, `stage="operation"`, `connection_id="k8s-local"`, `connection_name="local"`, `context="default"`, `candidate=false`, "403 Forbidden", "token=[REDACTED]"} {
+		if !strings.Contains(logged, expected) {
+			t.Fatalf("Kubernetes diagnostic log missing %q: %s", expected, logged)
+		}
+	}
+	if strings.Contains(logged, "secret-value") || strings.Contains(logged, connection.KubeconfigPath) {
+		t.Fatalf("Kubernetes diagnostic log exposed a secret or kubeconfig path: %s", logged)
 	}
 }
 

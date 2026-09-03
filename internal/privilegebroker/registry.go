@@ -158,25 +158,25 @@ func (server *Server) registryOperation(request wireRequest) wireResponse {
 		if response.Status != "" {
 			return response
 		}
-		result := server.executeRegistryOperation(request.Operation, *payload)
+		result := server.executeRegistryOperation(request, *payload)
 		if result.Status == statusOK && mutation != nil {
 			if err := server.recordCredentialMutation(*mutation, "succeeded"); err != nil {
-				return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "Registry operation completed but result audit failed"}
+				return server.operationFailureResponse(request, "audit", "audit_failed_after_execution", "Registry operation completed but result audit failed", err)
 			}
 		} else if mutation != nil {
-			_ = server.recordCredentialMutation(*mutation, "failed")
+			server.recordFailedCredentialMutation(request, *mutation)
 		}
 		return result
 	}
-	return server.executeRegistryOperation(request.Operation, *payload)
+	return server.executeRegistryOperation(request, *payload)
 }
 
-func (server *Server) executeRegistryOperation(operation string, payload registryWireRequest) wireResponse {
+func (server *Server) executeRegistryOperation(request wireRequest, payload registryWireRequest) wireResponse {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	response := wireResponse{Status: statusOK, Registry: &registryWireResponse{}}
 	var err error
-	switch operation {
+	switch request.Operation {
 	case operationRegistryPrepare:
 		err = server.registry.Prepare(ctx, payload.OperationID, payload.CardID, payload.Config, payload.Password, payload.Preserve)
 	case operationRegistryPrepareDelete:
@@ -199,7 +199,7 @@ func (server *Server) executeRegistryOperation(operation string, payload registr
 		response.Registry.Changed, err = server.registry.RegisterInsecure(ctx, payload.Endpoint)
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "registry_failed", Message: "Registry operation failed"}
+		return server.operationFailureResponse(request, "registry", "registry_failed", "Registry operation failed", err)
 	}
 	return response
 }

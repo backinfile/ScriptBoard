@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"regexp"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/redismanager"
 	"scriptboard/internal/registrymonitor"
+	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/servicelogs"
 	"scriptboard/internal/statebackup"
 )
@@ -426,6 +428,7 @@ type ServerOptions struct {
 	Kubeconfigs    KubeconfigService
 	HostSecurity   hostsecurity.Service
 	ServiceLogs    servicelogs.Reader
+	ErrorLogger    *log.Logger
 	Now            func() time.Time
 }
 
@@ -449,6 +452,7 @@ type Server struct {
 	kubeconfigs    KubeconfigService
 	hostSecurity   hostsecurity.Service
 	serviceLogs    servicelogs.Reader
+	errorLogger    *log.Logger
 	now            func() time.Time
 
 	mu                sync.Mutex
@@ -543,12 +547,36 @@ func NewServer(options ServerOptions) (*Server, error) {
 	if now == nil {
 		now = time.Now
 	}
+	errorLogger := options.ErrorLogger
+	if errorLogger == nil {
+		errorLogger = log.New(io.Discard, "", 0)
+	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, mysql: options.MySQL, redis: options.Redis, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, kubeconfigs: options.Kubeconfigs, hostSecurity: options.HostSecurity, serviceLogs: options.ServiceLogs, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, mysql: options.MySQL, redis: options.Redis, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, kubeconfigs: options.Kubeconfigs, hostSecurity: options.HostSecurity, serviceLogs: options.ServiceLogs, errorLogger: errorLogger, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
+}
+
+func redactedErrorCause(err error) string {
+	cause := secretredaction.String(strings.TrimSpace(err.Error()))
+	if cause == "" {
+		cause = "unknown error"
+	}
+	return cause
+}
+
+func (server *Server) logOperationFailure(request wireRequest, component, code string, err error) string {
+	cause := redactedErrorCause(err)
+	server.errorLogger.Printf("privileged Broker operation failed request_id=%q operation=%q component=%q error_code=%q error=%q",
+		request.RequestID, request.Operation, component, code, cause)
+	return cause
+}
+
+func (server *Server) operationFailureResponse(request wireRequest, component, code, summary string, err error) wireResponse {
+	cause := server.logOperationFailure(request, component, code, err)
+	return wireResponse{Status: statusError, ErrorCode: code, Message: summary + ": " + cause}
 }
 
 func (server *Server) Start() { go server.serve() }
@@ -572,15 +600,18 @@ func (server *Server) serve() {
 func (server *Server) handle(connection net.Conn) {
 	_ = connection.SetDeadline(server.now().Add(defaultCallDeadline))
 	if err := server.verifyPeer(connection); err != nil {
+		server.errorLogger.Printf("privileged Broker request rejected component=%q error_code=%q error=%q", "transport", "peer_forbidden", redactedErrorCause(err))
 		writeWireResponse(connection, wireResponse{Status: statusError, ErrorCode: "peer_forbidden", Message: "peer identity is not authorized"})
 		return
 	}
 	request, err := readWireRequest(connection)
 	if err != nil {
+		server.errorLogger.Printf("privileged Broker request rejected component=%q error_code=%q error=%q", "protocol", "protocol_invalid", redactedErrorCause(err))
 		writeWireResponse(connection, wireResponse{Status: statusError, ErrorCode: "protocol_invalid", Message: "request is malformed"})
 		return
 	}
 	if err := validateWireRequest(request); err != nil {
+		server.logOperationFailure(request, "protocol", "request_invalid", err)
 		writeWireResponse(connection, wireResponse{Status: statusError, ErrorCode: "request_invalid", Message: err.Error()})
 		return
 	}
@@ -591,7 +622,7 @@ func (server *Server) handle(connection net.Conn) {
 	case operationExecute:
 		response = server.execute(request)
 	case operationCheckpointVerify, operationCheckpointWrite:
-		response = server.checkpointOperation(request.Operation)
+		response = server.checkpointOperation(request)
 	case operationMFAStatus, operationMFABegin, operationMFAConfirm, operationMFAVerify, operationMFAReset:
 		response = server.mfaOperation(request)
 	case operationPasskeyUser, operationPasskeyList, operationPasskeyAdd, operationPasskeyUpdate, operationPasskeyDelete, operationPasskeyReset:
@@ -673,15 +704,15 @@ func (server *Server) remoteWebsiteOperation(request wireRequest) wireResponse {
 	if err == nil {
 		if mutation != nil {
 			if auditErr := server.recordCredentialMutation(*mutation, "succeeded"); auditErr != nil {
-				return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "remote website operation completed but result audit failed"}
+				return server.operationFailureResponse(request, "audit", "audit_failed_after_execution", "remote website operation completed but result audit failed", auditErr)
 			}
 		}
 		return response
 	}
 	if mutation != nil {
-		_ = server.recordCredentialMutation(*mutation, "failed")
+		server.recordFailedCredentialMutation(request, *mutation)
 	}
-	return wireResponse{Status: statusError, ErrorCode: "remote_website_failed", Message: "remote website operation failed"}
+	return server.operationFailureResponse(request, "remote_website", "remote_website_failed", "remote website operation failed", err)
 }
 
 func (server *Server) authorizeRemoteWebsiteOperation(request wireRequest) (*credentialMutation, wireResponse) {
@@ -698,6 +729,7 @@ func (server *Server) authorizeRemoteWebsiteOperation(request wireRequest) (*cre
 			_, err = server.authorizer.Authorize(context.Background(), authorization)
 		}
 		if err != nil {
+			server.logOperationFailure(request, "authorization", "authorization_denied", err)
 			return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "remote website session authorization denied"}
 		}
 		return nil, wireResponse{}
@@ -746,13 +778,13 @@ func (server *Server) passkeyOperation(request wireRequest) wireResponse {
 	if err == nil {
 		if mutation != nil {
 			if auditErr := server.recordCredentialMutation(*mutation, "succeeded"); auditErr != nil {
-				return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "passkey operation completed but result audit failed"}
+				return server.operationFailureResponse(request, "audit", "audit_failed_after_execution", "passkey operation completed but result audit failed", auditErr)
 			}
 		}
 		return response
 	}
 	if mutation != nil {
-		_ = server.recordCredentialMutation(*mutation, "failed")
+		server.recordFailedCredentialMutation(request, *mutation)
 	}
 	code := "passkey_failed"
 	switch {
@@ -767,7 +799,7 @@ func (server *Server) passkeyOperation(request wireRequest) wireResponse {
 	case errors.Is(err, passkey.ErrCredentialTooLarge):
 		code = "passkey_too_large"
 	}
-	return wireResponse{Status: statusError, ErrorCode: code, Message: "passkey operation failed"}
+	return server.operationFailureResponse(request, "passkey", code, "passkey operation failed", err)
 }
 
 func (server *Server) mfaOperation(request wireRequest) wireResponse {
@@ -805,13 +837,13 @@ func (server *Server) mfaOperation(request wireRequest) wireResponse {
 	if err == nil {
 		if mutation != nil {
 			if auditErr := server.recordCredentialMutation(*mutation, "succeeded"); auditErr != nil {
-				return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "MFA operation completed but result audit failed"}
+				return server.operationFailureResponse(request, "audit", "audit_failed_after_execution", "MFA operation completed but result audit failed", auditErr)
 			}
 		}
 		return response
 	}
 	if mutation != nil {
-		_ = server.recordCredentialMutation(*mutation, "failed")
+		server.recordFailedCredentialMutation(request, *mutation)
 	}
 	code := "mfa_failed"
 	switch {
@@ -822,7 +854,7 @@ func (server *Server) mfaOperation(request wireRequest) wireResponse {
 	case errors.Is(err, mfa.ErrInvalidCode):
 		code = "mfa_invalid_code"
 	}
-	return wireResponse{Status: statusError, ErrorCode: code, Message: "MFA operation failed"}
+	return server.operationFailureResponse(request, "mfa", code, "MFA operation failed", err)
 }
 
 func (server *Server) allowMFAVerify(userID string) bool {
@@ -931,6 +963,7 @@ func (server *Server) authorizeDomainOperation(request wireRequest, action Actio
 	}
 	actor, err := server.authorizeActor(context.Background(), authorization, mode)
 	if err != nil {
+		server.logOperationFailure(request, "authorization", "authorization_denied", err)
 		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation authorization denied"}
 	}
 	if mode == domainAuthorizationRecentActor && actor.UserID != resource {
@@ -938,7 +971,7 @@ func (server *Server) authorizeDomainOperation(request wireRequest, action Actio
 	}
 	mutation := credentialMutation{action: action, resource: resource, revision: revision, requestID: request.RequestID, parametersSHA256: digest, actor: actor}
 	if err := server.recordCredentialMutation(mutation, "attempted"); err != nil {
-		return nil, wireResponse{Status: statusError, ErrorCode: "audit_failed", Message: "credential operation was not executed because intent audit failed"}
+		return nil, server.operationFailureResponse(request, "audit", "audit_failed", "credential operation was not executed because intent audit failed", err)
 	}
 	return &mutation, wireResponse{}
 }
@@ -982,7 +1015,13 @@ func (server *Server) recordCredentialMutation(mutation credentialMutation, resu
 	})
 }
 
-func (server *Server) checkpointOperation(operation string) wireResponse {
+func (server *Server) recordFailedCredentialMutation(request wireRequest, mutation credentialMutation) {
+	if err := server.recordCredentialMutation(mutation, "failed"); err != nil {
+		server.logOperationFailure(request, "audit", "audit_failed_after_execution", err)
+	}
+}
+
+func (server *Server) checkpointOperation(request wireRequest) wireResponse {
 	if server.checkpoint == nil {
 		return wireResponse{Status: statusError, ErrorCode: "checkpoint_unavailable", Message: "audit checkpoint service is unavailable"}
 	}
@@ -992,13 +1031,13 @@ func (server *Server) checkpointOperation(operation string) wireResponse {
 		eventID int64
 		err     error
 	)
-	if operation == operationCheckpointVerify {
+	if request.Operation == operationCheckpointVerify {
 		eventID, err = server.checkpoint.Verify(ctx)
 	} else {
 		eventID, err = server.checkpoint.Write(ctx)
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "checkpoint_failed", Message: "audit checkpoint operation failed"}
+		return server.operationFailureResponse(request, "checkpoint", "checkpoint_failed", "audit checkpoint operation failed", err)
 	}
 	return wireResponse{Status: statusOK, EventID: eventID}
 }
@@ -1013,11 +1052,12 @@ func (server *Server) authorize(request wireRequest) wireResponse {
 		Resource: request.Resource, Revision: request.Revision, ParametersSHA256: request.ParametersSHA256,
 	}, mode)
 	if err != nil {
+		server.logOperationFailure(request, "authorization", "authorization_denied", err)
 		return wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "authorization denied"}
 	}
 	capabilityBytes := make([]byte, 32)
 	if _, err := rand.Read(capabilityBytes); err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "capability_failed", Message: "capability could not be created"}
+		return server.operationFailureResponse(request, "capability", "capability_failed", "capability could not be created", err)
 	}
 	capability := base64.RawURLEncoding.EncodeToString(capabilityBytes)
 	now := server.now().UTC()
@@ -1061,7 +1101,7 @@ func (server *Server) execute(request wireRequest) wireResponse {
 		})
 		auditCancel()
 		if err != nil {
-			return wireResponse{Status: statusError, ErrorCode: "audit_failed", Message: "privileged action was not executed because intent audit failed"}
+			return server.operationFailureResponse(request, "audit", "audit_failed", "privileged action was not executed because intent audit failed", err)
 		}
 	}
 	executionContext, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -1087,12 +1127,15 @@ func (server *Server) execute(request wireRequest) wireResponse {
 			Resource: binding.Resource, Revision: binding.Revision, ParametersSHA256: binding.ParametersSHA256, Result: result,
 		})
 		auditCancel()
-		if auditErr != nil && err == nil {
-			return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "action completed but result audit failed"}
+		if auditErr != nil {
+			if err == nil {
+				return server.operationFailureResponse(request, "audit", "audit_failed_after_execution", "action completed but result audit failed", auditErr)
+			}
+			server.logOperationFailure(request, "audit", "audit_failed_after_execution", auditErr)
 		}
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "action_failed", Message: "privileged action failed"}
+		return server.operationFailureResponse(request, "privileged_action", "action_failed", "privileged action failed", err)
 	}
 	return wireResponse{Status: statusOK}
 }

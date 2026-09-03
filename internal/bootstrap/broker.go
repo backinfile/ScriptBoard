@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -231,6 +232,7 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		Applications: applications, Kubernetes: brokerKubernetesService{db: database, factory: clusterstatus.HTTPFactory{}},
 		Kubeconfigs:  newBrokerKubeconfigManager(database, absolute, *allowedIdentity),
 		HostSecurity: directHostSecurity, ServiceLogs: directServiceLogs,
+		ErrorLogger:  log.New(os.Stderr, "", log.Ldate|log.Ltime|log.LUTC|log.Lmsgprefix),
 		StateBackups: &brokerStateBackupService{stateRoot: absolute, database: database, checkpoint: checkpoint, audit: audit},
 	})
 	if err != nil {

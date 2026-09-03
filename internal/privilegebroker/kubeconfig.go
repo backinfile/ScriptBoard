@@ -118,6 +118,9 @@ func (server *Server) kubeconfigOperation(request wireRequest) wireResponse {
 	actor, err := server.authorizeActor(authorizeContext, authorization, mode)
 	cancelAuthorize()
 	if err != nil || actor.Role != "administrator" && actor.Role != "maintainer" {
+		if err != nil {
+			server.logOperationFailure(request, "authorization", "authorization_denied", err)
+		}
 		return wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "kubeconfig operation authorization denied"}
 	}
 
@@ -164,12 +167,15 @@ func (server *Server) kubeconfigOperation(request wireRequest) wireResponse {
 		}
 		auditErr := server.auditor.Record(context.Background(), AuditRecord{OccurredAt: server.now().UTC(), RequestID: request.RequestID,
 			Actor: actor, Action: action, Resource: filepath.Clean(payload.Path), Revision: "kubeconfig-management-v1", ParametersSHA256: parametersDigest(body), Result: result})
-		if auditErr != nil && err == nil {
-			return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "kubeconfig operation completed but result audit failed"}
+		if auditErr != nil {
+			if err == nil {
+				return server.operationFailureResponse(request, "audit", "audit_failed_after_execution", "kubeconfig operation completed but result audit failed", auditErr)
+			}
+			server.logOperationFailure(request, "audit", "audit_failed_after_execution", auditErr)
 		}
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "kubeconfig_failed", Message: "kubeconfig operation failed"}
+		return server.operationFailureResponse(request, "kubeconfig", "kubeconfig_failed", "kubeconfig operation failed", err)
 	}
 	return wireResponse{Status: statusOK, Kubeconfig: response}
 }

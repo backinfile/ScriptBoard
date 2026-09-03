@@ -184,7 +184,7 @@ func (server *Server) resolveKubernetesConnection(ctx context.Context, request w
 	if requested.ID != "" {
 		configured, found, err := server.kubernetes.ResolveConnection(ctx, requested.ID)
 		if err != nil {
-			return clusterstatus.Connection{}, false, wireResponse{Status: statusError, ErrorCode: "kubernetes_connection_unavailable", Message: "Kubernetes connection could not be resolved"}
+			return clusterstatus.Connection{}, false, server.operationFailureResponse(request, "kubernetes", "kubernetes_connection_unavailable", "Kubernetes connection could not be resolved", err)
 		}
 		if found && sameKubernetesConnection(configured, requested) {
 			return configured, false, wireResponse{}
@@ -201,6 +201,9 @@ func (server *Server) resolveKubernetesConnection(ctx context.Context, request w
 	actor, err := sessions.AuthorizeSession(ctx, AuthorizationRequest{SessionToken: request.SessionToken, RequestID: request.RequestID,
 		Action: Action("kubernetes_connect"), Resource: requested.ID, Revision: "kubernetes-connection-v1", ParametersSHA256: parametersDigest(body)})
 	if err != nil || actor.Role != "administrator" && actor.Role != "maintainer" {
+		if err != nil {
+			server.logOperationFailure(request, "authorization", "operation_forbidden", err)
+		}
 		return clusterstatus.Connection{}, false, wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "Kubernetes connection is not authorized"}
 	}
 	return requested, true, wireResponse{}
@@ -305,6 +308,7 @@ func (server *Server) kubernetesOperation(ctx context.Context, request wireReque
 		client, err = server.kubernetes.Open(ctx, connection)
 	}
 	if err != nil {
+		server.logKubernetesFailure(request, connection, candidate, "open", err)
 		return wireResponse{Status: statusError, ErrorCode: "kubernetes_open_failed", Message: kubernetesOpenFailureMessage(err)}
 	}
 	defer client.Close()
@@ -327,9 +331,19 @@ func (server *Server) kubernetesOperation(ctx context.Context, request wireReque
 		response.KubernetesLogs, err = client.Logs(ctx, request.Runtime.WorkloadKey, request.Runtime.LogLimit)
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "kubernetes_operation_failed", Message: "Kubernetes operation failed"}
+		// Preserve the redacted API cause so an unchanged connection that fails
+		// capability revalidation can be diagnosed from both the UI and Broker log.
+		cause := server.logKubernetesFailure(request, connection, candidate, "operation", err)
+		return wireResponse{Status: statusError, ErrorCode: "kubernetes_operation_failed", Message: "Kubernetes operation failed: " + cause}
 	}
 	return wireResponse{Status: statusOK, Runtime: response}
+}
+
+func (server *Server) logKubernetesFailure(request wireRequest, connection clusterstatus.Connection, candidate bool, stage string, err error) string {
+	cause := redactedErrorCause(err)
+	server.errorLogger.Printf("privileged Broker Kubernetes request failed request_id=%q operation=%q stage=%q connection_id=%q connection_name=%q context=%q candidate=%t error=%q",
+		request.RequestID, request.Operation, stage, connection.ID, connection.Name, connection.Context, candidate, cause)
+	return cause
 }
 
 func kubernetesOpenFailureMessage(err error) string {
@@ -374,7 +388,7 @@ func (server *Server) applicationLogOperation(ctx context.Context, request wireR
 		if errors.Is(err, appstatus.ErrApplicationLogsUnsupported) {
 			return wireResponse{Status: statusError, ErrorCode: "application_log_unsupported", Message: "application log source is unsupported"}
 		}
-		return wireResponse{Status: statusError, ErrorCode: "application_log_unavailable", Message: "application log source is unavailable"}
+		return server.operationFailureResponse(request, "application_log", "application_log_unavailable", "application log source is unavailable", err)
 	}
 	response := &runtimeWireResponse{}
 	switch request.Operation {
@@ -413,7 +427,7 @@ func (server *Server) applicationLogOperation(ctx context.Context, request wireR
 		if errors.Is(err, appstatus.ErrDockerLogContainerNotFound) {
 			return wireResponse{Status: statusError, ErrorCode: "application_log_not_found", Message: "application log source is no longer available"}
 		}
-		return wireResponse{Status: statusError, ErrorCode: "application_log_failed", Message: "application log operation failed"}
+		return server.operationFailureResponse(request, "application_log", "application_log_failed", "application log operation failed", err)
 	}
 	return wireResponse{Status: statusOK, Runtime: response}
 }
