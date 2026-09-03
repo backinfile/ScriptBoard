@@ -62,6 +62,18 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 63 {
+		exists, err := storesqlite.ColumnExists(migration, "redis_instances", "database_index")
+		if err != nil {
+			return fmt.Errorf("inspect Redis database index migration: %w", err)
+		}
+		if exists {
+			// Redis logical databases are selected per read operation; connection metadata now describes only the server endpoint.
+			if _, err := migration.Exec(`ALTER TABLE redis_instances DROP COLUMN database_index`); err != nil {
+				return fmt.Errorf("remove Redis database index from connection metadata: %w", err)
+			}
+		}
+	}
 	if schemaVersion >= 20 && schemaVersion <= 62 {
 		exists, err := storesqlite.ColumnExists(migration, "mysql_backups", "source_name")
 		if err != nil {

@@ -28,6 +28,7 @@ type redisDatabasesPageData struct {
 	KeyValue    *redismanager.KeyValue
 	Pattern     string
 	SelectedKey string
+	Database    int
 	ScanCursor  uint64
 	ActiveTab   string
 	LoadError   string
@@ -95,7 +96,7 @@ type databaseWorkspaceData struct {
 
 type databaseConnectionRow struct {
 	Engine, ID, Name, Username, Host, ConnectionState string
-	Port, Database                                    int
+	Port                                              int
 }
 
 func newDatabaseWorkspaceData(request *http.Request, selectedEngine string, locale webLocale, csrfToken, backupRoot string, tools mysqlmanager.ToolSettings, mysqlInstances []mysqlmanager.Instance, redisInstances []redismanager.Instance) databaseWorkspaceData {
@@ -104,7 +105,7 @@ func newDatabaseWorkspaceData(request *http.Request, selectedEngine string, loca
 		connections = append(connections, databaseConnectionRow{Engine: "mysql", ID: instance.ID, Name: instance.Name, Username: instance.Username, Host: instance.Host, Port: instance.Port, ConnectionState: string(instance.ConnectionState)})
 	}
 	for _, instance := range redisInstances {
-		connections = append(connections, databaseConnectionRow{Engine: "redis", ID: instance.ID, Name: instance.Name, Username: instance.Username, Host: instance.Host, Port: instance.Port, Database: instance.Database, ConnectionState: string(instance.ConnectionState)})
+		connections = append(connections, databaseConnectionRow{Engine: "redis", ID: instance.ID, Name: instance.Name, Username: instance.Username, Host: instance.Host, Port: instance.Port, ConnectionState: string(instance.ConnectionState)})
 	}
 	// A single name-ordered inventory lets related MySQL and Redis connections sit together.
 	sort.SliceStable(connections, func(left, right int) bool {
@@ -149,6 +150,13 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 	current := request.Context().Value(sessionContextKey).(session)
 	// Redis keys are binary-safe identifiers; preserve URL-decoded leading and trailing spaces exactly.
 	data := redisDatabasesPageData{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Instances: instances, ActiveTab: "overview", Pattern: strings.TrimSpace(request.URL.Query().Get("pattern")), SelectedKey: request.URL.Query().Get("key")}
+	if rawDatabase := strings.TrimSpace(request.URL.Query().Get("database")); rawDatabase != "" {
+		data.Database, err = strconv.Atoi(rawDatabase)
+		if err != nil || data.Database < 0 || data.Database > 1<<20 {
+			http.Error(response, "Redis database is invalid", http.StatusBadRequest)
+			return
+		}
+	}
 	data.databaseWorkspaceData = newDatabaseWorkspaceData(request, "redis", data.Locale, data.CSRFToken, a.mysql.BackupRoot(), a.mysql.Tools(), mysqlInstances, instances)
 	if request.URL.Query().Get("tab") == "keys" || request.URL.Query().Get("tab") == "diagnostics" {
 		data.ActiveTab = request.URL.Query().Get("tab")
@@ -182,14 +190,14 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 				}
 			}
 			// Preserve Redis' opaque cursor so large keyspaces remain browsable without an unbounded server-side scan.
-			scan, scanErr := a.redis.Scan(ctx, id, redismanager.ScanRequest{Cursor: data.ScanCursor, Pattern: data.Pattern, Count: 200})
+			scan, scanErr := a.redis.Scan(ctx, id, data.Database, redismanager.ScanRequest{Cursor: data.ScanCursor, Pattern: data.Pattern, Count: 200})
 			if scanErr != nil {
 				data.LoadError = redisLoadError(data.Locale, scanErr)
 			} else {
 				data.Scan = &scan
 				data.KeyGroups = groupRedisKeys(scan.Keys)
 				if data.SelectedKey != "" {
-					value, valueErr := a.redis.ReadKey(ctx, id, data.SelectedKey)
+					value, valueErr := a.redis.ReadKey(ctx, id, data.Database, data.SelectedKey)
 					if valueErr != nil {
 						data.LoadError = redisLoadError(data.Locale, valueErr)
 					} else {
@@ -198,7 +206,7 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 				}
 			}
 		case "overview":
-			overview, overviewErr := a.redis.Overview(ctx, id)
+			overview, overviewErr := a.redis.Overview(ctx, id, data.Database)
 			if overviewErr != nil {
 				data.LoadError = redisLoadError(data.Locale, overviewErr)
 			} else {
@@ -225,12 +233,7 @@ func (a *App) saveRedisInstance(response http.ResponseWriter, request *http.Requ
 		http.Error(response, "invalid Redis port", http.StatusBadRequest)
 		return
 	}
-	database, err := strconv.Atoi(request.FormValue("database"))
-	if err != nil {
-		http.Error(response, "invalid Redis database", http.StatusBadRequest)
-		return
-	}
-	instance, err := a.redis.SaveInstance(request.Context(), redismanager.InstanceInput{ID: request.FormValue("id"), Name: request.FormValue("name"), Environment: redismanager.Environment(request.FormValue("environment")), Host: request.FormValue("host"), Port: port, Username: request.FormValue("username"), Password: request.FormValue("password"), Database: database, TLSMode: redismanager.TLSMode(request.FormValue("tls_mode")), CAPath: request.FormValue("ca_path")})
+	instance, err := a.redis.SaveInstance(request.Context(), redismanager.InstanceInput{ID: request.FormValue("id"), Name: request.FormValue("name"), Environment: redismanager.Environment(request.FormValue("environment")), Host: request.FormValue("host"), Port: port, Username: request.FormValue("username"), Password: request.FormValue("password"), TLSMode: redismanager.TLSMode(request.FormValue("tls_mode")), CAPath: request.FormValue("ca_path")})
 	if err != nil {
 		http.Error(response, secretredaction.String(err.Error()), http.StatusBadRequest)
 		return
