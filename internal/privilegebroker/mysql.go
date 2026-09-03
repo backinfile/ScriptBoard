@@ -338,6 +338,7 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 	payload := request.MySQL
 	actor, action, err := server.authorizeMySQLOperation(request)
 	if err != nil {
+		server.logOperationFailure(request, "authorization", "mysql_forbidden", err)
 		return wireResponse{Status: statusError, ErrorCode: "mysql_forbidden", Message: "MySQL operation is not authorized"}
 	}
 	if request.Operation == operationMySQLDump || request.Operation == operationMySQLImport || request.Operation == operationMySQLArtifactStoreChunk ||
@@ -347,7 +348,10 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 		if request.Operation == operationMySQLDump || request.Operation == operationMySQLArtifactStoreChunk {
 			allowed = pathWithinRootForCreate(root, payload.Path)
 		}
-		if rootErr != nil || !allowed {
+		if rootErr != nil {
+			return server.operationFailureResponse(request, "mysql", "mysql_path_forbidden", "MySQL artifact root could not be resolved", rootErr)
+		}
+		if !allowed {
 			return wireResponse{Status: statusError, ErrorCode: "mysql_path_forbidden", Message: "MySQL artifact path is outside the configured backup root"}
 		}
 	}
@@ -357,11 +361,11 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 		request.Operation == operationMySQLArtifactVerify || request.Operation == operationMySQLArtifactDelete || request.Operation == operationMySQLArtifactCleanup
 	if request.Operation != operationMySQLDelete && request.Operation != operationMySQLTestTools && request.Operation != operationMySQLSetTools && request.Operation != operationMySQLCancel && request.Operation != operationMySQLBackupChunk && !artifactOperation {
 		if err := server.mysql.ValidateInstance(ctx, payload.Instance); err != nil {
-			return wireResponse{Status: statusError, ErrorCode: "mysql_instance_mismatch", Message: "MySQL instance does not match committed metadata"}
+			return server.operationFailureResponse(request, "mysql", "mysql_instance_mismatch", "MySQL instance does not match committed metadata", err)
 		}
 	} else if request.Operation == operationMySQLDelete {
 		if err := server.mysql.ValidateInstanceID(ctx, payload.Instance.ID); err != nil {
-			return wireResponse{Status: statusError, ErrorCode: "mysql_instance_mismatch", Message: "MySQL instance is unavailable"}
+			return server.operationFailureResponse(request, "mysql", "mysql_instance_mismatch", "MySQL instance is unavailable", err)
 		}
 	}
 	response := wireResponse{Status: statusOK, MySQL: &mysqlWireResponse{}}
@@ -441,19 +445,24 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 		body, _ := json.Marshal(payload)
 		auditErr := server.auditor.Record(context.Background(), AuditRecord{OccurredAt: server.now().UTC(), RequestID: request.RequestID,
 			Actor: actor, Action: action, Resource: payload.Instance.ID, Revision: "mysql-instance-v1", ParametersSHA256: parametersDigest(body), Result: result})
-		if auditErr != nil && err == nil {
-			return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "MySQL operation completed but result audit failed"}
+		if auditErr != nil {
+			if err == nil {
+				return server.operationFailureResponse(request, "audit", "audit_failed_after_execution", "MySQL operation completed but result audit failed", auditErr)
+			}
+			server.logOperationFailure(request, "audit", "audit_failed_after_execution", auditErr)
 		}
 	}
 	if err != nil {
-		return mysqlFailureResponse(err)
+		response := mysqlFailureResponse(err)
+		response.Message += ": " + server.logOperationFailure(request, "mysql", response.ErrorCode, err)
+		return response
 	}
 	return response
 }
 
 func mysqlFailureResponse(err error) wireResponse {
 	message := strings.ToLower(err.Error())
-	// Keep server details private while returning enough category information for an administrator to repair grants or host paths.
+	// Preserve stable categories; the caller appends the redacted underlying cause.
 	if strings.Contains(message, "access denied") || strings.Contains(message, "command denied") || strings.Contains(message, "insufficient privilege") ||
 		strings.Contains(message, "error 1044") || strings.Contains(message, "error 1045") || strings.Contains(message, "error 1142") || strings.Contains(message, "error 1227") {
 		return wireResponse{Status: statusError, ErrorCode: "mysql_permission_denied", Message: "MySQL account lacks permission for this database operation"}

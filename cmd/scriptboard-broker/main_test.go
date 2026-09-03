@@ -53,3 +53,14 @@ func TestProtectBrokerSecretDirectoryRequiresDedicatedRealDirectory(t *testing.T
 		t.Fatal("shared secrets directory was accepted for a Broker-only relay token")
 	}
 }
+
+func TestBrokerServiceLogPathRequiresAbsoluteStateRoot(t *testing.T) {
+	stateRoot := t.TempDir()
+	want := filepath.Join(stateRoot, "logs", "broker.log")
+	if got := brokerServiceLogPath([]string{"--config", filepath.Join(stateRoot, "config.yaml"), "--state-root", stateRoot}); got != want {
+		t.Fatalf("broker service log path = %q, want %q", got, want)
+	}
+	if got := brokerServiceLogPath([]string{"--state-root", "relative"}); got != "" {
+		t.Fatalf("relative State Root produced Broker service log path %q", got)
+	}
+}

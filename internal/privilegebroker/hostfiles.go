@@ -684,6 +684,7 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 	}
 	actor, action, err := server.authorizeHostFilesOperation(request)
 	if err != nil {
+		server.logOperationFailure(request, "authorization", "host_files_forbidden", err)
 		return wireResponse{Status: statusError, ErrorCode: "host_files_forbidden", Message: "Host Files operation is not authorized"}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
@@ -803,15 +804,18 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 		}
 		auditErr := server.auditor.Record(context.Background(), AuditRecord{OccurredAt: server.now().UTC(), RequestID: request.RequestID,
 			Actor: actor, Action: action, Resource: hostFilesResource(payload), Revision: "host-files-v1", ParametersSHA256: parametersDigest(body), Result: resultText})
-		if auditErr != nil && err == nil {
-			return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "Host Files operation completed but result audit failed"}
+		if auditErr != nil {
+			if err == nil {
+				return server.operationFailureResponse(request, "audit", "audit_failed_after_execution", "Host Files operation completed but result audit failed", auditErr)
+			}
+			server.logOperationFailure(request, "audit", "audit_failed_after_execution", auditErr)
 		}
 	}
 	if err != nil {
 		if request.Operation == operationHostFilesInfo && os.IsNotExist(err) {
-			return wireResponse{Status: statusError, ErrorCode: "host_files_not_found", Message: "Host Files path does not exist"}
+			return server.operationFailureResponse(request, "host_files", "host_files_not_found", "Host Files path does not exist", err)
 		}
-		return wireResponse{Status: statusError, ErrorCode: "host_files_failed", Message: "Host Files operation failed"}
+		return server.operationFailureResponse(request, "host_files", "host_files_failed", "Host Files operation failed", err)
 	}
 	return response
 }
@@ -858,12 +862,15 @@ func (server *Server) externalHostFilesLogOperation(request wireRequest) wireRes
 		}
 		body, _ := json.Marshal(request.HostFiles)
 		if auditErr := server.auditor.Record(context.Background(), AuditRecord{OccurredAt: server.now().UTC(), RequestID: request.RequestID,
-			Actor: actor, Action: ActionHostFilesWrite, Resource: resource, Revision: "external-log-v1", ParametersSHA256: parametersDigest(body), Result: result}); auditErr != nil && err == nil {
-			return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "External log completed but result audit failed"}
+			Actor: actor, Action: ActionHostFilesWrite, Resource: resource, Revision: "external-log-v1", ParametersSHA256: parametersDigest(body), Result: result}); auditErr != nil {
+			if err == nil {
+				return server.operationFailureResponse(request, "audit", "audit_failed_after_execution", "External log completed but result audit failed", auditErr)
+			}
+			server.logOperationFailure(request, "audit", "audit_failed_after_execution", auditErr)
 		}
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "host_files_failed", Message: "External Host Files log operation failed"}
+		return server.operationFailureResponse(request, "host_files", "host_files_failed", "External Host Files log operation failed", err)
 	}
 	return wireResponse{Status: statusOK}
 }
@@ -876,7 +883,7 @@ func (server *Server) hostFilesScheduleOperation(request wireRequest) wireRespon
 	defer cancel()
 	prepared, err := server.hostFiles.PrepareSchedule(ctx, request.HostFiles.ScheduleID)
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "host_files_failed", Message: "Scheduled Host Files resource is unavailable"}
+		return server.operationFailureResponse(request, "host_files", "host_files_failed", "Scheduled Host Files resource is unavailable", err)
 	}
 	return wireResponse{Status: statusOK, HostFiles: &hostFilesWireResponse{Prepared: &prepared}}
 }

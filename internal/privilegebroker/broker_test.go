@@ -1,15 +1,39 @@
 package privilegebroker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestOperationFailureResponseReturnsRedactedCauseAndLogsContext(t *testing.T) {
+	var diagnostics bytes.Buffer
+	server := &Server{errorLogger: log.New(&diagnostics, "", 0)}
+	request := wireRequest{RequestID: "failure-request", Operation: operationRedisOverview}
+	response := server.operationFailureResponse(request, "redis", "redis_failed", "Redis operation failed", errors.New("dial tcp 127.0.0.1:6379: token=secret-value"))
+	if response.ErrorCode != "redis_failed" || !strings.Contains(response.Message, "dial tcp 127.0.0.1:6379") {
+		t.Fatalf("operation failure response = %#v", response)
+	}
+	if strings.Contains(response.Message, "secret-value") || !strings.Contains(response.Message, "token=[REDACTED]") {
+		t.Fatalf("operation failure response was not redacted: %#v", response)
+	}
+	logged := diagnostics.String()
+	for _, expected := range []string{`request_id="failure-request"`, `operation="redis_overview"`, `component="redis"`, `error_code="redis_failed"`, "dial tcp 127.0.0.1:6379", "token=[REDACTED]"} {
+		if !strings.Contains(logged, expected) {
+			t.Fatalf("operation failure log missing %q: %s", expected, logged)
+		}
+	}
+	if strings.Contains(logged, "secret-value") {
+		t.Fatalf("operation failure log exposed secret: %s", logged)
+	}
+}
 
 func TestCapabilityIsSingleUseAndBoundToExactParameters(t *testing.T) {
 	authorizer := &fixtureAuthorizer{actor: Actor{UserID: "user-1", Username: "admin", Role: "administrator"}}

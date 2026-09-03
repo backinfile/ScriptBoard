@@ -71,15 +71,16 @@ func (s *Server) redisOperation(ctx context.Context, request wireRequest) wireRe
 	}
 	actor, err := s.authorizeActor(ctx, AuthorizationRequest{SessionToken: request.SessionToken, RequestID: request.RequestID, Action: action, Resource: payload.Instance.ID, Revision: "redis-instance-v1", ParametersSHA256: parametersDigest(body)}, mode)
 	if err != nil {
+		s.logOperationFailure(request, "authorization", "redis_forbidden", err)
 		return wireResponse{Status: statusError, ErrorCode: "redis_forbidden", Message: "Redis operation is not authorized"}
 	}
 	if request.Operation == operationRedisDelete {
 		if err = s.redis.ValidateInstanceID(ctx, payload.Instance.ID); err != nil {
-			return wireResponse{Status: statusError, ErrorCode: "redis_instance_mismatch", Message: "Redis instance does not match committed metadata"}
+			return s.operationFailureResponse(request, "redis", "redis_instance_mismatch", "Redis instance does not match committed metadata", err)
 		}
 	} else {
 		if err = s.redis.ValidateInstance(ctx, payload.Instance); err != nil {
-			return wireResponse{Status: statusError, ErrorCode: "redis_instance_mismatch", Message: "Redis instance does not match committed metadata"}
+			return s.operationFailureResponse(request, "redis", "redis_instance_mismatch", "Redis instance does not match committed metadata", err)
 		}
 	}
 	response := wireResponse{Status: statusOK, Redis: &redisWireResponse{}}
@@ -112,12 +113,15 @@ func (s *Server) redisOperation(ctx context.Context, request wireRequest) wireRe
 	if action != ActionRedisRead && s.auditor != nil {
 		auditErr := s.auditor.Record(context.Background(), AuditRecord{OccurredAt: s.now().UTC(), RequestID: request.RequestID,
 			Actor: actor, Action: action, Resource: payload.Instance.ID, Revision: "redis-instance-v1", ParametersSHA256: parametersDigest(body), Result: result})
-		if auditErr != nil && err == nil {
-			return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "Redis operation completed but result audit failed"}
+		if auditErr != nil {
+			if err == nil {
+				return s.operationFailureResponse(request, "audit", "audit_failed_after_execution", "Redis operation completed but result audit failed", auditErr)
+			}
+			s.logOperationFailure(request, "audit", "audit_failed_after_execution", auditErr)
 		}
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "redis_failed", Message: "Redis operation failed"}
+		return s.operationFailureResponse(request, "redis", "redis_failed", "Redis operation failed", err)
 	}
 	return response
 }
