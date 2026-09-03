@@ -38,7 +38,6 @@
     data-uploading-title="{{t .Locale "files.drop_uploading"}}"
     data-uploading-description="{{t .Locale "files.drop_uploading_detail"}}"
     data-error-title="{{t .Locale "files.drop_error_title"}}"
-    data-directory-error="{{t .Locale "files.drop_directory_error"}}"
     data-count-error="{{t .Locale "files.drop_count_error"}}"
     data-input-error="{{t .Locale "files.drop_input_error"}}">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -176,7 +175,7 @@
     </div>
     <form method="post" action="/resources/files/batch-download" data-file-batch-download-form data-native hidden><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"></form>
     {{if .CanWrite}}
-    <form method="post" action="/resources/files/batch-delete" data-file-batch-trash-form data-async hidden><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="confirm_references" value="yes"><button class="danger-action" type="submit" data-file-batch-trash-submit>{{t .Locale "files.batch_trash"}}</button></form>
+    <form method="post" action="/resources/files/batch-delete" data-file-batch-trash-form data-async data-async-refresh="[data-deferred-region]" hidden><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="return_to" value="{{.ReturnTo}}"><input type="hidden" name="confirm_references" value="yes"><button class="danger-action" type="submit" data-file-batch-trash-submit>{{t .Locale "files.batch_trash"}}</button></form>
     <dialog class="action-dialog file-batch-move-dialog" data-file-batch-move-dialog aria-labelledby="file-batch-move-title">
       <form class="action-dialog__sheet file-batch-move-sheet" method="post" action="/resources/files/batch-move" data-file-batch-move-form data-async>
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -238,7 +237,7 @@
                   {{if and $.CanWrite .EditURL}}<a href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
                   {{if .DownloadURL}}<a href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t $.Locale "common.download"}}</a>{{end}}
                   {{if and $.CanWrite .PermissionsURL}}<a href="{{.PermissionsURL}}" data-task-link><span data-lucide="shield" aria-hidden="true"></span>{{t $.Locale "files.permissions.action"}}</a>{{end}}
-                  {{if and $.CanWrite .CanMutate}}<a href="{{.RenameURL}}" data-task-link><span data-lucide="pencil" aria-hidden="true"></span>{{t $.Locale "files.rename"}}</a><a href="{{.MoveURL}}" data-task-link><span data-lucide="folder-input" aria-hidden="true"></span>{{t $.Locale "files.move"}}</a><form method="post" action="/resources/files/delete" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="path" value="{{.Path}}"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "files.move_to_trash"}}</button></form>{{end}}
+                  {{if and $.CanWrite .CanMutate}}<a href="{{.RenameURL}}" data-task-link><span data-lucide="pencil" aria-hidden="true"></span>{{t $.Locale "files.rename"}}</a><a href="{{.MoveURL}}" data-task-link><span data-lucide="folder-input" aria-hidden="true"></span>{{t $.Locale "files.move"}}</a><form method="post" action="/resources/files/delete" data-async data-async-refresh="[data-deferred-region]"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="return_to" value="{{$.ReturnTo}}"><button class="danger-action" type="submit" name="path" value="{{.Path}}"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "files.move_to_trash"}}</button></form>{{end}}
                 </div>
               </details>
               {{end}}

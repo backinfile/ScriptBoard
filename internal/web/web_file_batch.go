@@ -390,14 +390,8 @@ func (a *App) trashBatchFiles(response http.ResponseWriter, request *http.Reques
 			return
 		}
 	}
-	transaction, err := a.db.BeginTx(request.Context(), nil)
-	if err != nil {
-		http.Error(response, "无法开始批量回收", http.StatusInternalServerError)
-		return
-	}
 	trashed := make([]hostfiles.Trashed, 0, len(items))
 	rollback := func() error {
-		_ = transaction.Rollback()
 		var rollbackErr error
 		for index := len(trashed) - 1; index >= 0; index-- {
 			if err := a.hostRestoreFromTrash(request.Context(), trashed[index].StoredPath, trashed[index].OriginalPath); err != nil && rollbackErr == nil {
@@ -418,6 +412,19 @@ func (a *App) trashBatchFiles(response http.ResponseWriter, request *http.Reques
 			return
 		}
 		trashed = append(trashed, moved)
+	}
+	// Complete Broker mutations before opening the Web transaction so its SQLite write lock cannot block Broker result audits.
+	transaction, err := a.db.BeginTx(request.Context(), nil)
+	if err != nil {
+		rollbackErr := rollback()
+		if rollbackErr != nil {
+			http.Error(response, "无法开始批量回收："+err.Error()+"；回滚失败："+rollbackErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Error(response, "无法开始批量回收："+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for index, moved := range trashed {
 		_, err = transaction.ExecContext(request.Context(), `INSERT INTO trash_entries
 			(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, ids[index], moved.OriginalPath, hostfiles.ComparisonKey(moved.OriginalPath), moved.StoredPath,
@@ -426,6 +433,7 @@ func (a *App) trashBatchFiles(response http.ResponseWriter, request *http.Reques
 			err = disableScheduleReferences(transaction, moved.OriginalPath, time.Now().UTC().UnixNano())
 		}
 		if err != nil {
+			_ = transaction.Rollback()
 			rollbackErr := rollback()
 			if rollbackErr != nil {
 				http.Error(response, "无法记录批量回收："+err.Error()+"；回滚失败："+rollbackErr.Error(), http.StatusInternalServerError)
@@ -436,6 +444,7 @@ func (a *App) trashBatchFiles(response http.ResponseWriter, request *http.Reques
 		}
 	}
 	if err := transaction.Commit(); err != nil {
+		_ = transaction.Rollback()
 		rollbackErr := rollback()
 		if rollbackErr != nil {
 			http.Error(response, "无法提交批量回收："+err.Error()+"；回滚失败："+rollbackErr.Error(), http.StatusInternalServerError)
@@ -447,5 +456,11 @@ func (a *App) trashBatchFiles(response http.ResponseWriter, request *http.Reques
 	for _, moved := range trashed {
 		a.recordAuditForRequest(request, "trash_entry", moved.OriginalPath, "succeeded")
 	}
-	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
+	returnDirectory, _ := hostPathParent(items[0].path)
+	destination := filesURL(returnDirectory)
+	if returnTo := safeFilesReturnTo(request.FormValue("return_to")); returnTo != "" {
+		destination = returnTo
+	}
+	// Keep batch deletion in the originating file workspace so the list refreshes in place.
+	http.Redirect(response, request, destination, http.StatusSeeOther)
 }

@@ -4318,7 +4318,13 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAuditForRequest(request, "trash_entry", trashed.OriginalPath, "succeeded")
-	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
+	parent, _ := hostPathParent(trashed.OriginalPath)
+	destination := filesURL(parent)
+	if returnTo := safeFilesReturnTo(request.FormValue("return_to")); returnTo != "" {
+		destination = returnTo
+	}
+	// Keep deletion in the originating file workspace so the async form can refresh in place.
+	http.Redirect(response, request, destination, http.StatusSeeOther)
 }
 
 type trashView struct {
@@ -4757,14 +4763,14 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	if isDeferredDataShell(request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = filesTemplate.Execute(response, struct {
-			CSRFToken, CurrentPath, Query, SortField, Direction                         string
+			CSRFToken, CurrentPath, ReturnTo, Query, SortField, Direction               string
 			SortSummary, RootURL, SearchURL, ParentURL                                  string
 			Locale                                                                      webLocale
 			Breadcrumbs                                                                 []fileBreadcrumbView
 			DeferredData, ShowHidden                                                    bool
 			CanWrite, CanMutateCurrent, CanExecute, CanManageExecution, CanManageGroups bool
 		}{
-			CSRFToken: current.csrfToken, CurrentPath: relative,
+			CSRFToken: current.csrfToken, CurrentPath: relative, ReturnTo: request.URL.RequestURI(),
 			Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
 			RootURL: filesStateURL("", "", sortField, direction, showHidden, 0), SearchURL: "/resources/files", ParentURL: parentURL,
 			Locale: locale, Breadcrumbs: buildHostBreadcrumbs(relative, sortField, direction, showHidden), DeferredData: true, ShowHidden: showHidden,
@@ -4866,6 +4872,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		Entries            []fileView
 		CSRFToken          string
 		CurrentPath        string
+		ReturnTo           string
 		Query              string
 		SortField          string
 		Direction          string
@@ -4887,7 +4894,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		DeferredData       bool
 		ShowHidden         bool
 	}{
-		Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative,
+		Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative, ReturnTo: request.URL.RequestURI(),
 		Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
 		SortURLs: fileHeaderSortURLs(relative, query, sortField, direction, showHidden), SortStates: fileHeaderSortStates(sortField, direction),
 		RootURL: filesStateURL("", "", sortField, direction, showHidden, 0), ClearURL: filesStateURL(relative, "", sortField, direction, showHidden, 0),

@@ -348,12 +348,13 @@ func TestHostFilesBatchUploadCrossesBrokerAsOneOperation(t *testing.T) {
 	results, err := backend.UploadBatch(ctx, hostRoot, []hostfiles.UploadBatchInput{
 		{Name: "first.txt", Source: strings.NewReader("first"), MaxBytes: 1024, StoredName: "first-old"},
 		{Name: "second.txt", Source: strings.NewReader("second"), MaxBytes: 1024, StoredName: "second-old"},
+		{Name: "folder/nested.txt", Source: strings.NewReader("nested"), MaxBytes: 1024, StoredName: "nested-old"},
 	}, false, false)
-	if err != nil || len(results) != 2 {
+	if err != nil || len(results) != 3 {
 		t.Fatalf("batch results=%+v err=%v", results, err)
 	}
-	for name, want := range map[string]string{"first.txt": "first", "second.txt": "second"} {
-		content, readErr := os.ReadFile(filepath.Join(hostRoot, name))
+	for name, want := range map[string]string{"first.txt": "first", "second.txt": "second", "folder/nested.txt": "nested"} {
+		content, readErr := os.ReadFile(filepath.Join(hostRoot, filepath.FromSlash(name)))
 		if readErr != nil || string(content) != want {
 			t.Fatalf("%s content=%q err=%v", name, content, readErr)
 		}

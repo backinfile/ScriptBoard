@@ -2126,10 +2126,12 @@ async function assertExternalInterfaces(page, fixture) {
     const batchTrashDialog = page.locator("dialog.action-dialog[open]");
     await batchTrashDialog.waitFor();
     assert.match((await batchTrashDialog.locator("[id$='-message']").textContent()).trim(), /2 selected items/);
-    await Promise.all([
-      page.waitForURL(url => url.pathname === "/resources/trash"),
-      batchTrashDialog.getByRole("button", { name: "Move to Trash", exact: true }).click(),
-    ]);
+    await batchTrashDialog.getByRole("button", { name: "Move to Trash", exact: true }).click();
+    for (const name of ["drag-upload.txt", "drag-upload (2).txt"]) {
+      await page.locator(".file-table tbody tr").filter({ hasText: name }).waitFor({ state: "detached" });
+    }
+    assert.equal(new URL(page.url()).pathname, "/resources/files");
+    await page.goto(`${fixture.baseURL}/resources/trash`);
     for (const name of ["drag-upload.txt", "drag-upload (2).txt"]) {
       await page.locator(".records-table tbody tr").filter({ hasText: name }).waitFor();
     }

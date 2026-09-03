@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 
 	"scriptboard/internal/hostfiles"
@@ -51,6 +53,16 @@ func (a *App) uploadBatchFiles(response http.ResponseWriter, request *http.Reque
 		http.Error(response, "单批最多上传 100 个文件", http.StatusRequestEntityTooLarge)
 		return
 	}
+	relativePaths := request.MultipartForm.Value["relative_path"]
+	if len(relativePaths) == 0 {
+		relativePaths = make([]string, len(files))
+		for index, header := range files {
+			relativePaths[index] = header.Filename
+		}
+	} else if len(relativePaths) != len(files) {
+		http.Error(response, "批量上传未执行：文件路径元数据不完整", http.StatusBadRequest)
+		return
+	}
 
 	inputs := make([]hostfiles.UploadBatchInput, 0, len(files))
 	opened := make([]interface{ Close() error }, 0, len(files))
@@ -60,23 +72,20 @@ func (a *App) uploadBatchFiles(response http.ResponseWriter, request *http.Reque
 		}
 	}()
 	seen := make(map[string]struct{}, len(files))
-	for _, header := range files {
+	for index, header := range files {
 		filename := header.Filename
-		if err := hostfiles.ValidateName(filename); err != nil {
-			a.recordAuditForRequest(request, "upload_batch", filename, "rejected")
-			http.Error(response, fmt.Sprintf("批量上传未执行：文件名 %q 无效", filename), http.StatusBadRequest)
+		relativePath := relativePaths[index]
+		if err := hostfiles.ValidateRelativePath(relativePath); err != nil || path.Base(relativePath) != filename {
+			a.recordAuditForRequest(request, "upload_batch", relativePath, "rejected")
+			http.Error(response, fmt.Sprintf("批量上传未执行：文件路径 %q 无效", relativePath), http.StatusBadRequest)
 			return
 		}
-		if _, duplicate := seen[hostfiles.ComparisonKey(filename)]; duplicate {
-			http.Error(response, fmt.Sprintf("批量上传未执行：重复文件名 %q", filename), http.StatusConflict)
+		if _, duplicate := seen[hostfiles.ComparisonKey(relativePath)]; duplicate {
+			http.Error(response, fmt.Sprintf("批量上传未执行：重复文件路径 %q", relativePath), http.StatusConflict)
 			return
 		}
-		seen[hostfiles.ComparisonKey(filename)] = struct{}{}
-		targetPath, err := a.hostDestination(request.Context(), relative, filename)
-		if err != nil {
-			writeHostFileError(response, "上传目标无效", err)
-			return
-		}
+		seen[hostfiles.ComparisonKey(relativePath)] = struct{}{}
+		targetPath := filepath.Join(relative, filepath.FromSlash(relativePath))
 		targetInfo, _, targetErr := a.hostInfo(request.Context(), targetPath)
 		targetExists := targetErr == nil
 		// Broker-backed Info wraps a missing destination; unwrap it so a new upload target remains valid.
@@ -84,20 +93,21 @@ func (a *App) uploadBatchFiles(response http.ResponseWriter, request *http.Reque
 			writeHostFileError(response, "无法检查同名文件", targetErr)
 			return
 		}
-		uploadName := filename
+		uploadName := relativePath
 		if targetExists {
 			switch action {
 			case conflictActionRename:
-				uploadName, err = a.hostAvailableName(request.Context(), relative, filename)
+				renamed, err := a.hostAvailableName(request.Context(), filepath.Dir(targetPath), filename)
 				if err != nil {
 					writeHostFileError(response, "无法生成可用名称", err)
 					return
 				}
-				targetPath, err = a.hostDestination(request.Context(), relative, uploadName)
-				if err != nil {
-					writeHostFileError(response, "上传目标无效", err)
-					return
+				if parent := path.Dir(relativePath); parent != "." {
+					uploadName = path.Join(parent, renamed)
+				} else {
+					uploadName = renamed
 				}
+				targetPath = filepath.Join(relative, filepath.FromSlash(uploadName))
 			case conflictActionOverwrite:
 				if !targetInfo.Mode().IsRegular() || a.runs.ConflictsPath(targetPath) {
 					http.Error(response, fmt.Sprintf("批量上传未执行：%q 不能被覆盖", filename), http.StatusConflict)
@@ -140,7 +150,7 @@ func (a *App) uploadBatchFiles(response http.ResponseWriter, request *http.Reque
 		if result.QuickRunsSynchronized > 0 {
 			detail = fmt.Sprintf(webText(locale, "upload_results.saved_quick_runs"), result.QuickRunsSynchronized)
 			a.recordAuditResourceForRequest(request, "sync_quick_runs_after_upload", result.Path, "succeeded", "", result.ScriptSHA256)
-		} else if result.Name != files[index].Filename {
+		} else if result.Name != relativePaths[index] {
 			detail = fmt.Sprintf(webText(locale, "upload_results.renamed"), result.Name)
 		}
 		views = append(views, uploadResult{Name: result.Name, Result: webText(locale, "upload_results.succeeded"), Detail: detail, Succeeded: true})

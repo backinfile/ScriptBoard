@@ -478,7 +478,7 @@ func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
 		`data-file-upload-form`,
 		`data-file-drop-surface="file-drop-surface"`,
 		`action="/resources/files/upload-batch"`,
-		`data-active-description="Files are committed together only after the whole batch is validated."`,
+		`data-active-description="Drop files or folders. Folder structure is preserved and files are committed after the whole batch is validated."`,
 		`enctype="multipart/form-data"`,
 		`name="path" value="` + html.EscapeString(filepath.Join(hostRoot, "nested")) + `"`,
 		`name="conflict_action" value=""`,
@@ -492,7 +492,7 @@ func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
 		}
 	}
-	for _, excluded := range []string{`name="replace"`, `Drop files here to upload`, `Choose files`, `<noscript>`} {
+	for _, excluded := range []string{`name="replace"`, `data-directory-error`, `Drop files here to upload`, `Choose files`, `<noscript>`} {
 		if strings.Contains(page, excluded) {
 			t.Fatalf("files page unexpectedly contains %q: %s", excluded, page)
 		}
@@ -1140,6 +1140,8 @@ func TestFilesPageOffersSortableDateHeadersAndMultiSelection(t *testing.T) {
 		`action="/resources/files/batch-download"`,
 		`action="/resources/files/batch-move"`,
 		`action="/resources/files/batch-delete"`,
+		`action="/resources/files/batch-delete" data-file-batch-trash-form data-async data-async-refresh="[data-deferred-region]"`,
+		`action="/resources/files/delete" data-async data-async-refresh="[data-deferred-region]"`,
 		`data-file-batch-move-dialog`,
 		`data-directory-picker data-endpoint="/resources/directories"`,
 		`<option value="created" selected>Created</option>`,
@@ -1581,6 +1583,108 @@ func postHostUploadBatchWithQuickRunSync(t *testing.T, client *http.Client, serv
 		t.Fatal(err)
 	}
 	return response.StatusCode, body
+}
+
+func postHostFolderUpload(t *testing.T, client *http.Client, serverURL, csrfToken, directory string, files []struct {
+	name, relativePath, content string
+}) (int, []byte) {
+	t.Helper()
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	for _, field := range []struct{ name, value string }{
+		{name: "csrf_token", value: csrfToken},
+		{name: "path", value: directory},
+		{name: "conflict_action", value: "skip"},
+	} {
+		if err := writer.WriteField(field.name, field.value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, file := range files {
+		part, err := writer.CreateFormFile("files", file.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write([]byte(file.content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, file := range files {
+		if err := writer.WriteField("relative_path", file.relativePath); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/resources/files/upload-batch", &requestBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response.StatusCode, body
+}
+
+func TestHostUploadBatchPreservesDroppedFolderPaths(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+
+	status, body := postHostFolderUpload(t, client, serverURL, formToken(t, page), hostRoot, []struct {
+		name, relativePath, content string
+	}{
+		{name: "README.md", relativePath: "project/README.md", content: "overview"},
+		{name: "main.js", relativePath: "project/src/main.js", content: "console.log('ok')"},
+	})
+	if status != http.StatusOK || !bytes.Contains(body, []byte("project/src/main.js")) {
+		t.Fatalf("folder upload response status=%d body=%s", status, body)
+	}
+	for path, want := range map[string]string{
+		filepath.Join(hostRoot, "project", "README.md"):      "overview",
+		filepath.Join(hostRoot, "project", "src", "main.js"): "console.log('ok')",
+	} {
+		content, readErr := os.ReadFile(path)
+		if readErr != nil || string(content) != want {
+			t.Fatalf("uploaded %s content=%q err=%v", path, content, readErr)
+		}
+	}
+}
+
+func TestHostUploadBatchRejectsDroppedFolderPathTraversal(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+
+	status, _ := postHostFolderUpload(t, client, serverURL, formToken(t, page), hostRoot, []struct {
+		name, relativePath, content string
+	}{{name: "outside.txt", relativePath: "../outside.txt", content: "unsafe"}})
+	if status != http.StatusBadRequest {
+		t.Fatalf("folder traversal upload status=%d, want %d", status, http.StatusBadRequest)
+	}
+	if _, err := os.Stat(filepath.Join(root, "outside.txt")); !os.IsNotExist(err) {
+		t.Fatalf("folder upload escaped its destination: %v", err)
+	}
 }
 
 func TestHostUploadBatchCommitsThirteenFilesTogether(t *testing.T) {
@@ -2154,15 +2258,17 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read files: %v", err)
 	}
+	returnTo := hostFileHref("/resources/files", hostRoot) + "&sort=name&direction=desc"
 	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
 		"path":       {filepath.Join(hostRoot, "recover.txt")},
 		"csrf_token": {formToken(t, page)},
+		"return_to":  {returnTo},
 	})
 	if err != nil {
 		t.Fatalf("delete file: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/trash" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != returnTo {
 		t.Fatalf("delete response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	if _, err := os.Stat(filepath.Join(hostRoot, "recover.txt")); !os.IsNotExist(err) {
