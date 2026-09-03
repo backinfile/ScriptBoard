@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
+	"path/filepath"
 	"time"
 
 	"scriptboard/internal/hostfiles"
@@ -155,15 +157,11 @@ func (a *App) uploadConflicts(response http.ResponseWriter, request *http.Reques
 	}
 	conflicts := make([]uploadConflictItem, 0)
 	for _, name := range names {
-		if err := hostfiles.ValidateName(name); err != nil {
+		if err := hostfiles.ValidateRelativePath(name); err != nil {
 			http.Error(response, "文件名无效："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		target, err := a.hostDestination(request.Context(), relative, name)
-		if err != nil {
-			http.Error(response, "上传目标无效："+err.Error(), http.StatusBadRequest)
-			return
-		}
+		target := filepath.Join(relative, filepath.FromSlash(name))
 		info, _, err := a.hostInfo(request.Context(), target)
 		if hostFileNotExist(err) {
 			continue
@@ -172,10 +170,13 @@ func (a *App) uploadConflicts(response http.ResponseWriter, request *http.Reques
 			http.Error(response, "无法检查同名文件："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		suggested, err := a.hostAvailableName(request.Context(), relative, name)
+		suggested, err := a.hostAvailableName(request.Context(), filepath.Dir(target), path.Base(name))
 		if err != nil {
 			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusBadRequest)
 			return
+		}
+		if parent := path.Dir(name); parent != "." {
+			suggested = path.Join(parent, suggested)
 		}
 		canOverwrite := info.Mode().IsRegular() && !a.runs.ConflictsPath(target)
 		var quickRunNames []string

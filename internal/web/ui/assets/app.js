@@ -171,6 +171,7 @@
   let activeServerErrorDialog = null;
   let activeActionDialog = null;
   let activeUploadResultsDialog = null;
+  const droppedFolderUploads = new WeakMap();
 
   class StepUpCancelledError extends Error {
     constructor() { super("Step-up cancelled"); this.name = "StepUpCancelledError"; }
@@ -2342,8 +2343,19 @@
 
   async function submitFileUpload(form) {
     const data = new FormData(form);
-    const files = data.getAll("files").filter(value => value instanceof File && value.name);
-    const uploadURL = files.length === 1 ? "/resources/files/upload" : form.action;
+    const dropped = droppedFolderUploads.get(form);
+    if (dropped?.length) {
+      data.delete("files");
+      data.delete("relative_path");
+      dropped.forEach(({ file, relativePath }) => {
+        data.append("files", file, file.name);
+        data.append("relative_path", relativePath);
+      });
+    }
+    const files = dropped?.map(item => item.file) || data.getAll("files").filter(value => value instanceof File && value.name);
+    const uploadNames = dropped?.map(item => item.relativePath) || files.map(file => file.name);
+    const preservesFolder = uploadNames.some((name, index) => name !== files[index]?.name);
+    const uploadURL = files.length === 1 && !preservesFolder ? "/resources/files/upload" : form.action;
     const progressNode = form.querySelector("[data-file-upload-progress]");
     const renderProgress = event => {
       if (!progressNode) return;
@@ -2357,7 +2369,7 @@
     const preflight = new URLSearchParams();
     preflight.set("csrf_token", String(data.get("csrf_token") || ""));
     preflight.set("path", String(data.get("path") || ""));
-    files.forEach(file => preflight.append("name", file.name));
+    uploadNames.forEach(name => preflight.append("name", name));
     let action = "skip";
     try {
       const response = await fetch("/resources/files/conflicts", {
@@ -2402,6 +2414,7 @@
       if (resultsMain && result.response.ok) {
         const submittedFromTask = taskPanelState?.host.contains(form);
         if (submittedFromTask) closeTaskPanel(false, false);
+        droppedFolderUploads.delete(form);
         form.querySelectorAll('input[type="file"]').forEach(file => { file.value = ""; });
         resetSubmit(form);
         if (showUploadResults(resultsMain)) return;
@@ -4153,11 +4166,48 @@
       };
       const resetState = () => setState("", "", "");
       const showError = message => setState("error", form.dataset.errorTitle, message);
-      const containsDirectory = dataTransfer => Array.from(dataTransfer?.items || []).some(item => {
-        if (item.kind !== "file" || typeof item.webkitGetAsEntry !== "function") return false;
-        return item.webkitGetAsEntry()?.isDirectory === true;
+      const readEntryFile = entry => new Promise((resolve, reject) => entry.file(resolve, reject));
+      const readDirectoryEntries = reader => new Promise((resolve, reject) => {
+        const entries = [];
+        const readNext = () => reader.readEntries(batch => {
+          if (!batch.length) {
+            resolve(entries);
+            return;
+          }
+          entries.push(...batch);
+          readNext();
+        }, reject);
+        readNext();
       });
-      const submitFiles = files => {
+      const collectDroppedFiles = async dataTransfer => {
+        const collected = [];
+        const collectEntry = async (entry, parent = "") => {
+          const relativePath = parent ? `${parent}/${entry.name}` : entry.name;
+          if (entry.isFile) {
+            collected.push({ file: await readEntryFile(entry), relativePath });
+            if (collected.length > 100) throw new RangeError("too many dropped files");
+            return;
+          }
+          if (!entry.isDirectory) return;
+          const children = await readDirectoryEntries(entry.createReader());
+          for (const child of children) await collectEntry(child, relativePath);
+        };
+        // Capture handles synchronously: browsers may protect the drag data
+        // store as soon as this drop event returns while traversal is async.
+        const sources = Array.from(dataTransfer?.items || [])
+          .filter(item => item.kind === "file")
+          .map(item => typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : item.getAsFile?.())
+          .filter(Boolean);
+        for (const source of sources) {
+          if (source.isFile || source.isDirectory) await collectEntry(source);
+          else collected.push({ file: source, relativePath: source.name });
+        }
+        if (!collected.length) {
+          return Array.from(dataTransfer?.files || []).map(file => ({ file, relativePath: file.name }));
+        }
+        return collected;
+      };
+      const submitFiles = (files, dropped = null) => {
         if (!files?.length) return;
         if (form.getAttribute("aria-busy") === "true") return;
         if (files.length > 100) {
@@ -4165,6 +4215,7 @@
           showError(form.dataset.countError);
           return;
         }
+        if (dropped) droppedFolderUploads.set(form, dropped);
         setState("uploading", form.dataset.uploadingTitle, form.dataset.uploadingDescription);
         form.setAttribute("aria-busy", "true");
         window.requestAnimationFrame(() => form.requestSubmit());
@@ -4187,33 +4238,50 @@
         dragDepth = Math.max(0, dragDepth - 1);
         if (dragDepth === 0) resetState();
       };
-      const onDrop = event => {
+      const onDrop = async event => {
         if (!isFileDrag(event.dataTransfer)) return;
         event.preventDefault();
         dragDepth = 0;
-        if (containsDirectory(event.dataTransfer)) {
-          showError(form.dataset.directoryError);
+        let dropped;
+        try {
+          dropped = await collectDroppedFiles(event.dataTransfer);
+        } catch (error) {
+          input.value = "";
+          showError(error instanceof RangeError ? form.dataset.countError : form.dataset.inputError);
+          return;
+        }
+        if (!dropped.length) {
+          showError(form.dataset.inputError);
           return;
         }
         try {
-          input.files = event.dataTransfer.files;
+          const transfer = new DataTransfer();
+          dropped.forEach(({ file }) => transfer.items.add(file));
+          input.files = transfer.files;
         } catch {
           showError(form.dataset.inputError);
           return;
         }
-        if (input.files.length !== event.dataTransfer.files.length) {
+        if (input.files.length !== dropped.length) {
           input.value = "";
           showError(form.dataset.inputError);
           return;
         }
+        submitFiles(input.files, dropped);
+      };
+      const onChange = () => {
+        droppedFolderUploads.delete(form);
         submitFiles(input.files);
       };
-      const onChange = () => submitFiles(input.files);
       const onCancelled = () => {
+        droppedFolderUploads.delete(form);
         input.value = "";
         resetState();
       };
-      const onFailed = event => showError(event.detail?.message || form.dataset.inputError);
+      const onFailed = event => {
+        droppedFolderUploads.delete(form);
+        showError(event.detail?.message || form.dataset.inputError);
+      };
       const onProgress = event => {
         const detail = event.detail || {};
         if (detail.phase === "committing") {

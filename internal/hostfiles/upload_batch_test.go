@@ -78,6 +78,88 @@ func TestUploadBatchLeavesEveryTargetUnchangedWhenStagingFails(t *testing.T) {
 	}
 }
 
+func TestUploadBatchPreservesRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "uploads")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{InstanceID: "nested-batch-upload-test", Topology: fixedTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := manager.UploadBatch(directory, []hostfiles.UploadBatchInput{
+		{Name: "project/README.md", Source: strings.NewReader("overview"), MaxBytes: 1 << 20, StoredName: "old-readme"},
+		{Name: "project/src/main.js", Source: strings.NewReader("console.log('ok')"), MaxBytes: 1 << 20, StoredName: "old-main"},
+	}, false)
+	if err != nil {
+		t.Fatalf("upload nested batch: %v", err)
+	}
+	if len(results) != 2 || results[0].Name != "project/README.md" || results[1].Name != "project/src/main.js" {
+		t.Fatalf("nested upload results = %#v", results)
+	}
+	for path, want := range map[string]string{
+		filepath.Join(directory, "project", "README.md"):      "overview",
+		filepath.Join(directory, "project", "src", "main.js"): "console.log('ok')",
+	} {
+		content, readErr := os.ReadFile(path)
+		if readErr != nil || string(content) != want {
+			t.Fatalf("uploaded %s content=%q err=%v", path, content, readErr)
+		}
+	}
+}
+
+func TestRollbackUploadBatchRemovesDirectoriesCreatedForFolderUpload(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "uploads")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{InstanceID: "folder-upload-rollback-test", Topology: fixedTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := manager.UploadBatch(directory, []hostfiles.UploadBatchInput{
+		{Name: "project/src/main.js", Source: strings.NewReader("content"), MaxBytes: 1024, StoredName: "old-main"},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RollbackUploadBatch(results); err != nil {
+		t.Fatalf("rollback folder upload: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "project")); !os.IsNotExist(err) {
+		t.Fatalf("folder upload directories remain after rollback: %v", err)
+	}
+}
+
+func TestUploadBatchRejectsUnsafeRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "uploads")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{InstanceID: "unsafe-folder-upload-test", Topology: fixedTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"../outside.txt", "/absolute.txt", "folder//file.txt", `folder\file.txt`, "folder/../file.txt"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			_, err := manager.UploadBatch(directory, []hostfiles.UploadBatchInput{
+				{Name: name, Source: strings.NewReader("content"), MaxBytes: 1024, StoredName: "old-file"},
+			}, false)
+			if err == nil {
+				t.Fatalf("unsafe relative path %q was accepted", name)
+			}
+		})
+	}
+	if _, err := os.Stat(filepath.Join(root, "outside.txt")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe upload escaped destination: %v", err)
+	}
+}
+
 var _ io.Reader = (*failingUploadReader)(nil)
 
 func TestUploadBatchRollsBackEarlierCommitsWhenALaterCommitFails(t *testing.T) {

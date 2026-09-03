@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -44,6 +45,7 @@ type UploadBatchResult struct {
 	Name                  string
 	Path                  string
 	Trashed               *Trashed
+	CreatedDirectories    []string
 	QuickRunsSynchronized int64
 	ScriptSHA256          string
 }
@@ -292,7 +294,7 @@ func (m *Manager) UploadBatch(directory string, inputs []UploadBatchInput, repla
 	}()
 	seen := make(map[string]struct{}, len(inputs))
 	for _, input := range inputs {
-		if err := ValidateName(input.Name); err != nil {
+		if err := ValidateRelativePath(input.Name); err != nil {
 			return nil, err
 		}
 		if input.Source == nil || input.MaxBytes <= 0 {
@@ -303,9 +305,29 @@ func (m *Manager) UploadBatch(directory string, inputs []UploadBatchInput, repla
 			return nil, fmt.Errorf("upload batch contains duplicate name %q", input.Name)
 		}
 		seen[key] = struct{}{}
-		target := filepath.Join(parent, input.Name)
+		target := filepath.Join(parent, filepath.FromSlash(input.Name))
 		if err := m.ensureMutationAllowed(target); err != nil {
 			return nil, err
+		}
+		current := parent
+		for _, component := range strings.Split(path.Dir(input.Name), "/") {
+			if component == "." {
+				break
+			}
+			current = filepath.Join(current, component)
+			if err := m.ensureMutationAllowed(current); err != nil {
+				return nil, err
+			}
+			info, inspectErr := os.Lstat(current)
+			if os.IsNotExist(inspectErr) {
+				break
+			}
+			if inspectErr != nil {
+				return nil, fmt.Errorf("inspect upload directory %s: %w", input.Name, inspectErr)
+			}
+			if !info.IsDir() || restrictedEntry(current, info) || m.topology.Restricted(current) {
+				return nil, fmt.Errorf("upload path ancestor is not an enterable directory: %s", input.Name)
+			}
 		}
 		existing, existingErr := os.Lstat(target)
 		exists := existingErr == nil
@@ -348,13 +370,22 @@ func (m *Manager) UploadBatch(directory string, inputs []UploadBatchInput, repla
 	}
 
 	results := make([]UploadBatchResult, 0, len(staged))
-	rollback := func(cause error) error { return errors.Join(cause, m.RollbackUploadBatch(results)) }
+	rollback := func(cause error, created []string) error {
+		for index := len(created) - 1; index >= 0; index-- {
+			_ = os.Remove(created[index])
+		}
+		return errors.Join(cause, m.RollbackUploadBatch(results))
+	}
 	for _, item := range staged {
+		createdDirectories, createErr := m.createUploadDirectories(parent, filepath.Dir(item.target))
+		if createErr != nil {
+			return nil, rollback(fmt.Errorf("prepare upload directories for %s: %w", item.input.Name, createErr), createdDirectories)
+		}
 		var trashed *Trashed
 		if item.exists {
 			old, trashErr := m.MoveToTrash(item.target, item.input.StoredName)
 			if trashErr != nil {
-				return nil, rollback(fmt.Errorf("prepare replacement %s: %w", item.input.Name, trashErr))
+				return nil, rollback(fmt.Errorf("prepare replacement %s: %w", item.input.Name, trashErr), createdDirectories)
 			}
 			trashed = &old
 		}
@@ -362,11 +393,40 @@ func (m *Manager) UploadBatch(directory string, inputs []UploadBatchInput, repla
 			if trashed != nil {
 				_ = m.RestoreFromTrash(trashed.StoredPath, trashed.OriginalPath)
 			}
-			return nil, rollback(fmt.Errorf("commit upload %s: %w", item.input.Name, renameErr))
+			return nil, rollback(fmt.Errorf("commit upload %s: %w", item.input.Name, renameErr), createdDirectories)
 		}
-		results = append(results, UploadBatchResult{Name: item.input.Name, Path: item.target, Trashed: trashed})
+		results = append(results, UploadBatchResult{Name: item.input.Name, Path: item.target, Trashed: trashed, CreatedDirectories: createdDirectories})
 	}
 	return results, nil
+}
+
+func (m *Manager) createUploadDirectories(root, target string) ([]string, error) {
+	relative, err := filepath.Rel(root, target)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("upload directory escapes its destination")
+	}
+	if relative == "." {
+		return nil, nil
+	}
+	created := make([]string, 0, strings.Count(relative, string(filepath.Separator))+1)
+	current := root
+	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		if err := m.ensureMutationAllowed(current); err != nil {
+			return created, err
+		}
+		if err := os.Mkdir(current, 0o755); err == nil {
+			created = append(created, current)
+			continue
+		} else if !os.IsExist(err) {
+			return created, err
+		}
+		info, err := os.Lstat(current)
+		if err != nil || !info.IsDir() || restrictedEntry(current, info) || m.topology.Restricted(current) {
+			return created, fmt.Errorf("upload path ancestor is not an enterable directory")
+		}
+	}
+	return created, nil
 }
 
 // RollbackUploadBatch restores a completed batch in reverse commit order. It
@@ -382,6 +442,11 @@ func (m *Manager) RollbackUploadBatch(results []UploadBatchResult) error {
 		if result.Trashed != nil {
 			if restoreErr := m.RestoreFromTrash(result.Trashed.StoredPath, result.Trashed.OriginalPath); restoreErr != nil {
 				rollbackErr = errors.Join(rollbackErr, fmt.Errorf("restore replaced file %s: %w", result.Name, restoreErr))
+			}
+		}
+		for directoryIndex := len(result.CreatedDirectories) - 1; directoryIndex >= 0; directoryIndex-- {
+			if removeErr := os.Remove(result.CreatedDirectories[directoryIndex]); removeErr != nil && !os.IsNotExist(removeErr) {
+				rollbackErr = errors.Join(rollbackErr, fmt.Errorf("remove created upload directory %s: %w", result.CreatedDirectories[directoryIndex], removeErr))
 			}
 		}
 	}
@@ -736,6 +801,20 @@ func ValidateName(name string) error {
 	}
 	if reservedName(name) {
 		return fmt.Errorf("name is reserved by ScriptBoard")
+	}
+	return nil
+}
+
+// ValidateRelativePath accepts the slash-separated paths supplied by browser
+// directory uploads while rejecting traversal and platform-specific hazards.
+func ValidateRelativePath(value string) error {
+	if value == "" || len(value) > 4096 || path.Clean(value) != value || path.IsAbs(value) {
+		return fmt.Errorf("upload path is invalid")
+	}
+	for _, component := range strings.Split(value, "/") {
+		if err := ValidateName(component); err != nil {
+			return fmt.Errorf("upload path contains an invalid component: %w", err)
+		}
 	}
 	return nil
 }

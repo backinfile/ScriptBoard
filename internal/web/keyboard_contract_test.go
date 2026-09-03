@@ -247,6 +247,30 @@ func TestEnhancedFileUploadUsesClosableResultsDialog(t *testing.T) {
 	}
 }
 
+func TestFileDropUploadRecursivelyCollectsFolders(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(script)
+	for _, expected := range []string{
+		`const collectDroppedFiles = async dataTransfer =>`,
+		`entry.createReader()`,
+		`readNext();`,
+		`data.append("relative_path", relativePath)`,
+		`droppedFolderUploads.set(form, dropped)`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("folder drop upload is missing %q", expected)
+		}
+	}
+	if strings.Contains(source, `showError(form.dataset.directoryError)`) {
+		t.Fatal("folder drops are still rejected by the browser upload flow")
+	}
+}
+
 func TestCustomDashboardDrawerWaitsForItsActualTransition(t *testing.T) {
 	t.Parallel()
 
