@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"net"
@@ -12,11 +13,91 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/privilegebroker"
 	app "scriptboard/internal/web"
 )
+
+func TestManagedBatchTrashDoesNotLockBrokerResultAudit(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "broker-host")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{filepath.Join(hostRoot, "first.txt"), filepath.Join(hostRoot, "second.txt")}
+	for _, path := range paths {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	initializer, err := app.Open(app.Config{StateRoot: stateRoot, FileTopology: testHostTopology{root: hostRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := initializer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	brokerDatabase, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(stateRoot, "app.db"))+"?mode=rw&_pragma=busy_timeout(50)&_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = brokerDatabase.Close() })
+	security, err := privilegebroker.NewDatabaseSecurity(brokerDatabase, auditlog.New(brokerDatabase), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brokerManager, err := hostfiles.Open(hostfiles.Options{Topology: testHostTopology{root: hostRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := privilegebroker.NewBrokerHostFilesService(brokerManager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
+		Listener: listener, VerifyPeer: func(net.Conn) error { return nil }, Authorizer: allowHostFilesAuthorizer{},
+		Auditor: security, Executor: rejectGenericPrivilegedExecutor{}, HostFiles: service,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Start()
+	t.Cleanup(func() { _ = server.Close() })
+	brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+	}})
+	httpClient, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: stateRoot, FileTopology: rejectingHostTopology{},
+		HostFilesBackend: privilegebroker.NewHostFilesBackend(brokerClient),
+	})
+	page := getBody(t, httpClient, hostFilesRequestURL(serverURL, hostRoot), http.StatusOK)
+	response, err := httpClient.PostForm(serverURL+"/resources/files/batch-delete", url.Values{
+		"csrf_token": {formToken(t, page)}, "confirm_references": {"yes"}, "path": paths,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("Broker-backed batch trash status=%d body=%s", response.StatusCode, body)
+	}
+	trashPage := getBody(t, httpClient, serverURL+"/resources/trash", http.StatusOK)
+	for _, path := range paths {
+		if !strings.Contains(string(trashPage), path) {
+			t.Fatalf("Broker-backed batch trash did not record %q", path)
+		}
+	}
+}
 
 func TestManagedFilesPageReadsHostThroughBroker(t *testing.T) {
 	root := t.TempDir()
