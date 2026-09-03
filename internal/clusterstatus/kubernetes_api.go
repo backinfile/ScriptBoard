@@ -2,6 +2,7 @@ package clusterstatus
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -155,6 +156,63 @@ type kubeNodeMetric struct {
 	Usage    map[string]string `json:"usage"`
 }
 
+type kubeService struct {
+	Metadata kubeMetadata `json:"metadata"`
+	Spec     struct {
+		Type, ClusterIP, ExternalName, ExternalTrafficPolicy string
+		ClusterIPs, ExternalIPs                              []string
+		Ports                                                []struct {
+			Name, Protocol, AppProtocol string
+			Port, NodePort              int
+			TargetPort                  json.RawMessage
+		}
+	} `json:"spec"`
+	Status struct {
+		LoadBalancer struct {
+			Ingress []struct {
+				IP, Hostname string
+			}
+		} `json:"loadBalancer"`
+	} `json:"status"`
+}
+
+type kubeIngressBackend struct {
+	Service struct {
+		Name string
+		Port struct {
+			Name   string
+			Number int
+		}
+	}
+}
+
+type kubeIngress struct {
+	Metadata kubeMetadata `json:"metadata"`
+	Spec     struct {
+		IngressClassName string              `json:"ingressClassName"`
+		DefaultBackend   *kubeIngressBackend `json:"defaultBackend"`
+		TLS              []struct {
+			Hosts []string `json:"hosts"`
+		} `json:"tls"`
+		Rules []struct {
+			Host string `json:"host"`
+			HTTP struct {
+				Paths []struct {
+					Path, PathType string
+					Backend        kubeIngressBackend
+				} `json:"paths"`
+			} `json:"http"`
+		} `json:"rules"`
+	} `json:"spec"`
+	Status struct {
+		LoadBalancer struct {
+			Ingress []struct {
+				IP, Hostname string
+			}
+		} `json:"loadBalancer"`
+	} `json:"status"`
+}
+
 func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 	now := time.Now().UTC()
 	snapshot := Snapshot{CollectedAt: now, Errors: make(map[string]string)}
@@ -177,6 +235,8 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 	var namespaces kubeList[struct {
 		Metadata kubeMetadata `json:"metadata"`
 	}]
+	var services kubeList[kubeService]
+	var ingresses kubeList[kubeIngress]
 	requests := []struct {
 		name, path string
 		output     any
@@ -191,6 +251,8 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 		{"pods", "/api/v1/pods", &pods, false},
 		{"nodes", "/api/v1/nodes", &nodes, false},
 		{"namespaces", "/api/v1/namespaces", &namespaces, false},
+		{"services", "/api/v1/services", &services, false},
+		{"ingresses", "/apis/networking.k8s.io/v1/ingresses", &ingresses, false},
 	}
 	workloadSources := 0
 	for _, source := range requests {
@@ -209,6 +271,8 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("Kubernetes credentials cannot list supported workloads")
 	}
 	snapshot.Namespaces = len(namespaces.Items)
+	snapshot.Services = externalServices(services.Items)
+	snapshot.Ingresses = externalIngresses(ingresses.Items)
 
 	workloads := make(map[string]*Workload)
 	ownerToWorkload := make(map[string]string)
@@ -330,6 +394,112 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 		snapshot.Errors = nil
 	}
 	return snapshot, nil
+}
+
+func externalServices(items []kubeService) []ServiceExposure {
+	result := make([]ServiceExposure, 0)
+	for _, item := range items {
+		if item.Spec.Type != "NodePort" && item.Spec.Type != "LoadBalancer" && item.Spec.Type != "ExternalName" && len(item.Spec.ExternalIPs) == 0 {
+			continue
+		}
+		service := ServiceExposure{
+			Namespace: item.Metadata.Namespace, Name: item.Metadata.Name, Type: item.Spec.Type,
+			ExternalName: item.Spec.ExternalName, ExternalTrafficPolicy: item.Spec.ExternalTrafficPolicy,
+			ClusterIPs: append([]string(nil), item.Spec.ClusterIPs...), ExternalAddresses: append([]string(nil), item.Spec.ExternalIPs...),
+		}
+		if service.Type == "" {
+			service.Type = "ClusterIP"
+		}
+		if len(service.ClusterIPs) == 0 && item.Spec.ClusterIP != "" && item.Spec.ClusterIP != "None" {
+			service.ClusterIPs = []string{item.Spec.ClusterIP}
+		}
+		for _, ingress := range item.Status.LoadBalancer.Ingress {
+			service.ExternalAddresses = appendUnique(service.ExternalAddresses, ingress.IP, ingress.Hostname)
+		}
+		for _, port := range item.Spec.Ports {
+			service.Ports = append(service.Ports, ServicePort{
+				Name: port.Name, Protocol: port.Protocol, AppProtocol: port.AppProtocol,
+				Port: port.Port, TargetPort: intOrString(port.TargetPort), NodePort: port.NodePort,
+			})
+		}
+		result = append(result, service)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Namespace+"\x00"+result[i].Name < result[j].Namespace+"\x00"+result[j].Name
+	})
+	return result
+}
+
+func externalIngresses(items []kubeIngress) []IngressExposure {
+	result := make([]IngressExposure, 0, len(items))
+	for _, item := range items {
+		ingress := IngressExposure{Namespace: item.Metadata.Namespace, Name: item.Metadata.Name, Class: item.Spec.IngressClassName}
+		for _, address := range item.Status.LoadBalancer.Ingress {
+			ingress.Addresses = appendUnique(ingress.Addresses, address.IP, address.Hostname)
+		}
+		tlsHosts := make(map[string]bool)
+		for _, tls := range item.Spec.TLS {
+			for _, host := range tls.Hosts {
+				tlsHosts[host] = true
+			}
+		}
+		if item.Spec.DefaultBackend != nil {
+			ingress.Rules = append(ingress.Rules, ingressRule("", "/", "", *item.Spec.DefaultBackend, false))
+		}
+		for _, rule := range item.Spec.Rules {
+			for _, path := range rule.HTTP.Paths {
+				ingress.Rules = append(ingress.Rules, ingressRule(rule.Host, path.Path, path.PathType, path.Backend, tlsHosts[rule.Host]))
+			}
+		}
+		result = append(result, ingress)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Namespace+"\x00"+result[i].Name < result[j].Namespace+"\x00"+result[j].Name
+	})
+	return result
+}
+
+func ingressRule(host, path, pathType string, backend kubeIngressBackend, tls bool) IngressRule {
+	servicePort := backend.Service.Port.Name
+	if servicePort == "" && backend.Service.Port.Number > 0 {
+		servicePort = strconv.Itoa(backend.Service.Port.Number)
+	}
+	return IngressRule{Host: host, Path: path, PathType: pathType, Service: backend.Service.Name, ServicePort: servicePort, TLS: tls}
+}
+
+func intOrString(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return value
+	}
+	var number int
+	if err := json.Unmarshal(raw, &number); err == nil && number > 0 {
+		return strconv.Itoa(number)
+	}
+	return ""
+}
+
+func appendUnique(values []string, candidates ...string) []string {
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		found := false
+		for _, value := range values {
+			if value == candidate {
+				found = true
+				break
+			}
+		}
+		if !found {
+			values = append(values, candidate)
+		}
+	}
+	return values
 }
 
 func workloadKey(namespace, kind, name string) string { return namespace + "/" + kind + "/" + name }

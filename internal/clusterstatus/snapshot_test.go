@@ -49,18 +49,20 @@ contexts:
 
 func TestHTTPSnapshotAggregatesPodsAndMetricsByStableWorkload(t *testing.T) {
 	responses := map[string]string{
-		"/version":                           `{"gitVersion":"v1.35.1"}`,
-		"/apis/apps/v1/deployments":          `{"items":[{"metadata":{"name":"api","namespace":"production","uid":"deployment-api","creationTimestamp":"2026-08-01T00:00:00Z","annotations":{"deployment.kubernetes.io/revision":"42"}},"spec":{"replicas":2,"template":{"spec":{"containers":[{"name":"api","image":"ghcr.io/acme/api:v2"}]}}},"status":{"readyReplicas":2}}]}`,
-		"/apis/apps/v1/statefulsets":         `{"items":[]}`,
-		"/apis/apps/v1/daemonsets":           `{"items":[]}`,
-		"/apis/apps/v1/replicasets":          `{"items":[{"metadata":{"name":"api-7dc9","namespace":"production","uid":"rs-api","ownerReferences":[{"uid":"deployment-api","kind":"Deployment","name":"api"}]}}]}`,
-		"/apis/batch/v1/cronjobs":            `{"items":[]}`,
-		"/apis/batch/v1/jobs":                `{"items":[]}`,
-		"/api/v1/pods":                       `{"items":[{"metadata":{"name":"api-7dc9-a","namespace":"production","ownerReferences":[{"uid":"rs-api","kind":"ReplicaSet","name":"api-7dc9"}]},"spec":{"nodeName":"worker-01","containers":[{"name":"api","image":"ghcr.io/acme/api:v2"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","ready":true,"restartCount":1}]}},{"metadata":{"name":"api-7dc9-b","namespace":"production","ownerReferences":[{"uid":"rs-api","kind":"ReplicaSet","name":"api-7dc9"}]},"spec":{"nodeName":"worker-02","containers":[{"name":"api","image":"ghcr.io/acme/api:v2"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","ready":true,"restartCount":0}]}}]}`,
-		"/api/v1/nodes":                      `{"items":[{"metadata":{"name":"worker-01","labels":{"node-role.kubernetes.io/worker":""}},"status":{"conditions":[{"type":"Ready","status":"True"}],"capacity":{"cpu":"4","memory":"8Gi"},"nodeInfo":{"kubeletVersion":"v1.35.1"}}},{"metadata":{"name":"worker-02"},"status":{"conditions":[{"type":"Ready","status":"True"}],"capacity":{"cpu":"4","memory":"8Gi"},"nodeInfo":{"kubeletVersion":"v1.35.1"}}}]}`,
-		"/api/v1/namespaces":                 `{"items":[{"metadata":{"name":"production"}},{"metadata":{"name":"kube-system"}}]}`,
-		"/apis/metrics.k8s.io/v1beta1/pods":  `{"items":[{"metadata":{"name":"api-7dc9-a","namespace":"production"},"containers":[{"name":"api","usage":{"cpu":"125m","memory":"128Mi"}}]},{"metadata":{"name":"api-7dc9-b","namespace":"production"},"containers":[{"name":"api","usage":{"cpu":"75m","memory":"96Mi"}}]}]}`,
-		"/apis/metrics.k8s.io/v1beta1/nodes": `{"items":[{"metadata":{"name":"worker-01"},"usage":{"cpu":"400m","memory":"2Gi"}},{"metadata":{"name":"worker-02"},"usage":{"cpu":"800m","memory":"1Gi"}}]}`,
+		"/version":                             `{"gitVersion":"v1.35.1"}`,
+		"/apis/apps/v1/deployments":            `{"items":[{"metadata":{"name":"api","namespace":"production","uid":"deployment-api","creationTimestamp":"2026-08-01T00:00:00Z","annotations":{"deployment.kubernetes.io/revision":"42"}},"spec":{"replicas":2,"template":{"spec":{"containers":[{"name":"api","image":"ghcr.io/acme/api:v2"}]}}},"status":{"readyReplicas":2}}]}`,
+		"/apis/apps/v1/statefulsets":           `{"items":[]}`,
+		"/apis/apps/v1/daemonsets":             `{"items":[]}`,
+		"/apis/apps/v1/replicasets":            `{"items":[{"metadata":{"name":"api-7dc9","namespace":"production","uid":"rs-api","ownerReferences":[{"uid":"deployment-api","kind":"Deployment","name":"api"}]}}]}`,
+		"/apis/batch/v1/cronjobs":              `{"items":[]}`,
+		"/apis/batch/v1/jobs":                  `{"items":[]}`,
+		"/api/v1/pods":                         `{"items":[{"metadata":{"name":"api-7dc9-a","namespace":"production","ownerReferences":[{"uid":"rs-api","kind":"ReplicaSet","name":"api-7dc9"}]},"spec":{"nodeName":"worker-01","containers":[{"name":"api","image":"ghcr.io/acme/api:v2"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","ready":true,"restartCount":1}]}},{"metadata":{"name":"api-7dc9-b","namespace":"production","ownerReferences":[{"uid":"rs-api","kind":"ReplicaSet","name":"api-7dc9"}]},"spec":{"nodeName":"worker-02","containers":[{"name":"api","image":"ghcr.io/acme/api:v2"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","ready":true,"restartCount":0}]}}]}`,
+		"/api/v1/nodes":                        `{"items":[{"metadata":{"name":"worker-01","labels":{"node-role.kubernetes.io/worker":""}},"status":{"conditions":[{"type":"Ready","status":"True"}],"capacity":{"cpu":"4","memory":"8Gi"},"nodeInfo":{"kubeletVersion":"v1.35.1"}}},{"metadata":{"name":"worker-02"},"status":{"conditions":[{"type":"Ready","status":"True"}],"capacity":{"cpu":"4","memory":"8Gi"},"nodeInfo":{"kubeletVersion":"v1.35.1"}}}]}`,
+		"/api/v1/namespaces":                   `{"items":[{"metadata":{"name":"production"}},{"metadata":{"name":"kube-system"}}]}`,
+		"/api/v1/services":                     `{"items":[{"metadata":{"name":"api-public","namespace":"production"},"spec":{"type":"NodePort","clusterIPs":["10.43.0.20"],"externalTrafficPolicy":"Local","ports":[{"name":"http","protocol":"TCP","port":80,"targetPort":8080,"nodePort":30080}]}},{"metadata":{"name":"database","namespace":"production"},"spec":{"type":"ClusterIP","clusterIP":"10.43.0.21","ports":[{"protocol":"TCP","port":5432,"targetPort":5432}]}}]}`,
+		"/apis/networking.k8s.io/v1/ingresses": `{"items":[{"metadata":{"name":"api","namespace":"production"},"spec":{"ingressClassName":"traefik","tls":[{"hosts":["api.example.test"]}],"rules":[{"host":"api.example.test","http":{"paths":[{"path":"/v1","pathType":"Prefix","backend":{"service":{"name":"api-public","port":{"number":80}}}}]}}]},"status":{"loadBalancer":{"ingress":[{"ip":"192.0.2.10"}]}}}]}`,
+		"/apis/metrics.k8s.io/v1beta1/pods":    `{"items":[{"metadata":{"name":"api-7dc9-a","namespace":"production"},"containers":[{"name":"api","usage":{"cpu":"125m","memory":"128Mi"}}]},{"metadata":{"name":"api-7dc9-b","namespace":"production"},"containers":[{"name":"api","usage":{"cpu":"75m","memory":"96Mi"}}]}]}`,
+		"/apis/metrics.k8s.io/v1beta1/nodes":   `{"items":[{"metadata":{"name":"worker-01"},"usage":{"cpu":"400m","memory":"2Gi"}},{"metadata":{"name":"worker-02"},"usage":{"cpu":"800m","memory":"1Gi"}}]}`,
 	}
 	client := testHTTPKubeClient(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer token" {
@@ -93,6 +95,12 @@ func TestHTTPSnapshotAggregatesPodsAndMetricsByStableWorkload(t *testing.T) {
 	if len(snapshot.Nodes) != 2 || snapshot.Nodes[0].CPUPercent != 10 || snapshot.Nodes[0].MemoryPercent != 25 {
 		t.Fatalf("nodes: %#v", snapshot.Nodes)
 	}
+	if len(snapshot.Services) != 1 || snapshot.Services[0].Name != "api-public" || snapshot.Services[0].Ports[0].NodePort != 30080 || snapshot.Services[0].ExternalTrafficPolicy != "Local" {
+		t.Fatalf("external services: %#v", snapshot.Services)
+	}
+	if len(snapshot.Ingresses) != 1 || snapshot.Ingresses[0].Class != "traefik" || snapshot.Ingresses[0].Addresses[0] != "192.0.2.10" || snapshot.Ingresses[0].Rules[0].Path != "/v1" || !snapshot.Ingresses[0].Rules[0].TLS {
+		t.Fatalf("ingresses: %#v", snapshot.Ingresses)
+	}
 }
 
 func TestHTTPSnapshotKeepsWorkloadsWhenPodAccessIsDenied(t *testing.T) {
@@ -114,6 +122,29 @@ func TestHTTPSnapshotKeepsWorkloadsWhenPodAccessIsDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(snapshot.Workloads) != 1 || snapshot.Workloads[0].Name != "api" || snapshot.Errors["pods"] == "" {
+		t.Fatalf("partial snapshot = %#v", snapshot)
+	}
+}
+
+func TestHTTPSnapshotKeepsWorkloadsWhenExternalAccessIsDenied(t *testing.T) {
+	client := testHTTPKubeClient(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/version":
+			_, _ = response.Write([]byte(`{"gitVersion":"v1.35.1"}`))
+		case "/apis/apps/v1/deployments":
+			_, _ = response.Write([]byte(`{"items":[{"metadata":{"name":"api","namespace":"production","uid":"api"},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"api","image":"api:v1"}]}}},"status":{"readyReplicas":1}}]}`))
+		case "/api/v1/services", "/apis/networking.k8s.io/v1/ingresses":
+			http.Error(response, `forbidden`, http.StatusForbidden)
+		default:
+			_, _ = response.Write([]byte(`{"items":[]}`))
+		}
+	}))
+	snapshot, err := client.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Workloads) != 1 || snapshot.Errors["services"] == "" || snapshot.Errors["ingresses"] == "" {
 		t.Fatalf("partial snapshot = %#v", snapshot)
 	}
 }

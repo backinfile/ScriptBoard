@@ -108,7 +108,7 @@ Each External Interface function can independently require approval; the default
 
 ### Monitoring and connections
 
-ScriptBoard can show local resources, applications, Docker containers, multiple Kubernetes clusters, websites, and other ScriptBoard machines. Kubernetes connections start in observe-only mode; limited operations must be enabled explicitly.
+ScriptBoard can show local resources, applications, Docker containers, multiple Kubernetes clusters, websites, and other ScriptBoard machines. Kubernetes monitoring includes declared NodePort, LoadBalancer, external IP, ExternalName, and Ingress entry points. Kubernetes connections start in observe-only mode; limited operations must be enabled explicitly.
 
 MySQL, Redis, Kubernetes, website, and model endpoints preserve the secure and plaintext modes supported by their protocols. Plaintext exposes credentials and data. Explicitly skipping certificate verification risks man-in-the-middle attacks; the UI preserves and warns about that choice.
 
