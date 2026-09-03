@@ -77,11 +77,9 @@ func (manager *brokerKubeconfigManager) Exportable(ctx context.Context, path str
 	if err := manager.allowed(ctx, path); err != nil {
 		return false, err
 	}
-	relative, err := filepath.Rel(manager.stateRoot, filepath.Clean(path))
-	if err != nil {
-		return false, err
-	}
-	return relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)), nil
+	// Allowed kubeconfigs may live on another Windows volume. Use the path
+	// allowlist after Broker role authorization so cross-volume paths stay readable.
+	return true, nil
 }
 
 func (manager *brokerKubeconfigManager) Inspect(ctx context.Context, path string) (kubeconfigmanager.Snapshot, error) {

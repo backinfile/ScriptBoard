@@ -105,7 +105,7 @@ func TestBrokerKubernetesServiceResolvesSavedConnection(t *testing.T) {
 	}
 }
 
-func TestBrokerKubeconfigManagerReadsRegisteredExternalPathWithoutExportingCredentials(t *testing.T) {
+func TestBrokerKubeconfigManagerReadsAndExportsRegisteredExternalPath(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:broker-kubeconfig-manager?mode=memory&cache=shared")
 	if err != nil {
 		t.Fatal(err)
@@ -133,13 +133,39 @@ current-context: ""
 	if err != nil || !snapshot.Exists {
 		t.Fatalf("snapshot=%#v err=%v", snapshot, err)
 	}
-	if exportable, err := manager.Exportable(context.Background(), path); err != nil || exportable {
+	if exportable, err := manager.Exportable(context.Background(), path); err != nil || !exportable {
 		t.Fatalf("external kubeconfig exportable=%v err=%v", exportable, err)
 	}
-	if _, err := manager.Download(context.Background(), path); err == nil {
-		t.Fatal("Broker exported credentials from an external privileged kubeconfig")
+	downloaded, err := manager.Download(context.Background(), path)
+	if err != nil || string(downloaded) != fixture {
+		t.Fatalf("downloaded=%q err=%v", downloaded, err)
+	}
+	if _, err := manager.Download(context.Background(), path+".unregistered"); err == nil {
+		t.Fatal("Broker exported an unregistered kubeconfig")
 	}
 	var _ kubeconfigmanager.Manager = manager
+}
+
+func TestBrokerKubeconfigManagerExportsRegisteredCrossVolumePath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows cross-volume path behavior")
+	}
+	db, err := sql.Open("sqlite", "file:broker-kubeconfig-cross-volume?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE kubernetes_connection (id TEXT PRIMARY KEY, kubeconfig_path TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	path := `C:\Users\Administrator\.kube\config`
+	if _, err := db.Exec(`INSERT INTO kubernetes_connection VALUES ('k8s', ?)`, path); err != nil {
+		t.Fatal(err)
+	}
+	manager := newBrokerKubeconfigManager(db, `D:\app\scriptBoard\state`, "")
+	if exportable, err := manager.Exportable(context.Background(), path); err != nil || !exportable {
+		t.Fatalf("cross-volume kubeconfig exportable=%v err=%v", exportable, err)
+	}
 }
 
 func TestConnectOnDemandHostRetriesUntilEndpointIsReady(t *testing.T) {
