@@ -211,3 +211,45 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 		t.Fatalf("Kubernetes log TXT download status=%d disposition=%q body=%s", logDownload.StatusCode, logDownload.Header.Get("Content-Disposition"), logText)
 	}
 }
+
+func TestKubernetesLiveRefreshUpdatesWorkloadMembership(t *testing.T) {
+	fixture := &kubernetesFixtureClient{snapshot: clusterstatus.Snapshot{
+		CollectedAt: time.Now().UTC(),
+		Workloads:   []clusterstatus.Workload{{Key: "default/Deployment/old-api", Namespace: "default", Kind: "Deployment", Name: "old-api"}},
+	}}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), KubernetesFactory: kubernetesFixtureFactory{client: fixture},
+	})
+
+	response, err := client.Get(serverURL + "/monitor/kubernetes/connections/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/monitor/kubernetes/connections", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"cluster"}, "kubeconfig_path": {"/cluster"}, "mode": {"observe"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	location := response.Header.Get("Location")
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(location, "/monitor/kubernetes?cluster=") {
+		t.Fatalf("save connection: status=%d location=%q", response.StatusCode, location)
+	}
+
+	fixture.snapshot = clusterstatus.Snapshot{
+		CollectedAt: time.Now().UTC().Add(time.Minute),
+		Workloads:   []clusterstatus.Workload{{Key: "default/Deployment/new-api", Namespace: "default", Kind: "Deployment", Name: "new-api"}},
+	}
+	response, err = client.Get(serverURL + location + "&refresh=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshed, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if bytes.Contains(refreshed, []byte("old-api")) || !bytes.Contains(refreshed, []byte("new-api")) {
+		t.Fatalf("live refresh did not replace workload membership")
+	}
+}

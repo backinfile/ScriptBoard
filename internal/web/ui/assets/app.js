@@ -7529,7 +7529,11 @@
         root.removeAttribute("aria-busy");
       }
     };
-    setupMonitorRefresh(root, () => replaceSnapshot(location.href, { pushHistory: false }), cleanups, () => snapshotController?.abort());
+    setupMonitorRefresh(root, () => {
+      const destination = new URL(location.href);
+      destination.searchParams.set("refresh", "1");
+      return replaceSnapshot(destination.toString(), { pushHistory: false });
+    }, cleanups, () => snapshotController?.abort());
     const openDetail = async button => {
       if (!drawer || !body) return;
       const url = button.dataset.kubernetesDetailUrl;

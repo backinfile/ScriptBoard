@@ -133,6 +133,7 @@ func TestMonitorTabsReplaceOnlyTheSnapshotAndRestoreScroll(t *testing.T) {
 		[]byte(`"[data-container-pin-list]"`),
 		[]byte(`".container-result-summary"`),
 		[]byte(`".kubernetes-status-tabs a,.kubernetes-sort-link"`),
+		[]byte(`destination.searchParams.set("refresh", "1");`),
 		[]byte(`"[data-kubernetes-alert-slot]"`),
 		[]byte(`"[data-kubernetes-node-list]"`),
 		[]byte(`fetchDocument(destination, { cache: "no-store"`),

@@ -148,7 +148,10 @@ func (a *App) loadKubernetes(request *http.Request, connectionID string, query c
 	if err != nil {
 		return clusterstatus.View{}, err
 	}
-	if view.Connection.Name != "" && view.CollectedAt.IsZero() {
+	// A live-refresh request collects before rendering so workload additions and
+	// removals are reflected immediately instead of repeating the cached snapshot.
+	forceRefresh := request.URL.Query().Get("refresh") == "1"
+	if view.Connection.Name != "" && (forceRefresh || view.CollectedAt.IsZero()) {
 		if err := a.kubernetesStatus.Refresh(request.Context(), connectionID); err != nil {
 			view.Connection.Connected = false
 			view.Connection.Error = err.Error()
