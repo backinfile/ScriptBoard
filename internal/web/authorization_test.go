@@ -59,6 +59,7 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"export monitor configurations", http.MethodGet, "/monitor/websites/export", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"import monitor configurations", http.MethodGet, "/monitor/websites/import", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"file listing", http.MethodGet, "/resources/files", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
+		{"quick access page", http.MethodGet, "/config/quick-access", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
 		{"directory json", http.MethodGet, "/resources/directories", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
 		{"file download", http.MethodGet, "/resources/files/download?path=C%3A%5Cscripts%5Cscript.ps1", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
 		{"file log download", http.MethodGet, "/resources/files/log/download?path=C%3A%5Clogs%5Cservice.log", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},

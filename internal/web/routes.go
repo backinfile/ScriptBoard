@@ -365,6 +365,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /resources/variables/{name}/delete", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.deleteVariable)))
 	mux.Handle("POST /resources/variables/{name}/move", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.moveVariable)))
 	mux.Handle("POST /history/runs/{id}/quick-run", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.saveQuickRun)))
+	mux.Handle("GET /config/quick-access", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.quickAccessPage)))
 	mux.Handle("GET /config/quick-runs", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.quickRunsPage)))
 	mux.Handle("GET /config/groups/new", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.newRecordGroupTask)))
 	mux.Handle("POST /config/groups", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.createRecordGroup)))

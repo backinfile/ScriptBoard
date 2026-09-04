@@ -68,10 +68,12 @@ func (a *App) resolveRecordGroupID(value string) (*string, error) {
 func recordGroupReturnTo(request *http.Request) string {
 	value := strings.TrimSpace(request.URL.Query().Get("return_to"))
 	switch value {
-	case "/config/quick-runs", "/config/schedules", "/resources/variables", "/resources/files", "/monitor/websites":
+	case "/config/quick-access", "/config/quick-runs", "/config/schedules", "/resources/variables", "/resources/files", "/monitor/websites":
 		return value
 	}
 	switch {
+	case strings.HasPrefix(request.URL.Path, "/config/quick-access"):
+		return "/config/quick-access"
 	case strings.HasPrefix(request.URL.Path, "/config/schedules"):
 		return "/config/schedules"
 	case strings.HasPrefix(request.URL.Path, "/resources/files"):

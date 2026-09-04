@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/identity"
 )
 
 const maxFileQuickAccessPins = 30
@@ -58,6 +59,20 @@ func (a *App) fileQuickAccessPins(response http.ResponseWriter, request *http.Re
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	groups, _ := a.loadRecordGroups()
 	_ = json.NewEncoder(response).Encode(map[string]any{"pins": pins, "groups": groups})
+}
+
+func (a *App) quickAccessPage(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = quickAccessTemplate.Execute(response, struct {
+		CSRFToken       string
+		Locale          webLocale
+		CanManageGroups bool
+	}{
+		CSRFToken:       current.csrfToken,
+		Locale:          resolveWebLocale(request),
+		CanManageGroups: identity.Allows(current.role, identity.PermissionManageOperations),
+	})
 }
 
 func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *http.Request) {

@@ -4763,12 +4763,12 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	if isDeferredDataShell(request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = filesTemplate.Execute(response, struct {
-			CSRFToken, CurrentPath, ReturnTo, Query, SortField, Direction               string
-			SortSummary, RootURL, SearchURL, ParentURL                                  string
-			Locale                                                                      webLocale
-			Breadcrumbs                                                                 []fileBreadcrumbView
-			DeferredData, ShowHidden                                                    bool
-			CanWrite, CanMutateCurrent, CanExecute, CanManageExecution, CanManageGroups bool
+			CSRFToken, CurrentPath, ReturnTo, Query, SortField, Direction string
+			SortSummary, RootURL, SearchURL, ParentURL                    string
+			Locale                                                        webLocale
+			Breadcrumbs                                                   []fileBreadcrumbView
+			DeferredData, ShowHidden                                      bool
+			CanWrite, CanMutateCurrent, CanExecute, CanManageExecution    bool
 		}{
 			CSRFToken: current.csrfToken, CurrentPath: relative, ReturnTo: request.URL.RequestURI(),
 			Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
@@ -4776,7 +4776,6 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			Locale: locale, Breadcrumbs: buildHostBreadcrumbs(relative, sortField, direction, showHidden), DeferredData: true, ShowHidden: showHidden,
 			CanWrite: identity.Allows(current.role, identity.PermissionWriteFiles), CanMutateCurrent: identity.Allows(current.role, identity.PermissionWriteFiles) && relative != "", CanExecute: identity.Allows(current.role, identity.PermissionExecute),
 			CanManageExecution: identity.Allows(current.role, identity.PermissionManageExecution),
-			CanManageGroups:    identity.Allows(current.role, identity.PermissionManageOperations),
 		})
 		return
 	}
@@ -4887,7 +4886,6 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		CanMutateCurrent   bool
 		CanExecute         bool
 		CanManageExecution bool
-		CanManageGroups    bool
 		ParentURL          string
 		Breadcrumbs        []fileBreadcrumbView
 		Locale             webLocale
@@ -4902,7 +4900,6 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		Pagination: pagination, ParentURL: parentURL,
 		CanWrite: identity.Allows(current.role, identity.PermissionWriteFiles), CanMutateCurrent: identity.Allows(current.role, identity.PermissionWriteFiles) && relative != "", CanExecute: identity.Allows(current.role, identity.PermissionExecute),
 		CanManageExecution: identity.Allows(current.role, identity.PermissionManageExecution),
-		CanManageGroups:    identity.Allows(current.role, identity.PermissionManageOperations),
 		Breadcrumbs:        breadcrumbs, Locale: locale, ShowHidden: showHidden,
 	})
 }

@@ -562,7 +562,7 @@ func TestFilesPageHidesDotEntriesByDefaultAndPreservesTheVisibilityChoice(t *tes
 	}
 }
 
-func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
+func TestQuickAccessIsManagedOnItsOwnConfigurationPage(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -587,12 +587,40 @@ func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 	}
 	page := string(body)
 	for _, expected := range []string{
-		`class="file-quick-access"`,
-		`data-file-quick-access`,
-		`data-file-quick-list`,
 		`data-file-pin-path="` + html.EscapeString(filepath.Join(hostRoot, "automation")) + `"`,
 		`data-file-pin-label="automation"`,
 		`data-file-pin-href="` + html.EscapeString(hostFileHref("/resources/files", filepath.Join(hostRoot, "automation"))) + `"`,
+		"Pin directory",
+		`class="icon-button file-pin-button" type="button" hidden data-file-pin data-file-pin-path="` + html.EscapeString(filepath.Join(hostRoot, "notes.txt")) + `"`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("files page does not contain %q: %s", expected, page)
+		}
+	}
+	for _, removed := range []string{`class="file-quick-access"`, `data-file-quick-edit-drawer`, `>Quick access</strong>`} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("files page still contains Quick access UI %q: %s", removed, page)
+		}
+	}
+	if strings.Contains(page, `data-file-pin-action-label`) {
+		t.Fatalf("file Pin action should use the same icon-button treatment as directories: %s", page)
+	}
+
+	response, err = client.Get(serverURL + "/config/quick-access")
+	if err != nil {
+		t.Fatalf("get Quick access page: %v", err)
+	}
+	body, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read Quick access page: %v", err)
+	}
+	page = string(body)
+	for _, expected := range []string{
+		`href="/config/quick-access" aria-current="page"`,
+		`class="file-quick-access"`,
+		`data-file-quick-access`,
+		`data-file-quick-list`,
 		`data-validation-url="/resources/files/validate"`,
 		`data-pins-url="/resources/files/quick-access"`,
 		`data-csrf-token="`,
@@ -600,23 +628,19 @@ func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 		`data-file-quick-one-label>item</span>`,
 		`data-file-quick-many-label>items</span>`,
 		"Quick access",
-		"Pin directory",
-		`class="icon-button file-pin-button" type="button" hidden data-file-pin data-file-pin-path="` + html.EscapeString(filepath.Join(hostRoot, "notes.txt")) + `"`,
 		`data-file-quick-edit-drawer`,
 		`data-file-quick-edit-form`,
+		`href="/resources/files"`,
 	} {
 		if !strings.Contains(page, expected) {
-			t.Fatalf("files page does not contain %q: %s", expected, page)
+			t.Fatalf("Quick access page does not contain %q: %s", expected, page)
 		}
 	}
-	if strings.Contains(page, `data-file-quick-access data-validation-url="/resources/files/validate" open`) {
-		t.Fatalf("quick access should be collapsed outside a Files tab navigation: %s", page)
-	}
-	if strings.Contains(page, "Pinned folders are saved") {
-		t.Fatalf("Quick access still renders explanatory copy: %s", page)
-	}
-	if strings.Contains(page, `data-file-pin-action-label`) {
-		t.Fatalf("file Pin action should use the same icon-button treatment as directories: %s", page)
+	configurationStart := strings.Index(page, "<h2>Configuration</h2>")
+	quickAccessLink := strings.Index(page, `href="/config/quick-access" aria-current="page"`)
+	quickRunsLink := strings.Index(page, `href="/config/quick-runs"`)
+	if configurationStart < 0 || quickAccessLink <= configurationStart || quickRunsLink <= quickAccessLink {
+		t.Fatalf("Quick access is not ordered above Quick Runs in Configuration: %s", page)
 	}
 
 	response, err = client.Get(serverURL + "/assets/app-v2.js")
@@ -636,8 +660,7 @@ func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 		`if (!link.hasAttribute("aria-disabled")) {`,
 		`let openWhenValidated = false`,
 		`location.assign(pin.href)`,
-		`openFileQuickAccess: mainNavigation && destination.pathname === "/resources/files"`,
-		`initFileQuickAccess(document, cleanups, options.openFileQuickAccess === true)`,
+		`initFileQuickAccess(document, cleanups)`,
 		`savePin("rename"`,
 		`savePin("reorder"`,
 		`document.body.append(drawerHost)`,
@@ -951,7 +974,7 @@ func TestOperatorGetsReadOnlyFilesWithoutAnUploadDropTarget(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("operator files status=%d, want %d: %s", response.StatusCode, http.StatusOK, page)
 	}
-	for _, expected := range []string{`data-file-quick-access`, `name="show_hidden" value="1"`} {
+	for _, expected := range []string{`data-file-pin-controller`, `href="/config/quick-access"`, `name="show_hidden" value="1"`} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("operator files page does not contain %q: %s", expected, page)
 		}

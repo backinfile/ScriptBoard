@@ -11,7 +11,7 @@ func TestPrimaryNavigationPagesShareHeadingContract(t *testing.T) {
 	t.Parallel()
 
 	templates := []string{
-		"applications.html", "containers.html", "files.html", "variables.html", "runs.html",
+		"applications.html", "containers.html", "files.html", "quick-access.html", "variables.html", "runs.html",
 		"audit.html", "service-logs.html", "quick-runs.html", "schedules.html", "external-interfaces.html",
 	}
 	for _, name := range templates {
@@ -50,27 +50,27 @@ func TestPrimaryNavigationPagesShareHeadingContract(t *testing.T) {
 	}
 }
 
-func TestFileGroupActionPrecedesNewDirectoryInHeading(t *testing.T) {
+func TestQuickAccessGroupActionPrecedesBrowseFilesInHeading(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile(filepath.Join("ui", "templates", "files.html"))
+	source, err := os.ReadFile(filepath.Join("ui", "templates", "quick-access.html"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	headingEnd := bytes.Index(source, []byte(`</header>`))
 	if headingEnd < 0 {
-		t.Fatal("files heading is missing its closing tag")
+		t.Fatal("Quick access heading is missing its closing tag")
 	}
 	heading := source[:headingEnd]
-	groupAction := []byte(`/config/groups/new?return_to=%2Fresources%2Ffiles`)
-	newDirectoryAction := []byte(`/resources/files/new-directory?path=`)
+	groupAction := []byte(`/config/groups/new?return_to=%2Fconfig%2Fquick-access`)
+	browseFilesAction := []byte(`href="/resources/files"`)
 	groupIndex := bytes.Index(heading, groupAction)
-	newDirectoryIndex := bytes.Index(heading, newDirectoryAction)
-	if groupIndex < 0 || newDirectoryIndex < 0 || groupIndex >= newDirectoryIndex {
-		t.Fatalf("file heading actions must place New group before New directory")
+	browseFilesIndex := bytes.Index(heading, browseFilesAction)
+	if groupIndex < 0 || browseFilesIndex < 0 || groupIndex >= browseFilesIndex {
+		t.Fatalf("Quick access heading actions must place New group before Browse files")
 	}
 	if bytes.Contains(source[headingEnd:], groupAction) {
-		t.Fatal("New group action must not remain inside the Quick access panel")
+		t.Fatal("New group action must not be duplicated inside the Quick access panel")
 	}
 }

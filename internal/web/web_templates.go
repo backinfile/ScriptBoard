@@ -45,6 +45,7 @@ var (
 	fileConflictTemplate              = mustWebTemplate("file-conflict")
 	fileOperationTemplate             = mustWebTemplate("file-operation")
 	filesTemplate                     = mustWebTemplate("files")
+	quickAccessTemplate               = mustWebTemplate("quick-access")
 	mfaTemplate                       = mustWebTemplate("mfa")
 	mcpSettingsTemplate               = mustWebTemplate("mcp-settings")
 	loginTemplate                     = mustWebTemplate("login")

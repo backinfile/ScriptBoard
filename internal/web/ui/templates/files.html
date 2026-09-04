@@ -11,8 +11,7 @@
 <main class="workspace files-page" data-grouped-records="file-quick-access-groups">
   <header class="page-heading primary-page-heading">
     <div><p class="page-eyebrow">{{t .Locale "files.eyebrow"}}</p><h1>{{t .Locale "files.title"}}</h1><p>{{t .Locale "files.description"}}</p></div>
-    {{if or .CanManageGroups .CanMutateCurrent}}<div class="heading-actions files-heading-actions">
-      {{if .CanManageGroups}}<a class="button" href="/config/groups/new?return_to=%2Fresources%2Ffiles" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "groups.create"}}</a>{{end}}
+    {{if .CanMutateCurrent}}<div class="heading-actions files-heading-actions">
       {{if .CanMutateCurrent}}<a class="button" href="/resources/files/new-directory?path={{urlquery .CurrentPath}}" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "files.new_directory"}}</a>
       <a class="button button--primary" href="/resources/files/upload?path={{urlquery .CurrentPath}}" data-task-link><span data-lucide="upload" aria-hidden="true"></span>{{t .Locale "files.upload"}}</a>{{end}}
     </div>{{end}}
@@ -54,39 +53,7 @@
       <span><strong data-file-drop-title></strong><small id="file-drop-status" data-file-drop-status></small></span>
     </div>{{end}}
 
-    <details class="file-quick-access" data-file-quick-access data-validation-url="/resources/files/validate"
-      data-pins-url="/resources/files/quick-access" data-csrf-token="{{.CSRFToken}}"
-	  data-ungrouped-label="{{t .Locale "groups.ungrouped"}}"
-      data-manage-groups="{{if .CanManageGroups}}true{{else}}false{{end}}"
-      data-save-failed="{{t .Locale "files.quick_access_save_failed"}}" hidden
-      data-remove-label="{{t .Locale "files.remove_quick_access"}}"
-      data-edit-label="{{t .Locale "files.edit_quick_access"}}">
-      <summary>
-        <span class="file-quick-access__icon" data-lucide="pin" aria-hidden="true"></span>
-        <span><strong>{{t .Locale "files.quick_access"}}</strong></span>
-        <span class="file-quick-access__count"><span data-file-quick-count>0</span> <span data-file-quick-count-label>{{t .Locale "files.quick_access_folders"}}</span></span>
-        <span data-lucide="chevron-down" aria-hidden="true"></span>
-      </summary>
-      <div class="file-quick-access__body">
-        <p class="file-quick-access__status" role="alert" data-file-quick-status hidden></p>
-        <p data-file-quick-empty>{{t .Locale "files.quick_access_empty"}}</p>
-        <ul data-file-quick-list></ul>
-      </div>
-      <span hidden data-file-quick-one-label>{{t .Locale "files.quick_access_folder"}}</span>
-      <span hidden data-file-quick-many-label>{{t .Locale "files.quick_access_folders"}}</span>
-    </details>
-    <div class="file-quick-edit-drawer-host" data-file-quick-edit-drawer aria-hidden="true">
-      <button class="file-quick-edit-drawer__scrim" type="button" aria-label="{{t .Locale "common.close"}}" data-file-quick-edit-close></button>
-      <aside class="file-quick-edit-drawer" role="dialog" aria-modal="true" aria-labelledby="file-quick-edit-title" tabindex="-1">
-        <header><div><p>{{t .Locale "files.quick_access"}}</p><h2 id="file-quick-edit-title">{{t .Locale "files.edit_quick_access_title"}}</h2></div><button class="icon-button icon-button--quiet" type="button" aria-label="{{t .Locale "common.close"}}" data-file-quick-edit-close><span data-lucide="x" aria-hidden="true"></span></button></header>
-        <form data-file-quick-edit-form>
-          <input type="hidden" name="path" data-file-quick-edit-path>
-          <div class="file-quick-edit-drawer__body"><label>{{t .Locale "files.quick_access_display_name"}} <input name="label" maxlength="128" autocomplete="off" required data-file-quick-edit-label></label><label>{{t .Locale "quick_runs.group"}} <select name="group_id" data-file-quick-edit-group><option value="">{{t .Locale "groups.ungrouped"}}</option></select></label><small data-file-quick-edit-technical></small></div>
-          <!-- Keep Upload as the workspace's single primary action while this drawer provides contextual editing. -->
-          <footer><button class="button button--quiet" type="button" data-file-quick-edit-close>{{t .Locale "common.cancel"}}</button><button class="button" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
-        </form>
-      </aside>
-    </div>
+    <div data-file-pin-controller data-pins-url="/resources/files/quick-access" data-csrf-token="{{.CSRFToken}}" data-save-failed="{{t .Locale "files.quick_access_save_failed"}}" hidden></div>
 
     <section class="file-search-region" aria-label="{{t .Locale "files.search"}}">
       <form class="file-search-form" method="get" action="{{.SearchURL}}" data-async data-async-push data-file-search data-focus-after-navigation="[data-search-input]">

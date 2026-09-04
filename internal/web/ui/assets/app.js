@@ -1387,7 +1387,6 @@
       setSidebar(false);
       window.scrollTo({ top: partialNavigation || options.preserveScroll ? previousScrollY : 0, behavior: "auto" });
       initPage({
-        openFileQuickAccess: options.openFileQuickAccess === true,
         // Fix: the deferred data pass performs a second cleanup; do not expose
         // Quick access during the shell pass or that cleanup can close its editor.
         deferFileQuickAccess: deferredData,
@@ -1443,7 +1442,7 @@
           history.replaceState({ pjax: true }, "", dataResult.response.url);
         }
         updateShellLocation(dataResult.response.url);
-        initPage({ openFileQuickAccess: options.openFileQuickAccess === true });
+        initPage();
       }
 
       if (options.focusSelector) {
@@ -4518,10 +4517,10 @@
     });
   }
 
-  function initFileQuickAccess(root = document, cleanups = [], initiallyOpen = false) {
-    const disclosure = root.querySelector("[data-file-quick-access]");
+  function initFileQuickAccess(root = document, cleanups = []) {
+    const disclosure = root.querySelector("[data-file-quick-access],[data-file-pin-controller]");
     if (!disclosure) return;
-    disclosure.open = initiallyOpen;
+    const pinControls = Array.from(root.querySelectorAll("[data-file-pin]"));
     const list = disclosure.querySelector("[data-file-quick-list]");
     const empty = disclosure.querySelector("[data-file-quick-empty]");
     const count = disclosure.querySelector("[data-file-quick-count]");
@@ -4529,6 +4528,9 @@
     const oneLabel = disclosure.querySelector("[data-file-quick-one-label]");
     const manyLabel = disclosure.querySelector("[data-file-quick-many-label]");
 	const status = disclosure.querySelector("[data-file-quick-status]");
+    const hasPresentation = Boolean(list && empty && count && countLabel && oneLabel && manyLabel && status);
+    if (!hasPresentation && pinControls.length === 0) return;
+    if (hasPresentation) disclosure.open = disclosure.dataset.initiallyOpen === "true";
     const drawerHost = root.querySelector("[data-file-quick-edit-drawer]");
     const drawer = drawerHost?.querySelector(".file-quick-edit-drawer");
     const editForm = drawerHost?.querySelector("[data-file-quick-edit-form]");
@@ -4536,7 +4538,6 @@
     const editLabel = drawerHost?.querySelector("[data-file-quick-edit-label]");
     const editGroup = drawerHost?.querySelector("[data-file-quick-edit-group]");
     const editTechnical = drawerHost?.querySelector("[data-file-quick-edit-technical]");
-    if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel || !status) return;
     // Keep the fixed drawer in the viewport layer because animated workspace
     // ancestors establish their own containing blocks for fixed descendants.
     const drawerOriginParent = drawerHost?.parentElement;
@@ -4592,10 +4593,12 @@
 	  return validation;
 	};
 	const showSaveError = () => {
+	  if (!status) return;
 	  status.textContent = disclosure.dataset.saveFailed;
 	  status.hidden = false;
 	};
 	const clearSaveError = () => {
+	  if (!status) return;
 	  status.textContent = "";
 	  status.hidden = true;
 	};
@@ -4613,7 +4616,6 @@
 	  groups = normalizeGroups(payload?.groups);
 	  clearSaveError();
     };
-    const pinControls = Array.from(root.querySelectorAll("[data-file-pin]"));
     const renderControl = control => {
       const pinned = pins.some(pin => pin.path === control.dataset.filePinPath);
       const label = pinned ? control.dataset.unpinLabel : control.dataset.pinLabel;
@@ -4689,6 +4691,7 @@
       try { await saveOrder(); } catch (error) { if (error?.name !== "AbortError") showSaveError(); }
     };
     const render = () => {
+      if (hasPresentation) {
       count.textContent = String(pins.length);
       countLabel.textContent = pins.length === 1 ? oneLabel.textContent : manyLabel.textContent;
       empty.hidden = pins.length > 0 || groups.length > 0;
@@ -4721,7 +4724,7 @@
 		if (section.id && disclosure.dataset.manageGroups === "true") {
 		  const moveGroupForm = document.createElement("form");
 		  moveGroupForm.method = "post";
-		  moveGroupForm.action = `/config/groups/${encodeURIComponent(section.id)}/move?return_to=%2Fresources%2Ffiles`;
+		  moveGroupForm.action = `/config/groups/${encodeURIComponent(section.id)}/move?return_to=%2Fconfig%2Fquick-access`;
 		  moveGroupForm.dataset.async = "";
 		  const csrf = document.createElement("input");
 		  csrf.type = "hidden"; csrf.name = "csrf_token"; csrf.value = disclosure.dataset.csrfToken || "";
@@ -4732,12 +4735,12 @@
 		  moveGroupForm.append(csrf, up, down);
 		  const editGroupLink = document.createElement("a");
 		  editGroupLink.className = "icon-button";
-		  editGroupLink.href = `/config/groups/${encodeURIComponent(section.id)}/edit?return_to=%2Fresources%2Ffiles`;
+		  editGroupLink.href = `/config/groups/${encodeURIComponent(section.id)}/edit?return_to=%2Fconfig%2Fquick-access`;
 		  editGroupLink.dataset.taskLink = "";
 		  editGroupLink.append(makeIcon("square-pen"));
 		  const deleteGroupLink = document.createElement("a");
 		  deleteGroupLink.className = "icon-button";
-		  deleteGroupLink.href = `/config/groups/${encodeURIComponent(section.id)}/delete?return_to=%2Fresources%2Ffiles`;
+		  deleteGroupLink.href = `/config/groups/${encodeURIComponent(section.id)}/delete?return_to=%2Fconfig%2Fquick-access`;
 		  deleteGroupLink.dataset.taskLink = "";
 		  deleteGroupLink.append(makeIcon("trash-2"));
 		  heading.append(moveGroupForm, editGroupLink, deleteGroupLink);
@@ -4848,9 +4851,10 @@
         edit.append(makeIcon("pencil"));
         edit.addEventListener("click", () => openEditor(pin));
         item.append(grip, link, edit, remove);
-        list.append(item);
+		list.append(item);
 		});
       });
+      }
       pinControls.forEach(renderControl);
     };
 
@@ -4899,7 +4903,7 @@
 		pins = legacyPins;
 		showSaveError();
 	  }
-	  disclosure.hidden = false;
+	  if (hasPresentation) disclosure.hidden = false;
 	  render();
 	};
 	loadPins();
@@ -7922,7 +7926,7 @@
     initFileVisibilityToggle(document, cleanups);
     initFileSelection(document, cleanups);
     if (!options.deferFileQuickAccess) {
-      initFileQuickAccess(document, cleanups, options.openFileQuickAccess === true);
+      initFileQuickAccess(document, cleanups);
     }
 	initFileOperation(cleanups);
     initDirectoryPickers(document, cleanups);
@@ -8034,7 +8038,6 @@
         // 页签切换、排序、分页等同路径导航保持滚动位置，避免整页“刷新感”。
         preserveScroll: link.hasAttribute("data-preserve-scroll") || destination.pathname === location.pathname,
         regionSelector: partialRegion,
-        openFileQuickAccess: mainNavigation && destination.pathname === "/resources/files",
       });
     }
   });
