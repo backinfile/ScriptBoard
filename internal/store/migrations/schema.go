@@ -199,6 +199,13 @@ var baseSchemaStatements = []string{
 			sort_order INTEGER NOT NULL,
 			created_at INTEGER NOT NULL
 		)`,
+	`CREATE TABLE IF NOT EXISTS documents (
+			path TEXT NOT NULL,
+			path_key TEXT PRIMARY KEY,
+			group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL,
+			sort_order INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		)`,
 	`CREATE TABLE IF NOT EXISTS host_metric_minutes (
 			bucket_at INTEGER PRIMARY KEY,
 			sample_count INTEGER NOT NULL,

@@ -536,6 +536,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		"CREATE INDEX IF NOT EXISTS file_operations_phase_idx ON file_operations(phase, created_at)",
 		"CREATE INDEX IF NOT EXISTS file_quick_access_pins_order_idx ON file_quick_access_pins(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS file_quick_access_pins_group_order_idx ON file_quick_access_pins(group_id, sort_order, created_at)",
+		"CREATE INDEX IF NOT EXISTS documents_group_order_idx ON documents(group_id, sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS website_monitors_group_order_idx ON website_monitors(group_id, sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS variables_group_order_idx ON variables(group_id, sort_order, name)",
 		"CREATE INDEX IF NOT EXISTS schedules_shared_group_order_idx ON schedules(group_id, sort_order, created_at)",

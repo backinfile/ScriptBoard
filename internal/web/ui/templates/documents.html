@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "documents.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace documents-page" data-grouped-records="document-groups" data-document-reorder-url="/resources/documents/reorder" data-csrf-token="{{.CSRFToken}}" data-document-reorder-active="{{if .Reorder}}true{{else}}false{{end}}" data-reorder-saving="{{t .Locale "quick_runs.reorder_saving"}}" data-reorder-saved="{{t .Locale "quick_runs.reorder_saved"}}" data-reorder-failed="{{t .Locale "quick_runs.reorder_failed"}}">
+  <header class="page-heading primary-page-heading"><div><p class="page-eyebrow">{{t .Locale "documents.eyebrow"}}</p><h1>{{t .Locale "documents.title"}}</h1><p>{{t .Locale "documents.description"}}</p></div><div class="heading-actions"><a class="button button--quiet" href="/resources/documents?reorder=1" data-document-reorder-toggle aria-controls="document-reorder-guidance" aria-expanded="{{if .Reorder}}true{{else}}false{{end}}"><span data-lucide="arrow-up-down" aria-hidden="true"></span>{{t .Locale "documents.reorder"}}</a>{{if .CanManageGroups}}<a class="button" href="/config/groups/new?return_to=%2Fresources%2Fdocuments" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "groups.create"}}</a>{{end}}<a class="button button--primary" href="/resources/files"><span data-lucide="folder-code" aria-hidden="true"></span>{{t .Locale "documents.go_to_files"}}</a></div></header>
+  <section class="quick-run-reorder-guidance" id="document-reorder-guidance" data-document-reorder-guidance aria-label="{{t .Locale "documents.reorder_label"}}" {{if not .Reorder}}hidden{{end}}>
+    <div><span data-lucide="grip-vertical" aria-hidden="true"></span><strong>{{t .Locale "documents.reordering"}}</strong><span>{{t .Locale "documents.reorder_description"}}</span></div>
+    <div class="quick-run-reorder-actions"><button class="button button--quiet" type="button" data-document-reorder-cancel>{{t .Locale "common.cancel"}}</button><button class="button" type="button" data-document-reorder-finish>{{t .Locale "quick_runs.finish_reorder"}}</button></div>
+    <noscript><a class="button" href="/resources/documents">{{t .Locale "common.cancel"}}</a></noscript>
+  </section>
+  <p class="quick-run-reorder-status" data-document-reorder-status aria-live="polite"></p>
+  <section class="file-search-region" aria-label="{{t .Locale "documents.search"}}">
+    <form class="file-search-form" method="get" action="/resources/documents" data-async data-async-push>
+      <div class="file-search-primary">
+        <label class="file-search-field">
+          <span data-lucide="search" aria-hidden="true"></span>
+          <span class="sr-only">{{t .Locale "documents.search"}}</span>
+          <input type="search" name="q" value="{{.Query}}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="{{t .Locale "documents.search_placeholder"}}">
+        </label>
+        <button class="button file-search-submit" type="submit">{{t .Locale "files.search_button"}}</button>
+      </div>
+    </form>
+  </section>
+  <div data-deferred-region>
+  {{if .DeferredData}}
+  {{template "deferred-loading" .}}
+  {{else}}
+  {{if .Query}}
+  <div class="file-search-results" data-search-results>
+    <p role="status" aria-live="polite"><span data-lucide="scan-search" aria-hidden="true"></span><span>{{t .Locale "documents.results_found"}} <strong>{{.Total}}</strong> {{t .Locale "documents.items"}} · <code>{{.Query}}</code></span></p>
+    <a href="{{.ClearURL}}"><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "files.clear_search"}}</a>
+  </div>
+  {{end}}
+  {{if and .Query (eq .Total 0)}}
+  <section class="no-search-results" data-no-search-results>
+    <span data-lucide="search-x" aria-hidden="true"></span>
+    <p>{{t .Locale "documents.no_results_before"}} <code>{{.Query}}</code> {{t .Locale "documents.no_results_after"}}</p>
+    <a class="button button--quiet" href="{{.ClearURL}}">{{t .Locale "files.clear_search"}}</a>
+  </section>
+  {{else}}
+  {{range .Groups}}
+  <section class="quick-run-group" data-record-group="{{.ID}}" data-document-group="{{.ID}}" data-group-name="{{.Name}}">
+    <header class="quick-run-group__header"><h2 class="quick-run-group__heading"><button class="quick-run-group__toggle" type="button" data-group-toggle aria-expanded="true" aria-controls="document-group-{{.ID}}"><span class="quick-run-group__chevron" data-lucide="chevron-right" aria-hidden="true"></span><span class="quick-run-group__identity"><span data-lucide="{{if .Ungrouped}}folder-open{{else}}folder{{end}}" aria-hidden="true"></span><span class="quick-run-group__name">{{.Name}}</span></span><span class="quick-run-group__count">{{len .Items}} {{t $.Locale "documents.items"}}</span></button></h2>{{if and $.CanManageGroups (not .Ungrouped)}}<details class="action-menu quick-run-group__menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div><a href="/config/groups/{{.ID}}/edit?return_to=%2Fresources%2Fdocuments" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a><a class="danger-action" href="/config/groups/{{.ID}}/delete?return_to=%2Fresources%2Fdocuments" data-task-link><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</a></div></details>{{end}}</header>
+    <div class="quick-run-group__body" id="document-group-{{.ID}}" data-group-body>
+  {{if .Items}}
+  <div class="table-shell"><table class="records-table documents-table">
+    <thead><tr><th><span>{{t $.Locale "common.name"}}</span></th><th><span>{{t $.Locale "common.size"}}</span></th><th><span>{{t $.Locale "common.modified"}}</span></th><th><span class="sr-only">{{t $.Locale "common.actions"}}</span></th></tr></thead>
+    <tbody>{{range .Items}}<tr data-document-id="{{.PathKey}}" data-document-drag-label="{{t $.Locale "documents.drag_item"}}: {{.Name}}"{{if $.Reorder}} draggable="true" tabindex="0" data-document-drag-handle aria-label="{{t $.Locale "documents.drag_item"}}: {{.Name}}"{{end}}>
+      <td data-label="{{t $.Locale "common.name"}}" class="record-primary"><div class="record-primary__content"><span class="record-icon file-icon" aria-hidden="true" data-lucide="{{.IconClass}}"></span><div class="file-name-cell">{{if .ViewURL}}<a href="{{.ViewURL}}">{{.Name}}</a>{{else}}<span>{{.Name}}</span>{{end}}<code class="qr__path" title="{{.Path}}">{{.Path}}</code>{{if not .Accessible}}<small class="file-meta"><span class="file-type-badge">{{t $.Locale "documents.missing"}}</span></small>{{end}}</div></div></td>
+      <td data-label="{{t $.Locale "common.size"}}" class="file-size">{{if .Accessible}}{{.Size}}{{else}}—{{end}}</td>
+      <td data-label="{{t $.Locale "common.modified"}}" class="file-modified">{{if .Accessible}}<time datetime="{{machineTime .ModifiedAt}}" data-local-time>{{localTime $.Locale .ModifiedAt}}</time>{{else}}—{{end}}</td>
+      <td class="record-actions">
+        <div class="record-actions__group">
+        {{if .ViewURL}}<a class="button button--quiet button--compact" href="{{.ViewURL}}"><span data-lucide="eye" aria-hidden="true"></span>{{t $.Locale "common.preview"}}</a>{{end}}
+        {{if .EditURL}}<a class="button button--quiet button--compact" href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
+        {{if .DirectoryURL}}<a class="button button--quiet button--compact" href="{{.DirectoryURL}}"><span data-lucide="folder-open" aria-hidden="true"></span>{{t $.Locale "documents.open_directory"}}</a>{{end}}
+        <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+          <button type="button" hidden data-copy-value="{{.Path}}" data-copy-label="{{t $.Locale "files.copy_path"}}" data-copied-label="{{t $.Locale "files.path_copied"}}" data-copy-failed-label="{{t $.Locale "files.path_copy_failed"}}"><span data-lucide="copy" data-copy-icon aria-hidden="true"></span><span data-copy-value-label>{{t $.Locale "files.copy_path"}}</span></button>
+          <a href="{{.MoveGroupURL}}" data-task-link><span data-lucide="folder-input" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_group"}}</a>
+          <form method="post" action="/resources/documents" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="action" value="remove"><input type="hidden" name="path" value="{{.Path}}"><button class="danger-action" type="submit"><span data-lucide="x" aria-hidden="true"></span>{{t $.Locale "documents.remove"}}</button></form>
+        </div></details>
+        </div>
+      </td>
+    </tr>{{end}}</tbody>
+  </table></div>{{else}}<p class="empty-copy">{{t $.Locale "groups.empty"}}</p>{{end}}
+    </div>
+  </section>{{end}}
+  {{if and (not .Query) (not .Groups) (eq .Total 0)}}
+  <section class="empty-state"><span data-lucide="book-open" aria-hidden="true"></span><p>{{t .Locale "documents.empty"}}</p><a class="button" href="/resources/files">{{t .Locale "documents.go_to_files"}}</a></section>
+  {{end}}
+  {{end}}
+  {{end}}
+  </div>
+</main>
+</body>
+</html>

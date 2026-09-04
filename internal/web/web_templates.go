@@ -32,6 +32,7 @@ var (
 	auditTemplate                     = mustWebTemplate("audit")
 	deleteImpactTemplate              = mustWebTemplate("delete-impact")
 	displaySettingsTemplate           = mustWebTemplate("display-settings")
+	documentsTemplate                 = mustWebTemplate("documents")
 	instanceNameSettingsTemplate      = mustWebTemplate("instance-name-settings")
 	fleetNodeSettingsTemplate         = mustWebTemplate("fleet-node-settings")
 	fleetNodeFormTemplate             = mustWebTemplate("fleet-node-form")
