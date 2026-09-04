@@ -1,7 +1,9 @@
 # Kubernetes 工作负载实时刷新本地部署测试报告
 
-测试时间：2026-09-04（Asia/Shanghai）  
-测试分支：`codex/kubernetes-refresh`  
+测试时间：2026-09-04（Asia/Shanghai）
+
+测试分支：`codex/kubernetes-refresh`
+
 worktree：`D:\Github\worktrees\ScriptBoard\kubernetes-refresh`
 
 ## 结论
