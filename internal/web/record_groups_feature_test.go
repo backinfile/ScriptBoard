@@ -32,7 +32,7 @@ func TestSharedGroupCatalogAppearsAcrossGroupedPages(t *testing.T) {
 		t.Fatalf("create shared group status=%d", response.StatusCode)
 	}
 
-	for _, path := range []string{"/config/quick-runs", "/config/schedules", "/resources/variables", "/monitor/websites"} {
+	for _, path := range []string{"/config/quick-runs", "/config/schedules", "/resources/variables", "/resources/documents", "/monitor/websites"} {
 		response, err = client.Get(serverURL + path)
 		if err != nil {
 			t.Fatalf("get %s: %v", path, err)
