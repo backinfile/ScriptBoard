@@ -30,6 +30,27 @@ func (fakeReleaseSource) Download(context.Context, string, string, Asset) error 
 	return nil
 }
 
+type repairingReleaseSource struct {
+	first RemoteRelease
+	fresh RemoteRelease
+	etags []string
+}
+
+func (source *repairingReleaseSource) Check(_ context.Context, etag string) (RemoteRelease, error) {
+	source.etags = append(source.etags, etag)
+	if len(source.etags) == 1 {
+		return source.first, nil
+	}
+	if etag != "" {
+		return RemoteRelease{NotModified: true, ETag: etag}, nil
+	}
+	return source.fresh, nil
+}
+
+func (*repairingReleaseSource) Download(context.Context, string, string, Asset) error {
+	return nil
+}
+
 func validManifest() Manifest {
 	return Manifest{
 		Schema: ManifestSchema, Product: "scriptboard", Repository: buildinfo.Repository,
@@ -209,6 +230,65 @@ func TestManagerChecksAndPersistsSignedRelease(t *testing.T) {
 	}
 	if _, err := manager.Check(context.Background(), true); err == nil || !strings.Contains(err.Error(), "before checking again") {
 		t.Fatalf("second forced check error = %v", err)
+	}
+}
+
+func TestForcedCheckRepairsCorruptedReleaseNotesDespiteCachedETag(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalID, originalKey := buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64
+	buildinfo.UpdatePublicKeyID = "test-key"
+	buildinfo.UpdatePublicKeyBase64 = base64.StdEncoding.EncodeToString(publicKey)
+	t.Cleanup(func() {
+		buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64 = originalID, originalKey
+	})
+
+	manifest := validManifest()
+	raw, _ := json.Marshal(manifest)
+	signature, _ := SignManifest(raw, "test-key", privateKey)
+	release := RemoteRelease{
+		ETag: "upstream-etag", ReleaseURL: "https://github.com/backinfile/ScriptBoard/releases/tag/v1.2.3",
+		ManifestRaw: raw, SignatureRaw: signature, Manifest: manifest,
+		AssetURLs: releaseAssetURLs(manifest),
+	}
+	source := &repairingReleaseSource{first: release, fresh: release}
+	source.first.ReleaseNotes = "## 閺傛澘顤冮崝鐔诲厴"
+	source.fresh.ReleaseNotes = "## 新增功能"
+	now := time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC)
+	current := buildinfo.Info{
+		Version: "1.0.0", Tag: "v1.0.0", Commit: strings.Repeat("a", 40),
+		BuiltAt: "2026-07-28T00:00:00Z", ReleaseBuild: true,
+		DatabaseSchemaVersion:  buildinfo.DatabaseSchemaVersion,
+		UpdaterProtocolVersion: buildinfo.UpdaterProtocolVersion, Repository: buildinfo.Repository,
+	}
+	manager := NewManager(ManagerConfig{
+		StateRoot: t.TempDir(), Build: &current, Sources: map[string]ReleaseSource{SourceGHProxy: source},
+		CheckInterval: time.Hour, Now: func() time.Time { return now },
+	})
+
+	if _, err := manager.CheckFrom(context.Background(), true, SourceGHProxy); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	snapshot, err := manager.CheckFrom(context.Background(), true, SourceGHProxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(source.etags) != 2 || source.etags[1] != "" {
+		t.Fatalf("forced check etags = %#v, want the cached validator bypassed", source.etags)
+	}
+	if snapshot.ReleaseNotes != "## 新增功能" {
+		t.Fatalf("forced check retained corrupted release notes: %q", snapshot.ReleaseNotes)
+	}
+
+	now = now.Add(time.Hour)
+	if _, err := manager.CheckFrom(context.Background(), false, SourceGHProxy); err != nil {
+		t.Fatal(err)
+	}
+	if len(source.etags) != 3 || source.etags[2] != "upstream-etag" {
+		t.Fatalf("scheduled check etags = %#v, want the cached validator reused", source.etags)
 	}
 }
 
