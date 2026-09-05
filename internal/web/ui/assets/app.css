@@ -8941,3 +8941,38 @@ body:has(> .error-page) {
   .external-approval-review-actions > :is(form, .button),
   .external-approval-review-actions form > .button { flex: 1; }
 }
+
+/* Quick access uses a full workspace list with separate group headings and readable paths. */
+.quick-access-toolbar { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; padding-bottom: 20px; color: var(--muted); }
+.quick-access-toolbar p { margin: 0; font-size: .82rem; }
+.quick-access-toolbar .quick-access-total { color: var(--ink); font-size: .94rem; white-space: nowrap; }
+.quick-access-total [data-file-quick-count] { font-weight: 650; }
+.quick-access-groups, .quick-access-group__items { margin: 0; padding: 0; list-style: none; }
+.quick-access-group + .quick-access-group { margin-top: 32px; }
+.quick-access-collection .file-quick-group-title { gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--rule-strong); color: var(--ink); }
+.file-quick-group-title h2 { flex: 1; min-width: 0; margin: 0; font-size: 1rem; }
+.quick-access-collection .file-quick-group-title__toggle { width: 100%; min-height: 44px; gap: 12px; }
+.quick-access-collection .file-quick-group-title__toggle svg { width: 18px; height: 18px; flex-shrink: 0; color: var(--muted); }
+.quick-access-collection .file-quick-group-title__toggle small { margin: 0 12px; color: var(--muted); font-size: .8rem; font-weight: 400; }
+.quick-access-collection .file-quick-group-title form { display: flex; gap: 4px; }
+.quick-access-collection .file-quick-row { grid-template-columns: 44px minmax(0, 1fr) 44px 44px; column-gap: 8px; padding: 8px 0; }
+.quick-access-collection .file-quick-row:last-child { border-bottom: 1px solid var(--rule); }
+.quick-access-collection .file-quick-row > a { grid-template-columns: 28px minmax(0, 1fr); gap: 16px; min-height: 56px; padding: 8px 0; }
+.quick-access-collection .file-quick-row > a > span:last-child { grid-template-columns: minmax(140px, 1fr) minmax(0, 1.6fr); align-items: center; gap: 24px; }
+.quick-access-collection .file-quick-row strong { font-size: .94rem; font-weight: 600; }
+.quick-access-collection .file-quick-row small { font-size: .78rem; line-height: 1.5; }
+.quick-access-collection .file-quick-row > .icon-button, .quick-access-collection .file-quick-group-title .icon-button { width: 44px; height: 44px; }
+.quick-access-collection .file-quick-row:hover { background: var(--surface-2); }
+.quick-access-collection .file-quick-row a[data-unavailable] { color: var(--muted); }
+@media (max-width: 1000px) {
+  .quick-access-collection .file-quick-row > a > span:last-child { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .quick-access-toolbar { align-items: flex-start; flex-direction: column; gap: 8px; }
+}
+@media (max-width: 600px) {
+  .quick-access-collection .file-quick-row { grid-template-columns: 44px minmax(0, 1fr) 44px 44px; column-gap: 0; }
+  .quick-access-collection .file-quick-row > a { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .quick-access-collection .file-quick-row__icon { display: none; }
+  .quick-access-collection .file-quick-group-title { flex-wrap: wrap; }
+  .quick-access-collection .file-quick-group-title h2 { flex-basis: 100%; }
+  .quick-access-collection .file-quick-group-title__toggle strong { white-space: normal; overflow-wrap: anywhere; }
+}

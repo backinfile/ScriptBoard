@@ -43,6 +43,7 @@ type HostFileInfo struct {
 	Name       string      `json:"name"`
 	Size       int64       `json:"size"`
 	Mode       os.FileMode `json:"mode"`
+	CreatedAt  time.Time   `json:"created_at"`
 	ModifiedAt time.Time   `json:"modified_at"`
 	Directory  bool        `json:"directory"`
 	CanMutate  bool        `json:"can_mutate"`
@@ -184,7 +185,7 @@ func (service *brokerHostFilesService) Info(_ context.Context, path string) (Hos
 	if err != nil {
 		return HostFileInfo{}, err
 	}
-	return HostFileInfo{Name: info.Name(), Size: info.Size(), Mode: info.Mode(), ModifiedAt: info.ModTime(), Directory: info.IsDir(), CanMutate: service.files.CanMutate(path)}, nil
+	return HostFileInfo{Name: info.Name(), Size: info.Size(), Mode: info.Mode(), CreatedAt: hostfiles.CreatedAt(info), ModifiedAt: info.ModTime(), Directory: info.IsDir(), CanMutate: service.files.CanMutate(path)}, nil
 }
 
 func (service *brokerHostFilesService) ReadText(_ context.Context, path string, maxBytes int64) (hostfiles.TextDocument, error) {

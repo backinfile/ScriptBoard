@@ -20,7 +20,7 @@ type documentView struct {
 	IconClass, ViewURL, EditURL, DirectoryURL string
 	MoveGroupURL                              string
 	Size                                      int64
-	ModifiedAt                                time.Time
+	CreatedAt, ModifiedAt                     time.Time
 	Accessible, Editable                      bool
 }
 
@@ -92,15 +92,16 @@ func (a *App) documentsPage(response http.ResponseWriter, request *http.Request)
 		if info, _, statErr := a.hostInfo(request.Context(), document.Path); statErr == nil {
 			document.Accessible = true
 			document.Size = info.Size()
+			document.CreatedAt = hostfiles.CreatedAt(info)
 			document.ModifiedAt = info.ModTime()
 			entry := hostfiles.Entry{Name: document.Name, Path: document.Path, Kind: hostfiles.Regular, Size: info.Size(), ModifiedAt: info.ModTime()}
 			category := classifyFile(entry, document.Path)
 			displayCategory, previewableText := a.classifyFileContent(listedFile{Entry: entry, Path: document.Path, Category: category})
 			document.IconClass = fileCategoryIcon(displayCategory)
-			document.ViewURL = routeFileURL("/resources/files/view", document.Path)
+			document.ViewURL = documentFileURL("/resources/files/view", document.Path, request.URL.RequestURI())
 			document.Editable = canWrite && previewableText && (displayCategory == fileCategoryText || displayCategory == fileCategoryScript)
 			if document.Editable {
-				document.EditURL = routeFileURL("/resources/files/edit", document.Path)
+				document.EditURL = documentFileURL("/resources/files/edit", document.Path, request.URL.RequestURI())
 			}
 			document.DirectoryURL = fileQuickAccessHref(document.Path, "file")
 		} else {

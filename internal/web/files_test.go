@@ -597,7 +597,7 @@ func TestQuickAccessIsManagedOnItsOwnConfigurationPage(t *testing.T) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
 		}
 	}
-	for _, removed := range []string{`class="file-quick-access"`, `data-file-quick-edit-drawer`, `>Quick access</strong>`} {
+	for _, removed := range []string{`<section class="quick-access-collection"`, `data-file-quick-edit-drawer`, `>Quick access</strong>`} {
 		if strings.Contains(page, removed) {
 			t.Fatalf("files page still contains Quick access UI %q: %s", removed, page)
 		}
@@ -618,7 +618,7 @@ func TestQuickAccessIsManagedOnItsOwnConfigurationPage(t *testing.T) {
 	page = string(body)
 	for _, expected := range []string{
 		`href="/config/quick-access" aria-current="page"`,
-		`class="file-quick-access"`,
+		`<section class="quick-access-collection"`,
 		`data-file-quick-access`,
 		`data-file-quick-list`,
 		`data-validation-url="/resources/files/validate"`,

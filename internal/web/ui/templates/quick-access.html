@@ -17,27 +17,26 @@
     </div>
   </header>
 
-  <details class="file-quick-access" data-file-quick-access data-initially-open="true" data-validation-url="/resources/files/validate"
+  <section class="quick-access-collection" data-file-quick-access data-validation-url="/resources/files/validate"
     data-pins-url="/resources/files/quick-access" data-csrf-token="{{.CSRFToken}}"
     data-ungrouped-label="{{t .Locale "groups.ungrouped"}}"
     data-manage-groups="{{if .CanManageGroups}}true{{else}}false{{end}}"
     data-save-failed="{{t .Locale "files.quick_access_save_failed"}}" hidden
     data-remove-label="{{t .Locale "files.remove_quick_access"}}"
-    data-edit-label="{{t .Locale "files.edit_quick_access"}}">
-    <summary>
-      <span class="file-quick-access__icon" data-lucide="pin" aria-hidden="true"></span>
-      <span><strong>{{t .Locale "files.quick_access"}}</strong></span>
-      <span class="file-quick-access__count"><span data-file-quick-count>0</span> <span data-file-quick-count-label>{{t .Locale "files.quick_access_folders"}}</span></span>
-      <span data-lucide="chevron-down" aria-hidden="true"></span>
-    </summary>
-    <div class="file-quick-access__body">
-      <p class="file-quick-access__status" role="alert" data-file-quick-status hidden></p>
-      <p data-file-quick-empty>{{t .Locale "files.quick_access_empty"}}</p>
-      <ul data-file-quick-list></ul>
+    data-edit-label="{{t .Locale "files.edit_quick_access"}}"
+    data-move-up-label="{{t .Locale "applications.move_up"}}" data-move-down-label="{{t .Locale "applications.move_down"}}"
+    data-edit-group-label="{{t .Locale "common.edit"}}" data-delete-group-label="{{t .Locale "common.delete"}}"
+    data-empty-group-label="{{t .Locale "groups.empty"}}">
+    <div class="quick-access-toolbar">
+      <p class="quick-access-total" role="status"><span data-file-quick-count>0</span> <span data-file-quick-count-label>{{t .Locale "files.quick_access_folders"}}</span></p>
+      <p>{{t .Locale "quick_access.reorder_hint"}}</p>
     </div>
+    <p class="inline-notice inline-notice--danger" role="alert" data-file-quick-status hidden></p>
+    <div class="empty-state" data-file-quick-empty><span data-lucide="pin" aria-hidden="true"></span><p>{{t .Locale "files.quick_access_empty"}}</p><a class="button" href="/resources/files">{{t .Locale "quick_access.browse_files"}}</a></div>
+    <ul class="quick-access-groups" data-file-quick-list></ul>
     <span hidden data-file-quick-one-label>{{t .Locale "files.quick_access_folder"}}</span>
     <span hidden data-file-quick-many-label>{{t .Locale "files.quick_access_folders"}}</span>
-  </details>
+  </section>
   <div class="file-quick-edit-drawer-host" data-file-quick-edit-drawer aria-hidden="true">
     <button class="file-quick-edit-drawer__scrim" type="button" aria-label="{{t .Locale "common.close"}}" data-file-quick-edit-close></button>
     <aside class="file-quick-edit-drawer" role="dialog" aria-modal="true" aria-labelledby="file-quick-edit-title" tabindex="-1">

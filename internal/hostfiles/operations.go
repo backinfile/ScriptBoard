@@ -481,8 +481,11 @@ func (m *Manager) RemoveRegular(path string) error {
 }
 
 func (m *Manager) Info(path string) (os.FileInfo, error) {
-	_, info, err := m.resolveEntry(path)
-	return info, err
+	target, info, err := m.resolveEntry(path)
+	if err != nil {
+		return nil, err
+	}
+	return createdFileInfo{FileInfo: info, createdAt: fileCreatedAt(target, info)}, nil
 }
 
 func (m *Manager) MoveToTrash(path, storedName string) (Trashed, error) {

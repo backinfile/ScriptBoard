@@ -17,9 +17,12 @@ type remoteHostFileInfoValue struct {
 	name       string
 	size       int64
 	mode       os.FileMode
+	createdAt  time.Time
 	modifiedAt time.Time
 	directory  bool
 }
+
+func (info remoteHostFileInfo) CreatedAt() time.Time { return info.value.createdAt }
 
 func (info remoteHostFileInfo) Name() string       { return info.value.name }
 func (info remoteHostFileInfo) Size() int64        { return info.value.size }
@@ -45,7 +48,7 @@ func (a *App) hostList(ctx context.Context, path string) ([]hostfiles.Entry, err
 func (a *App) hostInfo(ctx context.Context, path string) (os.FileInfo, bool, error) {
 	if a.hostFilesBackend != nil {
 		value, err := a.hostFilesBackend.Info(ctx, path)
-		return remoteHostFileInfo{value: remoteHostFileInfoValue{name: value.Name, size: value.Size, mode: value.Mode, modifiedAt: value.ModifiedAt, directory: value.Directory}}, value.CanMutate, err
+		return remoteHostFileInfo{value: remoteHostFileInfoValue{name: value.Name, size: value.Size, mode: value.Mode, createdAt: value.CreatedAt, modifiedAt: value.ModifiedAt, directory: value.Directory}}, value.CanMutate, err
 	}
 	value, err := a.files.Info(path)
 	return value, a.files.CanMutate(path), err

@@ -4079,13 +4079,14 @@ func (a *App) editTextPage(response http.ResponseWriter, request *http.Request) 
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	parent, _ := hostPathParent(relative)
+	backURL, backLabel := textPageBack(request, parent)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = textEditorTemplate.Execute(response, struct {
-		Path, Content, Digest, CSRFToken, BackURL, ViewURL, DownloadURL, Action string
-		Locale                                                                  webLocale
+		Path, Content, Digest, CSRFToken, BackURL, BackLabel, ViewURL, DownloadURL, Action string
+		Locale                                                                             webLocale
 	}{
 		Path: relative, Content: document.Content, Digest: document.Digest, CSRFToken: current.csrfToken,
-		BackURL: filesURL(parent), ViewURL: routeFileURL("/resources/files/view", relative), DownloadURL: routeFileURL("/resources/files/download", relative), Action: routeFileURL("/resources/files/edit", relative),
+		BackURL: backURL, BackLabel: backLabel, ViewURL: documentFileURL("/resources/files/view", relative, documentOrigin(request)), DownloadURL: routeFileURL("/resources/files/download", relative), Action: documentFileURL("/resources/files/edit", relative, documentOrigin(request)),
 		Locale: resolveWebLocale(request),
 	})
 }
@@ -4103,6 +4104,7 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	parent, _ := hostPathParent(relative)
+	backURL, backLabel := textPageBack(request, parent)
 	markdown := !forceTXT && strings.EqualFold(hostfiles.Extension(relative), ".md")
 	highlightLanguage := ""
 	if !forceTXT {
@@ -4117,7 +4119,7 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 		title = webText(resolveWebLocale(request), "editor.script_preview_title")
 	}
 	markdownBaseURL := parent
-	editURL, logURL := routeFileURL("/resources/files/edit", relative), "/resources/files/log?"+url.Values{"path": {relative}}.Encode()
+	editURL, logURL := documentFileURL("/resources/files/edit", relative, documentOrigin(request)), "/resources/files/log?"+url.Values{"path": {relative}}.Encode()
 	contentURL := routeFileURL("/resources/files/view/content", relative)
 	if forceTXT {
 		// Forced TXT preview is deliberately read-only and keeps the mode while paging.
@@ -4126,13 +4128,13 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = textPreviewTemplate.Execute(response, struct {
-		Path, Content, BackURL, EditURL, DownloadURL string
-		LogURL, ContentURL, NextOffset, Version      string
-		Title, MarkdownBaseURL, HighlightLanguage    string
-		Markdown, HasMore                            bool
-		Locale                                       webLocale
+		Path, Content, BackURL, BackLabel, EditURL, DownloadURL string
+		LogURL, ContentURL, NextOffset, Version                 string
+		Title, MarkdownBaseURL, HighlightLanguage               string
+		Markdown, HasMore                                       bool
+		Locale                                                  webLocale
 	}{
-		Path: relative, Content: chunk.Content, BackURL: filesURL(parent),
+		Path: relative, Content: chunk.Content, BackURL: backURL, BackLabel: backLabel,
 		EditURL: editURL, DownloadURL: routeFileURL("/resources/files/download", relative),
 		LogURL: logURL, ContentURL: contentURL, NextOffset: chunk.NextOffset, Version: chunk.Version, HasMore: chunk.HasMore,
 		Title: title, Markdown: markdown, MarkdownBaseURL: markdownBaseURL, HighlightLanguage: highlightLanguage, Locale: resolveWebLocale(request),
@@ -4183,7 +4185,8 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 	}
 	a.recordAuditForRequest(request, "edit_text", relative, "succeeded")
 	parent, _ := hostPathParent(relative)
-	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
+	backURL, _ := textPageBack(request, parent)
+	http.Redirect(response, request, backURL, http.StatusSeeOther)
 }
 
 func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) {

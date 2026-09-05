@@ -507,3 +507,33 @@ func (topology fixtureHostFilesTopology) FilesystemRoot(string) (string, error) 
 	return topology.root, nil
 }
 func (fixtureHostFilesTopology) Restricted(string) bool { return false }
+
+func TestHostFilesInfoCarriesFilesystemCreationTime(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("note"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{Topology: fixtureHostFilesTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := manager.List(root)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("entries=%v err=%v", entries, err)
+	}
+	service, err := NewBrokerHostFilesService(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, closeServer := hostFilesTestBackend(t, service)
+	defer closeServer()
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "host-files-created-test"})
+	info, err := backend.Info(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.CreatedAt.Equal(entries[0].CreatedAt) {
+		t.Fatalf("broker created=%v listing created=%v", info.CreatedAt, entries[0].CreatedAt)
+	}
+}

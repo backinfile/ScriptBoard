@@ -4531,7 +4531,7 @@
 	const status = disclosure.querySelector("[data-file-quick-status]");
     const hasPresentation = Boolean(list && empty && count && countLabel && oneLabel && manyLabel && status);
     if (!hasPresentation && pinControls.length === 0) return;
-    if (hasPresentation) disclosure.open = disclosure.dataset.initiallyOpen === "true";
+    if (hasPresentation && disclosure.tagName === "DETAILS") disclosure.open = disclosure.dataset.initiallyOpen === "true";
     const drawerHost = root.querySelector("[data-file-quick-edit-drawer]");
     const drawer = drawerHost?.querySelector(".file-quick-edit-drawer");
     const editForm = drawerHost?.querySelector("[data-file-quick-edit-form]");
@@ -4704,11 +4704,19 @@
 	  let collapsed = new Set();
 	  try { collapsed = new Set(JSON.parse(localStorage.getItem(collapseKey) || "[]")); } catch { collapsed = new Set(); }
 	  sections.forEach(section => {
-		const heading = document.createElement("li");
+		const group = document.createElement("li");
+        group.className = "quick-access-group";
+        const groupList = document.createElement("ul");
+        groupList.id = "quick-access-group-" + (section.id || "ungrouped");
+        groupList.className = "quick-access-group__items";
+        groupList.hidden = collapsed.has(section.id || "ungrouped");
+        const heading = document.createElement("div");
 		heading.className = "file-quick-group-title";
 		const toggle = document.createElement("button");
 		toggle.type = "button";
 		toggle.className = "file-quick-group-title__toggle";
+        toggle.setAttribute("aria-expanded", String(!groupList.hidden));
+        toggle.setAttribute("aria-controls", groupList.id);
 		toggle.append(makeIcon(collapsed.has(section.id || "ungrouped") ? "chevron-right" : "chevron-down"), makeIcon(section.id ? "folder" : "folder-open"));
 		const title = document.createElement("strong");
 		title.textContent = section.name;
@@ -4720,8 +4728,11 @@
 		  if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
 		  try { localStorage.setItem(collapseKey, JSON.stringify([...collapsed])); } catch { /* local preference only */ }
 		  render();
+          document.getElementById(groupList.id)?.previousElementSibling?.querySelector("button")?.focus();
 		});
-		heading.append(toggle);
+        const groupTitle = document.createElement("h2");
+        groupTitle.append(toggle);
+        heading.append(groupTitle);
 		if (section.id && disclosure.dataset.manageGroups === "true") {
 		  const moveGroupForm = document.createElement("form");
 		  moveGroupForm.method = "post";
@@ -4730,23 +4741,34 @@
 		  const csrf = document.createElement("input");
 		  csrf.type = "hidden"; csrf.name = "csrf_token"; csrf.value = disclosure.dataset.csrfToken || "";
 		  const up = document.createElement("button");
+		  up.setAttribute("aria-label", disclosure.dataset.moveUpLabel || "Move up");
 		  up.type = "submit"; up.name = "direction"; up.value = "up"; up.className = "icon-button"; up.append(makeIcon("arrow-up"));
 		  const down = document.createElement("button");
+		  down.setAttribute("aria-label", disclosure.dataset.moveDownLabel || "Move down");
 		  down.type = "submit"; down.name = "direction"; down.value = "down"; down.className = "icon-button"; down.append(makeIcon("arrow-down"));
 		  moveGroupForm.append(csrf, up, down);
 		  const editGroupLink = document.createElement("a");
 		  editGroupLink.className = "icon-button";
 		  editGroupLink.href = `/config/groups/${encodeURIComponent(section.id)}/edit?return_to=%2Fconfig%2Fquick-access`;
 		  editGroupLink.dataset.taskLink = "";
+          editGroupLink.setAttribute("aria-label", `${disclosure.dataset.editGroupLabel || "Edit"}: ${section.name}`);
 		  editGroupLink.append(makeIcon("square-pen"));
 		  const deleteGroupLink = document.createElement("a");
 		  deleteGroupLink.className = "icon-button";
 		  deleteGroupLink.href = `/config/groups/${encodeURIComponent(section.id)}/delete?return_to=%2Fconfig%2Fquick-access`;
 		  deleteGroupLink.dataset.taskLink = "";
+          deleteGroupLink.setAttribute("aria-label", `${disclosure.dataset.deleteGroupLabel || "Delete"}: ${section.name}`);
 		  deleteGroupLink.append(makeIcon("trash-2"));
 		  heading.append(moveGroupForm, editGroupLink, deleteGroupLink);
 		}
-		list.append(heading);
+        group.append(heading, groupList);
+        list.append(group);
+        if (!pins.some(pin => (pin.groupId || "") === section.id)) {
+          const emptyGroup = document.createElement("li");
+          emptyGroup.className = "empty-copy";
+          emptyGroup.textContent = disclosure.dataset.emptyGroupLabel || "No items in this group.";
+          groupList.append(emptyGroup);
+        }
 		if (collapsed.has(section.id || "ungrouped")) return;
 		pins.filter(pin => (pin.groupId || "") === section.id).forEach(pin => {
         const item = document.createElement("li");
@@ -4792,6 +4814,7 @@
         label.textContent = pin.label;
         const path = document.createElement("small");
         path.textContent = pin.path;
+        path.title = pin.path;
         copy.append(label, path);
 		link.append(icon, copy);
 		// Keep the real destination on the anchor while validation is pending so
@@ -4852,7 +4875,7 @@
         edit.append(makeIcon("pencil"));
         edit.addEventListener("click", () => openEditor(pin));
         item.append(grip, link, edit, remove);
-		list.append(item);
+		groupList.append(item);
 		});
       });
       }

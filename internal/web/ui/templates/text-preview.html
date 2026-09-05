@@ -11,7 +11,7 @@
 <main class="workspace editor-page" data-text-preview-pager data-text-preview-url="{{.ContentURL}}" data-text-preview-next="{{.NextOffset}}" data-text-preview-version="{{.Version}}" data-text-preview-has-more="{{.HasMore}}">
   <header class="page-heading">
     <div>
-      <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "editor.back_directory"}}</a>
+      <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale .BackLabel}}</a>
       <p class="page-eyebrow">{{t .Locale "files.eyebrow"}}</p>
       <h1>{{.Title}}</h1>
       <p><code title="{{.Path}}">{{.Path}}</code></p>
