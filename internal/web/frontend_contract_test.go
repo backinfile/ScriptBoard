@@ -205,6 +205,7 @@ func TestPJAXDataShellIsLimitedToLargeListRoutes(t *testing.T) {
 		deferred bool
 	}{
 		{path: "/resources/files", deferred: true},
+		{path: "/resources/documents", deferred: true},
 		{path: "/resources/variables", deferred: true},
 		{path: "/config/quick-runs", deferred: true},
 		{path: "/config/schedules", deferred: true},
@@ -539,6 +540,7 @@ func TestGroupedWebRoutesReplaceLegacyModulePaths(t *testing.T) {
 	for _, path := range []string{
 		"/history/runs",
 		"/resources/files",
+		"/resources/documents",
 		"/resources/variables",
 		"/resources/trash",
 		"/config/quick-runs",
@@ -680,6 +682,7 @@ func TestAuthenticatedPagesExposeLocalizedGroupedApplicationShell(t *testing.T) 
 		`>History<`,
 		`href="/history/runs"`,
 		`href="/resources/files"`,
+		`href="/resources/documents"`,
 		`href="/resources/variables"`,
 		`href="/config/quick-runs"`,
 		`href="/config/schedules"`,
@@ -763,6 +766,7 @@ func TestPrimaryWorkspacesRenderCompleteLocalizedDocuments(t *testing.T) {
 		"/monitor",
 		"/history/runs",
 		"/resources/files",
+		"/resources/documents",
 		"/resources/variables",
 		"/resources/trash",
 		"/config/quick-runs",

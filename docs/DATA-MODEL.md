@@ -598,3 +598,16 @@ schema 38 增加以下实例级表；schema 48 将连接改为多条记录，并
 `--binary-mode --batch --skip-reconnect`，数据库参数放在 `--` 后；MySQL 与 MariaDB 的
 非交互 binary mode 会禁用 `system`、`source`、pager、tee 等本地客户端命令，同时保留
 dump 所需的字符集与 delimiter 语义。
+
+## 16. 文档管理
+
+schema 65 增加 `documents`，持久化当前实例的文档收藏条目（每条指向一个主机文件）：
+
+| 字段 | 约束 |
+|---|---|
+| path / path_key | 添加时由 Host Filesystem 规范化的文件绝对路径及平台比较键 |
+| group_id | 共享分组（`quick_run_groups`）；分组删除时回到“未分组” |
+| sort_order | 分组内手动拖动调整的稳定顺序 |
+| created_at | UTC |
+
+全局按 `path_key` 唯一，重复添加只刷新路径不产生重复行。目标文件离线或被删除时保留记录并在页面标注不存在；添加时必须通过 Host Filesystem 的现存路径边界且只接受普通文件。排序提交分组内完整清单，并发增删时整体拒绝部分覆盖。

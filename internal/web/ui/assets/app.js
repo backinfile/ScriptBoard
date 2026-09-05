@@ -133,6 +133,7 @@
     "waypoints": '<path d="m10.586 5.414-5.172 5.172"/><path d="m18.586 13.414-5.172 5.172"/><path d="M6 12h12"/><circle cx="12" cy="20" r="2"/><circle cx="12" cy="4" r="2"/><circle cx="20" cy="12" r="2"/><circle cx="4" cy="12" r="2"/>',
     "x-circle": '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
     "list-tree": '<path d="M8 5h13"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="M3 10a2 2 0 0 0 2 2h3"/><path d="M3 5v12a2 2 0 0 0 2 2h3"/>',
+    "grip-vertical": '<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>',
     "server": '<rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
   };
 
@@ -5143,6 +5144,159 @@
     };
   }
 
+  // 文档管理页复用快捷执行的排序模式，拖动目标改为分组表格中的行。
+  function initDocumentReordering(root) {
+    if (!root?.dataset.documentReorderUrl) return () => {};
+    const status = root.querySelector("[data-document-reorder-status]");
+    const guidance = root.querySelector("[data-document-reorder-guidance]");
+    const toggle = root.querySelector("[data-document-reorder-toggle]");
+    const finish = root.querySelector("[data-document-reorder-finish]");
+    const cancel = root.querySelector("[data-document-reorder-cancel]");
+    let initialItems = new Map([...root.querySelectorAll("[data-document-group]")].map(group => [group.dataset.documentGroup, [...group.querySelectorAll("[data-document-id]")].map(row => row.dataset.documentId)]));
+    const initiallyCollapsed = new Set([...root.querySelectorAll("[data-document-group].is-collapsed")].map(group => group.dataset.documentGroup));
+    let dragged;
+    let busy = false;
+    let active = root.dataset.documentReorderActive === "true";
+    const setBusy = value => {
+      busy = value;
+      if (finish) finish.disabled = value;
+      if (cancel) cancel.disabled = value;
+      root.toggleAttribute("aria-busy", value);
+    };
+    const restoreOrder = () => {
+      for (const [groupID, ids] of initialItems) {
+        const body = [...root.querySelectorAll("[data-document-group]")].find(group => group.dataset.documentGroup === groupID)?.querySelector("tbody");
+        for (const id of ids) {
+          const row = [...(body?.querySelectorAll("[data-document-id]") || [])].find(candidate => candidate.dataset.documentId === id);
+          if (row) body.append(row);
+        }
+      }
+    };
+    const setActive = value => {
+      active = value;
+      root.dataset.documentReorderActive = String(value);
+      guidance?.toggleAttribute("hidden", !value);
+      toggle?.setAttribute("aria-expanded", String(value));
+      root.querySelectorAll("[data-document-id]").forEach(row => {
+        row.toggleAttribute("data-document-drag-handle", value);
+        if (value) {
+          row.setAttribute("draggable", "true");
+          row.setAttribute("tabindex", "0");
+          row.setAttribute("aria-label", row.dataset.documentDragLabel || "");
+        } else {
+          row.removeAttribute("draggable");
+          row.removeAttribute("tabindex");
+          row.removeAttribute("aria-label");
+        }
+      });
+      root.querySelectorAll("[data-document-group]").forEach(group => {
+        const groupToggle = group.querySelector("[data-group-toggle]");
+        const body = group.querySelector("[data-group-body]");
+        if (groupToggle) groupToggle.disabled = value;
+        if (value) {
+          group.classList.remove("is-collapsed");
+          groupToggle?.setAttribute("aria-expanded", "true");
+          if (body) body.hidden = false;
+        } else if (initiallyCollapsed.has(group.dataset.documentGroup)) {
+          group.classList.add("is-collapsed");
+          groupToggle?.setAttribute("aria-expanded", "false");
+          if (body) body.hidden = true;
+        }
+      });
+      const url = new URL(window.location.href);
+      if (value) url.searchParams.set("reorder", "1");
+      else url.searchParams.delete("reorder");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    };
+    const save = async () => {
+      if (busy) return;
+      setBusy(true);
+      if (status) status.textContent = root.dataset.reorderSaving || "Saving order…";
+      const body = new URLSearchParams({ csrf_token: root.dataset.csrfToken || "" });
+      root.querySelectorAll("[data-document-id]").forEach(row => body.append("document_id", row.dataset.documentId));
+      try {
+        const response = await fetch(root.dataset.documentReorderUrl, { method: "POST", body, headers: { Accept: "text/plain" } });
+        if (!response.ok) throw new Error(await response.text());
+        if (status) status.textContent = root.dataset.reorderSaved || "Order saved";
+        initialItems = new Map([...root.querySelectorAll("[data-document-group]")].map(group => [group.dataset.documentGroup, [...group.querySelectorAll("[data-document-id]")].map(row => row.dataset.documentId)]));
+        setBusy(false);
+        setActive(false);
+      } catch (_) {
+        restoreOrder();
+        if (status) status.textContent = root.dataset.reorderFailed || "Order was not saved. The original order was restored.";
+        setBusy(false);
+      }
+    };
+    const onKeyDown = event => {
+      if (!active || busy || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      const rowHandle = event.target.closest("[data-document-drag-handle]");
+      const direction = ["ArrowUp", "ArrowLeft"].includes(event.key) ? -1 : 1;
+      const node = rowHandle?.closest("[data-document-id]");
+      const peers = [...(node?.parentElement.querySelectorAll(":scope > [data-document-id]") || [])];
+      const target = peers[peers.indexOf(node) + direction];
+      if (!node || !target) return;
+      event.preventDefault();
+      target.parentElement.insertBefore(node, direction < 0 ? target : target.nextSibling);
+      rowHandle.focus();
+      if (status) status.textContent = "";
+    };
+    const onDragStart = event => {
+      if (!active || busy) return;
+      const rowHandle = event.target.closest("[data-document-drag-handle]");
+      const node = rowHandle?.closest("[data-document-id]");
+      if (!node) return;
+      dragged = { node };
+      node.classList.add("is-dragging");
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", node.dataset.documentId);
+    };
+    const onDragOver = event => {
+      if (!dragged) return;
+      const target = event.target.closest("[data-document-drag-handle]");
+      if (!target || target === dragged.node || target.parentElement !== dragged.node.parentElement) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const targetRect = target.getBoundingClientRect();
+      const before = event.clientY < targetRect.top + targetRect.height / 2;
+      target.parentElement.insertBefore(dragged.node, before ? target : target.nextSibling);
+    };
+    const onDrop = event => { if (dragged) { event.preventDefault(); if (status) status.textContent = ""; } };
+    const onDragEnd = () => { dragged?.node.classList.remove("is-dragging"); dragged = undefined; };
+    const onToggle = event => {
+      event.preventDefault();
+      if (busy || active) return;
+      if (status) status.textContent = "";
+      setActive(true);
+      guidance?.querySelector("button")?.focus();
+    };
+    const onCancel = () => {
+      if (busy) return;
+      restoreOrder();
+      if (status) status.textContent = "";
+      setActive(false);
+      toggle?.focus();
+    };
+    setActive(active);
+    root.addEventListener("keydown", onKeyDown);
+    root.addEventListener("dragstart", onDragStart);
+    root.addEventListener("dragover", onDragOver);
+    root.addEventListener("drop", onDrop);
+    root.addEventListener("dragend", onDragEnd);
+    toggle?.addEventListener("click", onToggle);
+    finish?.addEventListener("click", save);
+    cancel?.addEventListener("click", onCancel);
+    return () => {
+      root.removeEventListener("keydown", onKeyDown);
+      root.removeEventListener("dragstart", onDragStart);
+      root.removeEventListener("dragover", onDragOver);
+      root.removeEventListener("drop", onDrop);
+      root.removeEventListener("dragend", onDragEnd);
+      toggle?.removeEventListener("click", onToggle);
+      finish?.removeEventListener("click", save);
+      cancel?.removeEventListener("click", onCancel);
+    };
+  }
+
   function initScheduleCron(cleanups, root = document) {
     const form = root.querySelector("[data-schedule-form]");
     if (!form) return;
@@ -7529,7 +7683,11 @@
         root.removeAttribute("aria-busy");
       }
     };
-    setupMonitorRefresh(root, () => replaceSnapshot(location.href, { pushHistory: false }), cleanups, () => snapshotController?.abort());
+    setupMonitorRefresh(root, () => {
+      const destination = new URL(location.href);
+      destination.searchParams.set("refresh", "1");
+      return replaceSnapshot(destination.toString(), { pushHistory: false });
+    }, cleanups, () => snapshotController?.abort());
     const openDetail = async button => {
       if (!drawer || !body) return;
       const url = button.dataset.kubernetesDetailUrl;
@@ -7935,6 +8093,8 @@
     initGroupedRecords(cleanups);
     const quickRunReorder = document.querySelector("[data-quick-run-reorder-url]");
     if (quickRunReorder) cleanups.push(initQuickRunReordering(quickRunReorder));
+    const documentReorder = document.querySelector("[data-document-reorder-url]");
+    if (documentReorder) cleanups.push(initDocumentReordering(documentReorder));
     initScheduleCron(cleanups);
     initExternalEntryForm(document, cleanups);
 	initVariableForm(document, cleanups);

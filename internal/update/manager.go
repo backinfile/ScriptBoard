@@ -183,7 +183,9 @@ func (manager *Manager) CheckFrom(ctx context.Context, force bool, requestedSour
 		}
 	}
 	etag := ""
-	if cacheErr == nil && cache.SourceID == sourceID {
+	// A manual check bypasses the cached validator so a transiently corrupted
+	// proxy response can be replaced instead of being preserved by a 304.
+	if !force && cacheErr == nil && cache.SourceID == sourceID {
 		etag = cache.ETag
 	}
 	remote, err := source.Check(ctx, etag)

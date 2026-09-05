@@ -7024,6 +7024,13 @@ and contract tests depend on them.
 [data-quick-run-reorder-url][aria-busy] [data-quick-run-drag-handle] { cursor: wait; opacity: .55; }
 [data-quick-run-reorder-active="true"] [data-quick-run-reorder-toggle] { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-border); }
 [data-quick-run-reorder-active="true"] .qr { border-color: var(--accent-border); }
+/* 文档行排序沿用快捷执行的把手语义；属性选择器与排序 JS 的 data-document-* 约定一一对应，无通用等价样式可复用。 */
+[data-document-drag-handle] { cursor: grab; }
+[data-document-drag-handle]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[data-document-drag-handle]:active { cursor: grabbing; }
+[data-document-drag-handle].is-dragging { opacity: .42; background: var(--accent-soft); }
+[data-document-reorder-url][aria-busy] [data-document-drag-handle] { cursor: wait; opacity: .55; }
+[data-document-reorder-active="true"] [data-document-reorder-toggle] { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-border); }
 
 @media (max-width: 680px) {
   .quick-run-reorder-guidance { align-items: stretch; flex-direction: column; }
