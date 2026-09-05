@@ -1921,11 +1921,8 @@ async function assertExternalInterfaces(page, fixture) {
     await page.evaluate(() => localStorage.removeItem("scriptboard.files.pinnedDirectories.v2"));
     await page.reload();
 
+    // Exercise pin management on its dedicated page after pinning in Files.
     const quickAccess = page.locator("[data-file-quick-access]");
-    await quickAccess.waitFor({ state: "visible" });
-    assert.equal(await quickAccess.getAttribute("open"), null, "Quick access was not collapsed on reload");
-    assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
-    await quickAccess.locator("summary").click();
     const automationRow = page.locator(".file-table tbody tr").filter({
       has: page.getByRole("link", { name: "automation", exact: true }),
     });
@@ -1935,14 +1932,14 @@ async function assertExternalInterfaces(page, fixture) {
     await page.waitForFunction(() => Array.from(document.querySelectorAll("[data-file-pin]"))
       .some(element => element.dataset.filePinLabel === "automation" && element.getAttribute("aria-pressed") === "true"));
     assert.equal(await automationPin.getAttribute("aria-pressed"), "true");
-    assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
+
     await page.locator('.sidebar-nav a[href="/monitor"]').click();
     await page.locator("[data-host-overview]").waitFor();
-    await page.locator('.sidebar-nav a[href="/resources/files"]').click();
-    await page.waitForURL(url => new URL(url).pathname === "/resources/files");
+    await page.locator('.sidebar-nav a[href="/config/quick-access"]').click();
+    await page.waitForURL(url => new URL(url).pathname === "/config/quick-access");
     await quickAccess.waitFor({ state: "visible" });
     await quickAccess.locator(".file-quick-row").first().waitFor({ state: "attached" });
-    if ((await quickAccess.getAttribute("open")) === null) await quickAccess.locator("summary").click();
+    assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
     await quickAccess.locator("[data-file-quick-edit]").click();
     const quickAccessDrawerHost = page.locator("[data-file-quick-edit-drawer].is-open");
     await quickAccessDrawerHost.waitFor();
@@ -1969,41 +1966,24 @@ async function assertExternalInterfaces(page, fixture) {
     const automationQuickLink = quickAccess.getByRole("link", { name: /automation/ });
     await automationQuickLink.waitFor();
     await saveSnapshot(page, "files-quick-access");
-    await quickAccess.locator("summary").click();
     await page.reload();
-    const reloadedQuickAccess = page.locator("[data-file-quick-access]");
-    await reloadedQuickAccess.waitFor({ state: "visible" });
-    assert.equal(await reloadedQuickAccess.getAttribute("open"), null, "Quick access was not collapsed after reload");
-    await reloadedQuickAccess.locator("summary").click();
-    const reopenedQuickLink = reloadedQuickAccess.getByRole("link", { name: /automation/ });
-    await reopenedQuickLink.evaluate(link => link.addEventListener("click", event => event.preventDefault(), { once: true }));
-    await reopenedQuickLink.click();
-    assert.equal(await reloadedQuickAccess.getAttribute("open"), null, "Quick access did not collapse after its shortcut was clicked");
-    const filesTab = page.locator('.sidebar-nav a[href="/resources/files"]');
-    await filesTab.click();
-    await page.waitForFunction(() => document.querySelector("[data-file-quick-access]")?.hasAttribute("open"));
-    const resetQuickAccess = page.locator("[data-file-quick-access]");
-    await resetQuickAccess.waitFor({ state: "visible" });
-    assert.notEqual(await resetQuickAccess.getAttribute("open"), null, "Quick access did not open after the Files tab was clicked");
+    await quickAccess.getByRole("link", { name: /automation/ }).waitFor();
+    assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
     await Promise.all([
       page.waitForURL(matchesFixtureURL(fixtureFilesURL("automation"))),
-      resetQuickAccess.getByRole("link", { name: /automation/ }).click(),
+      quickAccess.getByRole("link", { name: /automation/ }).click(),
     ]);
-    const shortcutDestinationQuickAccess = page.locator("[data-file-quick-access]");
-    await shortcutDestinationQuickAccess.waitFor({ state: "visible" });
-    assert.equal(await shortcutDestinationQuickAccess.getAttribute("open"), null, "Quick access was not collapsed after shortcut navigation");
     await page.goto(hostFilesWorkspaceURL);
-    const restoredQuickAccess = page.locator("[data-file-quick-access]");
-    await restoredQuickAccess.waitFor({ state: "visible" });
-    assert.equal(await restoredQuickAccess.getAttribute("open"), null, "Quick access was not collapsed after direct navigation");
-    assert.equal((await restoredQuickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
     const restoredAutomationRow = page.locator(".file-table tbody tr").filter({
       has: page.getByRole("link", { name: "automation", exact: true }),
     });
     const restoredAutomationPin = restoredAutomationRow.getByRole("button", { name: "Unpin directory" });
     await restoredAutomationPin.click();
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("[data-file-pin]"))
+      .some(element => element.dataset.filePinLabel === "automation" && element.getAttribute("aria-pressed") === "false"));
+    await page.goto(fixture.baseURL + "/config/quick-access");
     await page.waitForFunction(() => document.querySelector("[data-file-quick-count]")?.textContent.trim() === "0");
-    assert.equal((await restoredQuickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
+    await page.goto(hostFilesWorkspaceURL);
 
     const hiddenToggle = page.locator("[data-file-hidden-toggle]");
     assert.equal(await hiddenToggle.isChecked(), false);
@@ -2306,8 +2286,8 @@ async function assertExternalInterfaces(page, fixture) {
         height: Math.round(element.getBoundingClientRect().height),
       })),
     );
-    // The shared-group action now lives beside upload and new-directory in the page heading.
-    assert.equal(fileHeadingActionSizes.length, 3);
+    // File heading keeps upload and new-directory actions; groups are managed on Quick access.
+    assert.equal(fileHeadingActionSizes.length, 2);
     assert.equal(fileHeadingActionSizes[0].width, fileHeadingActionSizes[1].width);
     assert.ok(fileHeadingActionSizes.every(size => size.height >= 44));
     const fileLocationActionSizes = await page.locator(".file-location-actions .icon-button").evaluateAll(elements =>
