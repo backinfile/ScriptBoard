@@ -51,6 +51,8 @@ type View struct {
 	ServerVersion                string
 	Nodes                        []Node
 	Workloads                    []Workload
+	Services                     []ServiceExposure
+	Ingresses                    []IngressExposure
 	Total, Matched               int
 	Ready, Progressing, Degraded int
 	PodsReady, PodsTotal         int
@@ -73,6 +75,30 @@ type Workload struct {
 	CPUMillicores                                          int64
 	MemoryBytes                                            uint64
 	Nodes, Age, Revision                                   string
+}
+
+// ServiceExposure describes an externally-addressable Service declaration.
+// It intentionally reports configuration rather than claiming network reachability.
+type ServiceExposure struct {
+	Namespace, Name, Type, ExternalName, ExternalTrafficPolicy string
+	ClusterIPs, ExternalAddresses                              []string
+	Ports                                                      []ServicePort
+}
+
+type ServicePort struct {
+	Name, Protocol, AppProtocol, TargetPort string
+	Port, NodePort                          int
+}
+
+type IngressExposure struct {
+	Namespace, Name, Class string
+	Addresses              []string
+	Rules                  []IngressRule
+}
+
+type IngressRule struct {
+	Host, Path, PathType, Service, ServicePort string
+	TLS                                        bool
 }
 
 type Pod struct {
@@ -104,6 +130,8 @@ type Snapshot struct {
 	ServerVersion        string
 	Nodes                []Node
 	Workloads            []Workload
+	Services             []ServiceExposure
+	Ingresses            []IngressExposure
 	PodsReady, PodsTotal int
 	Namespaces           int
 	MetricsAvailable     bool

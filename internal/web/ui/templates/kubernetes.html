@@ -131,6 +131,27 @@
   </dl>
   </div>
 
+  <section class="kubernetes-section kubernetes-external-access" aria-labelledby="kubernetes-external-access-heading" data-kubernetes-external-access>
+    <header class="section-heading kubernetes-section-heading"><div><p class="section-index">NETWORK</p><h2 id="kubernetes-external-access-heading">{{t .Locale "kubernetes.external_access"}}</h2><p>{{t .Locale "kubernetes.external_access_description"}}</p></div></header>
+    <aside class="kubernetes-external-note"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "kubernetes.k3d_mapping_note"}}</p></aside>
+    {{if or (index .Errors "services") (index .Errors "ingresses")}}<aside class="kubernetes-external-note kubernetes-external-note--warning"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>{{t .Locale "kubernetes.external_access_unavailable"}}</p></aside>{{end}}
+    <div class="kubernetes-exposure-list">
+      {{range .Services}}<article class="kubernetes-exposure">
+        <span class="kubernetes-exposure__icon" data-lucide="network" aria-hidden="true"></span>
+        <div class="kubernetes-exposure__identity"><strong>{{.Name}}</strong><small>{{.Namespace}} · Service/{{.Type}}{{if .ExternalTrafficPolicy}} · {{.ExternalTrafficPolicy}}{{end}}</small></div>
+        <div class="kubernetes-exposure__addresses">{{range .ExternalAddresses}}<code>{{.}}</code>{{else}}{{if .ExternalName}}<code>{{.ExternalName}}</code>{{else}}<span>{{t $.Locale "kubernetes.node_addresses"}}</span>{{end}}{{end}}</div>
+        <div class="kubernetes-exposure__ports">{{range .Ports}}<code>{{if .Name}}{{.Name}} · {{end}}{{.Port}}{{if .NodePort}} → {{t $.Locale "kubernetes.node_port"}} {{.NodePort}}{{end}}/{{.Protocol}}{{if .TargetPort}} → {{.TargetPort}}{{end}}</code>{{end}}</div>
+      </article>{{end}}
+      {{range .Ingresses}}<article class="kubernetes-exposure">
+        <span class="kubernetes-exposure__icon" data-lucide="route" aria-hidden="true"></span>
+        <div class="kubernetes-exposure__identity"><strong>{{.Name}}</strong><small>{{.Namespace}} · Ingress{{if .Class}}/{{.Class}}{{end}}</small></div>
+        <div class="kubernetes-exposure__addresses">{{range .Addresses}}<code>{{.}}</code>{{else}}<span>{{t $.Locale "kubernetes.pending_address"}}</span>{{end}}</div>
+        <div class="kubernetes-exposure__ports">{{range .Rules}}<code>{{if .TLS}}https://{{else}}http://{{end}}{{if .Host}}{{.Host}}{{else}}*{{end}}{{if .Path}}{{.Path}}{{else}}/{{end}} → {{.Service}}:{{.ServicePort}}</code>{{end}}</div>
+      </article>{{end}}
+      {{if and (not .Services) (not .Ingresses) (not (index .Errors "services")) (not (index .Errors "ingresses"))}}<div class="kubernetes-empty-inline"><p>{{t .Locale "kubernetes.no_external_access"}}</p></div>{{end}}
+    </div>
+  </section>
+
   <section class="kubernetes-section" aria-labelledby="kubernetes-workloads-heading">
     <header class="section-heading kubernetes-section-heading"><div><p class="section-index">{{t .Locale "kubernetes.cluster_facts"}}</p><h2 id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</h2><p>{{t .Locale "kubernetes.status_filter"}}</p></div><div class="applications-refresh" data-monitor-refresh-control><span><strong>{{t .Locale "applications.live_off"}}</strong><time datetime="{{machineTime .CollectedAt}}" data-local-time data-monitor-refresh-time>{{localTime .Locale .CollectedAt}}</time><small>{{t .Locale "applications.last_snapshot"}}</small></span><button type="button" class="applications-switch" role="switch" aria-checked="false" aria-label="{{t .Locale "kubernetes.start_live"}}" data-monitor-refresh data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "kubernetes.pause_live"}}" data-start-label="{{t .Locale "kubernetes.start_live"}}"></button></div></header>
     <div class="kubernetes-workload-controls">

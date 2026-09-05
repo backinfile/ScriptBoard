@@ -443,6 +443,8 @@ func (manager *Manager) View(ctx context.Context, id string, query Query) (View,
 	snapshot := runtime.current
 	manager.mu.RUnlock()
 	view.CollectedAt, view.ServerVersion, view.Nodes = snapshot.CollectedAt, snapshot.ServerVersion, append([]Node(nil), snapshot.Nodes...)
+	view.Services = append([]ServiceExposure(nil), snapshot.Services...)
+	view.Ingresses = append([]IngressExposure(nil), snapshot.Ingresses...)
 	view.PodsReady, view.PodsTotal, view.Namespaces, view.MetricsAvailable, view.Errors = snapshot.PodsReady, snapshot.PodsTotal, snapshot.Namespaces, snapshot.MetricsAvailable, cloneStrings(snapshot.Errors)
 	workloads := append([]Workload(nil), snapshot.Workloads...)
 	view.Total = len(workloads)

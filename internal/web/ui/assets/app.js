@@ -7662,7 +7662,7 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const incoming = page?.querySelector("[data-kubernetes-page]");
         if (!incoming) throw new Error("Kubernetes snapshot was not present in the response.");
-        for (const selector of [".kubernetes-monitor-summary", "[data-kubernetes-alert-slot]", ".kubernetes-workload-controls", ".kubernetes-table-shell", "[data-kubernetes-node-list]"]) {
+        for (const selector of [".kubernetes-monitor-summary", "[data-kubernetes-alert-slot]", "[data-kubernetes-external-access]", ".kubernetes-workload-controls", ".kubernetes-table-shell", "[data-kubernetes-node-list]"]) {
           const current = root.querySelector(selector), next = incoming.querySelector(selector);
           if (current && next) current.replaceWith(next);
         }
