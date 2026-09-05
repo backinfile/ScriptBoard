@@ -483,6 +483,7 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 	}
 	version := assetVersions["app-v2.js"]
 	vendorAssets := map[string]string{
+		"workbench.js":                "ScriptBoardWorkbench",
 		"markdown-it.min.js":          "markdown-it 14.3.0",
 		"purify.min.js":               "DOMPurify 3.4.12",
 		"highlight.min.js":            "Highlight.js v11.11.1",
@@ -515,6 +516,7 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 	orderedAssets := []string{
 		"app.css",
 		"app-v2.js",
+		"workbench.js",
 		"markdown-it.min.js",
 		"purify.min.js",
 		"highlight.min.js",

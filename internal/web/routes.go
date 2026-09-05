@@ -11,6 +11,10 @@ import (
 
 func (a *App) routes() http.Handler {
 	mux := newDeclaredRouteMux()
+	mux.Handle("GET /resources/workbench", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchPage)))
+	mux.Handle("GET /resources/workbench/state", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchState)))
+	mux.Handle("POST /resources/workbench/state", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.saveWorkbench)))
+	mux.Handle("POST /resources/workbench/action", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchAction)))
 	if a.mcpEnabled {
 		mux.Public("GET /.well-known/oauth-protected-resource", a.mcpHTTP.ProtectedResourceMetadata)
 		mux.Public("GET /.well-known/oauth-authorization-server", a.mcpOAuth.AuthorizationServerMetadata)
@@ -21,6 +25,9 @@ func (a *App) routes() http.Handler {
 		mux.MCP("POST /oauth/revoke", a.mcpOAuth.Revoke)
 		mux.MCP("POST /mcp", a.mcpProtocol.ServeHTTP)
 	}
+	mux.Public("GET /assets/workbench.js", func(response http.ResponseWriter, request *http.Request) {
+		serveWebAsset(response, request, "text/javascript; charset=utf-8", workbenchJS)
+	})
 	mux.Public("GET /assets/app-v2.css", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/css; charset=utf-8", appCSS)
 	})

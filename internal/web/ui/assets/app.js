@@ -2,6 +2,14 @@
   "use strict";
 
   const iconPaths = {
+    "link": '<path d="M10 13a5 5 0 0 0 7 .5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+    "timer": '<path d="M10 2h4M12 14l3-3"/><circle cx="12" cy="14" r="8"/>',
+    "move": '<path d="m5 9-3 3 3 3m4-10 3-3 3 3m4 4 3 3-3 3m-4 4-3 3-3-3M2 12h20M12 2v20"/>',
+    "locate-fixed": '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>',
+    "undo-2": '<path d="M3 7v6h6M3 13a8 8 0 1 1 2.5 5.5"/>',
+    "chevron-up": '<path d="m18 15-6-6-6 6"/>',
+    "circle": '<circle cx="12" cy="12" r="10"/>',
+    "layout-dashboard": '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
     "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
     "archive": '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
     "app-window": '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M2 8h20"/><path d="M6 6h.01"/><path d="M10 6h.01"/>',
@@ -1369,6 +1377,13 @@
         });
         return;
       }
+      // Flush personal edits before PJAX removes their page, including history navigation.
+      const workbench = document.querySelector('[data-workbench]');
+      if (workbench?.workbenchBeforeLeave && !await workbench.workbenchBeforeLeave()) {
+        history.replaceState({ pjax: true }, '', '/resources/workbench');
+        return;
+      }
+      if (navigationRequest !== request || request.sequence !== navigationSequence) return;
       cleanupPage();
       syncPageTheme(result.document);
       // 标记已发生 pjax 交换：入场动画只在首次完整加载播放，页签/同页操作不再整页重放。
@@ -8088,6 +8103,16 @@
     bindKubernetesConnection(document.querySelector("[data-kubernetes-connection-page]"), cleanups);
   }
 
+  function initWorkbench(cleanups) {
+    const root = document.querySelector('[data-workbench]');
+    if (!root) return;
+    let cancelled = false, dispose;
+    cleanups.push(() => { cancelled = true; dispose?.(); });
+    loadScriptAsset('/assets/workbench.js', () => window.ScriptBoardWorkbench).then(init => {
+      if (!cancelled && root.isConnected) dispose = init(root, renderIcons);
+    }).catch(() => { /* The server-rendered editor remains available if enhancement fails. */ });
+  }
+
   function initPage(options = {}) {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -8095,6 +8120,7 @@
     applySidebarCollapsed(readSidebarCollapsed());
     localizeTimes();
     initMarkdownPreview();
+    initWorkbench(cleanups);
     initScriptPreview();
     initTextPreviewPager(cleanups);
     initPasswordControls(document, cleanups);

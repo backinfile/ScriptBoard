@@ -2661,6 +2661,10 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(await noScriptRunning.locator('form[method="post"] input[name="csrf_token"]').count(), 1);
     await noScriptContext.close();
 
+    const workbenchPage = await context.newPage();
+    await require('./workbench.cjs')(workbenchPage, fixture.baseURL);
+    await workbenchPage.close();
+
     const expectedServerErrorConsole = "Failed to load resource: the server responded with a status of 500 (Internal Server Error)";
     const injectedServerErrors = consoleErrors.filter(message => message === expectedServerErrorConsole);
     const unexpectedConsoleErrors = consoleErrors.filter(message => message !== expectedServerErrorConsole);

@@ -2241,6 +2241,8 @@ func safeWebErrorMessage(message string) string {
 
 var appCSS = mustWebAsset("ui/assets/app.css")
 
+var workbenchJS = mustWebAsset("ui/assets/workbench.js")
+
 var appJS = mustWebAsset("ui/assets/app.js")
 
 var markdownItJS = mustWebAsset("ui/assets/markdown-it.min.js")
@@ -2259,6 +2261,7 @@ var webAssetVersion = func() string {
 	digest := sha256.Sum256([]byte(strings.Join([]string{
 		appCSS,
 		appJS,
+		workbenchJS,
 		markdownItJS,
 		domPurifyJS,
 		highlightJS,

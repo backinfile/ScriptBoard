@@ -46,6 +46,11 @@ func TestCompatible(t *testing.T) {
 			t.Fatalf("schema 65 should accept supported predecessor %d", version)
 		}
 	}
+	for version := 20; version <= 65; version++ {
+		if !Compatible(66, version) {
+			t.Fatalf("schema 66 should accept predecessor %d", version)
+		}
+	}
 	if !Compatible(57, 57) {
 		t.Fatal("a current database must always remain compatible")
 	}

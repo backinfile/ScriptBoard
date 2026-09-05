@@ -17,6 +17,7 @@ import (
 	"scriptboard/internal/redismanager"
 	storesqlite "scriptboard/internal/store/sqlite"
 	"scriptboard/internal/websitemonitor"
+	"scriptboard/internal/workbench"
 )
 
 // Options supplies the application-specific capabilities needed by legacy
@@ -45,6 +46,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		statements []string
 	}{
 		{name: "SQLite", statements: baseSchemaStatements},
+		{name: "Personal workbench SQLite", statements: workbench.SchemaStatements},
 		{name: "Website Monitor SQLite", statements: websitemonitor.SchemaStatements},
 		{name: "External Interface SQLite", statements: externaltrigger.SchemaStatements},
 		{name: "Fleet status SQLite", statements: fleetstatus.SchemaStatements},

@@ -8976,3 +8976,72 @@ body:has(> .error-page) {
   .quick-access-collection .file-quick-group-title h2 { flex-basis: 100%; }
   .quick-access-collection .file-quick-group-title__toggle strong { white-space: normal; overflow-wrap: anywhere; }
 }
+
+/* Personal workbench: the existing shell frames a fixed tab band and an independent content viewport. */
+.wb [hidden]{display:none!important}
+.wb [data-wb-fallback] section{margin:24px 0;border-top:1px solid var(--rule);padding-top:20px}
+.wb [data-wb-fallback] form{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.wb [data-wb-fallback] textarea{min-height:80px}
+body:has(.wb-enhanced){height:100dvh;overflow:hidden}
+.workspace.wb-enhanced{width:100%;max-width:none;margin:0;padding:0;height:100dvh;min-height:0;overflow:hidden}
+.wb [data-wb-app]{height:100%;display:flex;flex-direction:column;position:relative}
+html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none}
+.wb button,.wb input,.wb select,.wb textarea{font:inherit;color:var(--ink)}
+.wb button{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--rule);border-radius:7px;padding:7px 11px;background:var(--surface);cursor:pointer;white-space:nowrap;line-height:1.5}
+.wb button:hover{background:var(--accent-soft);border-color:var(--accent-border)}
+.wb button:focus-visible,.wb input:focus-visible,.wb textarea:focus-visible,.wb select:focus-visible,.wb canvas:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.wb button[aria-pressed=true]{color:var(--accent-text);background:var(--accent-soft);border-color:var(--accent-border)}
+.wb .wb-quiet{background:transparent;border-color:transparent}
+.wb .wb-icon{width:30px;height:30px;min-width:30px;padding:5px;color:var(--muted)}
+.wb svg{width:18px;height:18px;flex-shrink:0}
+.wb input,.wb textarea,.wb select{border:1px solid var(--rule);border-radius:6px;padding:7px 9px;min-width:0;max-width:100%;background:var(--surface)}
+.wb input[readonly]{border-color:transparent;background:transparent;cursor:default}
+.wb-top{height:62px;flex-shrink:0;background:var(--surface);padding:0 24px;display:flex;align-items:center;border-bottom:1px solid var(--rule)}
+.wb-top h1{font-size:1.05rem;margin:0;line-height:1.4;font-weight:600}
+.wb-boardbar{display:flex;gap:16px;align-items:center;margin:0 24px;border-bottom:1px solid var(--rule);flex-shrink:0;min-height:57px}
+.wb-tabs{display:flex;gap:22px;overflow:auto;min-width:0;flex:1}
+.wb .wb-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:14px 0;color:var(--muted)}
+.wb .wb-tabs button.wb-selected{border-bottom-color:var(--accent);color:var(--accent-text);font-weight:600}
+.wb-scroll{flex:1;min-height:0;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;padding:0 24px 112px;scroll-padding-block:12px 112px}
+.wb-tools{display:flex;align-items:center;gap:12px;margin:16px 0 6px;flex-shrink:0}
+.wb-tools>input:first-child{font-size:1rem;font-weight:600;width:200px;background:transparent}
+.wb-tools input[type=search]{margin-left:auto;max-width:220px;background:transparent}
+.wb-notice{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:26px;margin-bottom:12px;flex-shrink:0;font-size:.72rem;color:var(--muted)}
+.wb-notice button{font-size:.72rem;padding:3px 6px}
+.wb-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:stretch;flex:1 0 auto;grid-auto-rows:minmax(270px,auto)}
+.wb-widget{display:flex;flex-direction:column;min-width:0;border:1px solid var(--rule);border-radius:12px;background:var(--surface);overflow:hidden;grid-column:span 4}
+.wb-note{grid-column:span 5}.wb-todo{grid-column:span 4}.wb-timer{grid-column:span 3}.wb-links{grid-column:span 5}.wb-draw{grid-column:span 7;align-self:start}
+.wb-widget-head{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--rule);padding:12px 15px;flex-shrink:0;min-width:0}
+.wb-widget-head>input{flex:1;width:0;padding:3px 0;border:0;font-weight:600;font-size:.78rem;background:transparent}
+.wb[data-mode=edit] .wb-widget-head{cursor:grab}
+.wb[data-mode=edit] .wb-widget-head>input{border-bottom:1px dashed var(--rule-strong);border-radius:0}
+.wb-reorder{display:flex;gap:0}.wb-reorder .wb-icon{width:26px;min-width:26px}
+.wb-widget-body{padding:18px;flex:1;min-height:0}
+.wb-note .wb-widget-body{display:flex}.wb-note textarea{border:0;resize:vertical;width:100%;min-height:210px;line-height:1.9;background:transparent;padding:0}
+.wb[data-mode=view] textarea{resize:none}
+.wb-task{display:flex;align-items:center;gap:9px;margin:9px 0;font-size:.85rem}
+.wb-task input[type=checkbox]{width:17px;height:17px;flex-shrink:0;accent-color:var(--accent)}
+.wb-task input:not([type=checkbox]){flex:1;width:0;padding:5px 7px}
+.wb-task span{overflow-wrap:anywhere;flex:1}.wb-task.wb-done>span{text-decoration:line-through;color:var(--muted)}
+.wb-add-row{display:flex;gap:7px;margin-top:15px}.wb-add-row input{width:0;flex:1;font-size:.8rem}.wb-add-row button{font-size:.75rem}
+.wb-link-row{display:flex;gap:4px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--rule)}
+.wb-link-row>a{flex:1;min-width:0;display:flex;align-items:center;gap:12px;color:var(--ink);text-decoration:none;padding:14px 0;font-size:.82rem}
+.wb-link-row>a>span:not([data-lucide]){flex:1;min-width:0}.wb-link-row>a>[data-lucide]{flex:0 0 18px}.wb-link-row b{font-weight:550;display:block;overflow-wrap:anywhere}.wb-link-row small{white-space:nowrap;text-overflow:ellipsis;overflow:hidden;font-size:.7rem;color:var(--muted)}
+.wb-link-row a:hover b{color:var(--accent-text)}
+.wb-link-editor{width:100%;background:var(--surface-2);border-radius:7px;padding:12px;display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}.wb-link-editor input{width:100%;font-size:.8rem}.wb-error{color:var(--danger);width:100%;font-size:.75rem}
+.wb-timer .wb-widget-body{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 12px;gap:15px}.wb-timer select{font-size:.75rem;background:var(--surface-2);border:0}.wb-digits{font-size:clamp(2.6rem,4vw,3.5rem);line-height:1.2;letter-spacing:-.035em;font-variant-numeric:tabular-nums}.wb-timer small{font-size:.7rem}.wb-timer-actions{display:flex;gap:8px;align-items:center}
+.wb .wb-canvas-body{padding:0;display:flex;flex-direction:column;min-height:0}.wb-canvas-nav,.wb-canvas-footer{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:9px 12px;flex-shrink:0}.wb-canvas-nav{border-bottom:1px solid var(--rule)}.wb-canvas-footer{border-top:1px solid var(--rule)}.wb-canvas-nav button,.wb-canvas-footer button{font-size:.72rem;padding:5px 8px}.wb-canvas-viewport{height:340px;min-height:0;position:relative;flex:none;overflow:hidden}.wb canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair;background-image:radial-gradient(var(--rule-strong) .8px,transparent .8px);background-size:20px 20px}.wb canvas[data-tool=pan]{cursor:grab}.wb canvas.wb-panning{cursor:grabbing}.wb-sizes{display:flex;gap:2px;margin-left:auto}.wb-sizes button{min-width:28px}
+.wb-draw[data-size=small]{grid-column:span 4}.wb-draw[data-size=small] .wb-canvas-viewport{height:220px}.wb-draw[data-size=large]{grid-column:1/-1}.wb-draw[data-size=large] .wb-canvas-viewport{height:500px}.wb-draw[data-size=xlarge]{grid-column:1/-1;height:var(--wb-expanded-height,600px);max-height:var(--wb-expanded-height,600px);min-height:0}.wb-draw[data-size=xlarge] .wb-canvas-viewport{height:auto;flex:1;min-height:0}
+.wb-empty{grid-column:1/-1;display:grid;place-items:center;padding:40px;text-align:center;border:1px dashed var(--rule-strong);border-radius:12px;color:var(--muted);min-height:280px}
+.wb-dock{position:fixed;bottom:24px;left:calc(var(--sidebar-width) + (100% - var(--sidebar-width))/2);transform:translateX(-50%);display:flex;align-items:center;justify-content:center;gap:3px;padding:9px;border-radius:12px;background:var(--surface);box-shadow:0 8px 35px #1b23421c;z-index:30;max-width:calc(100% - var(--sidebar-width) - 32px)}
+.wb-dock>button{border:0;padding:9px 11px;font-size:.8rem}.wb-modes{display:flex;padding:3px;background:var(--surface-2);border-radius:8px;gap:2px;flex-shrink:0}.wb .wb-modes button{border:0;background:transparent;font-size:.8rem;padding:7px 11px}.wb .wb-modes button[aria-pressed=true]{background:var(--surface);color:var(--accent-text)}
+.wb[data-mode=view] .wb-edit-only{display:none!important}
+@media(max-width:1200px) and (min-width:1024px){.wb-note,.wb-todo,.wb-timer,.wb-links,.wb-draw[data-size=small],.wb-draw[data-size=medium]{grid-column:span 6}.wb-dock{flex-wrap:wrap}}
+@media(max-width:1023px){.workspace.wb-enhanced{height:100dvh}.wb-top{padding-left:68px}.wb-dock{left:50%;max-width:calc(100% - 28px)}.wb-note,.wb-todo,.wb-timer,.wb-links,.wb-draw[data-size=small]{grid-column:span 6}.wb-draw[data-size=medium]{grid-column:1/-1}}
+@media(max-width:700px){.wb-top{height:62px}.wb-top h1{font-size:1rem}.wb-boardbar{margin:0 12px;gap:8px}.wb-tabs{gap:18px}.wb-boardbar>button{font-size:.75rem;padding:7px}.wb-scroll{padding:0 12px 142px;scroll-padding-bottom:142px}.wb-tools{flex-wrap:wrap;gap:5px}.wb-tools>input:first-child{width:150px}.wb-tools input[type=search]{max-width:145px}.wb-tools>button{order:3}.wb-grid>.wb-widget{grid-column:1/-1}.wb-dock{bottom:12px;flex-wrap:wrap;width:max-content;gap:1px;padding:7px}.wb-dock>button{padding:7px;font-size:.7rem;flex-direction:column;gap:3px}.wb-modes{width:100%;justify-content:center}.wb-modes button{flex:1}.wb[data-mode=view] .wb-modes{width:auto}.wb-widget-head{padding:10px 12px}.wb .wb-icon{width:36px;height:36px;min-width:36px}.wb-notice{font-size:.7rem}}
+/* Keep inherited form field widths and borders from changing the workspace's read-only headings. */
+.wb.wb-enhanced input[readonly]{border-color:transparent;background:transparent;cursor:default}
+.wb.wb-enhanced .wb-widget-head>input{flex:1;width:0;padding:3px 0;border:0;font-weight:600;font-size:.78rem;background:transparent}
+.wb.wb-enhanced[data-mode=edit] .wb-widget-head>input{border-bottom:1px dashed var(--rule-strong);border-radius:0}
+.wb.wb-enhanced .wb-tools>input:first-child{font-size:1rem;font-weight:600;width:200px;background:transparent}
+@media(max-width:700px){.wb.wb-enhanced .wb-tools>input:first-child{width:150px}}
