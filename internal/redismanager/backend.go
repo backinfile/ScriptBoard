@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -134,7 +135,8 @@ func (b *localBackend) client(i Instance, database int) (*redis.Client, error) {
 	if e != nil {
 		return nil, e
 	}
-	o := &redis.Options{Addr: fmt.Sprintf("%s:%d", i.Host, i.Port), Username: i.Username, Password: p, DB: database, DialTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, Protocol: 2}
+	// JoinHostPort preserves IPv6 literals in both plaintext and TLS connections.
+	o := &redis.Options{Addr: net.JoinHostPort(i.Host, strconv.Itoa(i.Port)), Username: i.Username, Password: p, DB: database, DialTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, Protocol: 2}
 	if i.TLSMode != TLSDisabled {
 		c := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: i.Host, InsecureSkipVerify: i.TLSMode == TLSInsecureSkipVerify}
 		if i.CAPath != "" {

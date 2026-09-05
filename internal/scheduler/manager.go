@@ -355,8 +355,10 @@ func (m *Manager) RunNowAs(id, userID, username string) (string, error) {
 		m.recordAudit("schedule_run_now", schedule.Name, "rejected")
 		return "", err
 	}
+	// Enforce schedule overlap inside the Run start lock, including concurrent manual triggers.
 	runID, err := m.runs.Start(runmanager.StartRequest{
-		ScriptPath: schedule.ScriptPath, ArgumentsTemplate: schedule.ArgumentsTemplate, TimeoutSeconds: schedule.TimeoutSeconds,
+		DisallowOverlap: !schedule.AllowOverlap,
+		ScriptPath:      schedule.ScriptPath, ArgumentsTemplate: schedule.ArgumentsTemplate, TimeoutSeconds: schedule.TimeoutSeconds,
 		SourceType: "admin/schedule-now", SourceName: schedule.Name, SourceID: schedule.ID, Variables: variables,
 		InitiatorUserID: userID, InitiatorUsername: username,
 		PreparedScript: prepared, PreparedDirectory: preparedDirectory,
@@ -566,11 +568,18 @@ func (m *Manager) fireDue() {
 			m.recordAudit("schedule_trigger", item.name, "rejected")
 			continue
 		}
+		// The atomic Run check also closes races with manual starts after the early skip check.
 		runID, startErr := m.runs.Start(runmanager.StartRequest{
-			ScriptPath: item.scriptPath, ArgumentsTemplate: item.arguments, TimeoutSeconds: item.timeout,
+			DisallowOverlap: !item.allowOverlap,
+			ScriptPath:      item.scriptPath, ArgumentsTemplate: item.arguments, TimeoutSeconds: item.timeout,
 			SourceType: "scheduler", SourceName: item.name, SourceID: item.id, Variables: variables,
 			PreparedScript: prepared, PreparedDirectory: preparedDirectory,
 		})
+		if errors.Is(startErr, runmanager.ErrRunOverlap) {
+			_ = m.completeTrigger(triggerID, "skipped", "", "")
+			m.recordAudit("schedule_trigger", item.name, "skipped")
+			continue
+		}
 		if startErr != nil {
 			_ = m.completeTrigger(triggerID, "rejected", "", secretredaction.String(startErr.Error()))
 			m.recordAudit("schedule_trigger", item.name, "rejected")

@@ -233,7 +233,7 @@ func (a *App) saveRedisInstance(response http.ResponseWriter, request *http.Requ
 		http.Error(response, "invalid Redis port", http.StatusBadRequest)
 		return
 	}
-	instance, err := a.redis.SaveInstance(request.Context(), redismanager.InstanceInput{ID: request.FormValue("id"), Name: request.FormValue("name"), Environment: redismanager.Environment(request.FormValue("environment")), Host: request.FormValue("host"), Port: port, Username: request.FormValue("username"), Password: request.FormValue("password"), TLSMode: redismanager.TLSMode(request.FormValue("tls_mode")), CAPath: request.FormValue("ca_path")})
+	instance, err := a.redis.SaveInstance(request.Context(), redismanager.InstanceInput{ID: request.FormValue("id"), Name: request.FormValue("name"), Environment: redismanager.Environment(request.FormValue("environment")), Host: request.FormValue("host"), Port: port, Username: request.FormValue("username"), Password: request.FormValue("password"), ClearPassword: request.FormValue("clear_password") == "1", TLSMode: redismanager.TLSMode(request.FormValue("tls_mode")), CAPath: request.FormValue("ca_path")})
 	if err != nil {
 		http.Error(response, secretredaction.String(err.Error()), http.StatusBadRequest)
 		return

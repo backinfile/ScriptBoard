@@ -29,6 +29,19 @@ type PlanInput struct {
 
 var planParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
+// nextPlanFire rejects impossible dates before they become perpetually overdue backups.
+func nextPlanFire(expression string, now time.Time) (time.Time, error) {
+	schedule, err := planParser.Parse(expression)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid five-field MySQL backup schedule: %w", err)
+	}
+	next := schedule.Next(now)
+	if !next.After(now) {
+		return time.Time{}, errors.New("MySQL backup schedule has no future occurrence")
+	}
+	return next, nil
+}
+
 func (m *Manager) SavePlan(ctx context.Context, input PlanInput) (Plan, error) {
 	input.Name, input.InstanceID, input.Expression = strings.TrimSpace(input.Name), strings.TrimSpace(input.InstanceID), strings.TrimSpace(input.Expression)
 	if input.Name == "" || input.InstanceID == "" || input.RetentionCount < 1 || input.RetentionCount > 365 {
@@ -50,12 +63,11 @@ func (m *Manager) SavePlan(ctx context.Context, input PlanInput) (Plan, error) {
 	if len(deduplicated) == 0 {
 		return Plan{}, errors.New("at least one non-system database is required")
 	}
-	schedule, err := planParser.Parse(input.Expression)
-	if err != nil {
-		return Plan{}, fmt.Errorf("invalid five-field MySQL backup schedule: %w", err)
-	}
 	now := m.now()
-	next := schedule.Next(now)
+	next, err := nextPlanFire(input.Expression, now)
+	if err != nil {
+		return Plan{}, err
+	}
 	databasesJSON, _ := json.Marshal(deduplicated)
 	id := strings.TrimSpace(input.ID)
 	if id == "" {
@@ -138,12 +150,19 @@ func (m *Manager) ReconcilePlans(ctx context.Context) error {
 		}
 	}
 	for _, value := range values {
-		schedule, parseErr := planParser.Parse(value.expression)
+		now := m.now()
+		next, parseErr := nextPlanFire(value.expression, now)
 		if parseErr != nil {
-			_, _ = m.db.ExecContext(ctx, "UPDATE mysql_backup_plans SET enabled=0, updated_at=? WHERE id=?", m.now().UnixNano(), value.id)
+			_, err = m.db.ExecContext(ctx, "UPDATE mysql_backup_plans SET enabled=0, updated_at=? WHERE id=?", now.UnixNano(), value.id)
+			if err != nil {
+				return err
+			}
 			continue
 		}
-		_, err = m.db.ExecContext(ctx, "UPDATE mysql_backup_plans SET next_fire_at=?, updated_at=? WHERE id=?", schedule.Next(m.now()).UnixNano(), m.now().UnixNano(), value.id)
+		_, err = m.db.ExecContext(ctx, "UPDATE mysql_backup_plans SET next_fire_at=?, updated_at=? WHERE id=?", next.UnixNano(), now.UnixNano(), value.id)
+		if err != nil {
+			return err
+		}
 	}
 	return err
 }
@@ -168,11 +187,29 @@ func (m *Manager) RunDuePlans(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		schedule, err := planParser.Parse(plan.Expression)
-		if err != nil {
+		now := m.now()
+		if !plan.Enabled || plan.NextFireAt.After(now) {
 			continue
 		}
-		_, _ = m.db.ExecContext(ctx, "UPDATE mysql_backup_plans SET next_fire_at=?, updated_at=? WHERE id=?", schedule.Next(m.now()).UnixNano(), m.now().UnixNano(), plan.ID)
+		next, err := nextPlanFire(plan.Expression, now)
+		if err != nil {
+			if _, err := m.db.ExecContext(ctx, "UPDATE mysql_backup_plans SET enabled=0, updated_at=? WHERE id=?", now.UnixNano(), plan.ID); err != nil {
+				return err
+			}
+			continue
+		}
+		// Persist the next occurrence before backup; only the caller claiming this occurrence may run it.
+		advance, err := m.db.ExecContext(ctx, "UPDATE mysql_backup_plans SET next_fire_at=?, updated_at=? WHERE id=? AND enabled=1 AND next_fire_at=?", next.UnixNano(), now.UnixNano(), plan.ID, plan.NextFireAt.UnixNano())
+		if err != nil {
+			return err
+		}
+		changed, err := advance.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed != 1 {
+			continue
+		}
 		for _, database := range plan.Databases {
 			_, err := m.Backup(ctx, BackupRequest{InstanceID: plan.InstanceID, Database: database, PlanID: plan.ID, Kind: BackupScheduled, ActorUsername: "system"})
 			if err != nil {

@@ -189,3 +189,47 @@ func TestRedisOverviewTimeoutShowsActionableConnectionError(t *testing.T) {
 		t.Fatalf("Redis timeout exposed Broker framing error: %s", page)
 	}
 }
+
+func TestRedisEditExplicitEmptyPassword(t *testing.T) {
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), RedisBackend: &redisWebBackend{}})
+	body := getBody(t, client, serverURL+"/resources/databases?engine=redis", http.StatusOK)
+	values := url.Values{"csrf_token": {formToken(t, body)}, "name": {"Passwordless"}, "host": {"127.0.0.1"}, "port": {"6379"}, "tls_mode": {"disabled"}}
+	response, err := client.PostForm(serverURL+"/resources/databases/redis/instances", values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create status=%d", response.StatusCode)
+	}
+	location, err := url.Parse(response.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	values.Set("id", location.Query().Get("instance"))
+	page := getBody(t, client, serverURL+location.String()+"&tab=diagnostics", http.StatusOK)
+	if !strings.Contains(string(page), "name=\"clear_password\" value=\"1\"") {
+		t.Fatal("missing explicit empty-password control")
+	}
+	values.Set("port", "6380")
+	response, err = client.PostForm(serverURL+"/resources/databases/redis/instances", values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("implicit credential reuse status=%d", response.StatusCode)
+	}
+	values.Set("clear_password", "1")
+	for _, mode := range []string{"disabled", "verify_identity", "insecure_skip_verify"} {
+		values.Set("tls_mode", mode)
+		response, err = client.PostForm(serverURL+"/resources/databases/redis/instances", values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusSeeOther {
+			t.Fatalf("explicit empty-password update %s status=%d", mode, response.StatusCode)
+		}
+	}
+}

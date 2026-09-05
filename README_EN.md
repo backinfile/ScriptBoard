@@ -123,6 +123,8 @@ MySQL, Redis, Kubernetes, website, and model endpoints preserve the secure and p
 
 Roles apply to the whole instance. Custom roles and per-script permissions are not currently supported.
 
+When editing a Redis connection, leaving the password blank preserves it. To change the host, port, or TLS settings of a passwordless instance, explicitly select “Use an empty password”.
+
 ## Network and configuration
 
 The defaults are suitable for local access. Create a YAML file only when you need to change the listen address, TLS, state directory, or reverse-proxy settings.

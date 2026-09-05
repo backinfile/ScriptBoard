@@ -40,6 +40,7 @@ type Instance struct {
 }
 
 type InstanceInput struct {
+	ClearPassword                              bool
 	ID, Name, Host, Username, Password, CAPath string
 	Environment                                Environment
 	Port                                       int
@@ -156,7 +157,12 @@ func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instan
 	if creating {
 		id = randomID()
 	}
-	configured := creating || input.Password != ""
+	// Explicit empty credentials allow passwordless endpoint changes without reusing an old secret.
+	if input.ClearPassword && input.Password != "" {
+		return Instance{}, errors.New("choose either a Redis password or an explicit empty password")
+	}
+	replaceCredential := creating || input.Password != "" || input.ClearPassword
+	configured := replaceCredential
 	state := ConnectionUntried
 	var previous Instance
 	var err error
@@ -168,8 +174,8 @@ func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instan
 		if !configured {
 			configured = previous.CredentialConfigured
 		}
-		if input.Password == "" && (previous.Host != input.Host || previous.Port != input.Port || previous.Username != input.Username || previous.TLSMode != input.TLSMode || previous.CAPath != input.CAPath) {
-			return Instance{}, errors.New("Redis password is required when connection or TLS settings change")
+		if !replaceCredential && (previous.Host != input.Host || previous.Port != input.Port || previous.Username != input.Username || previous.TLSMode != input.TLSMode || previous.CAPath != input.CAPath) {
+			return Instance{}, errors.New("Redis password or an explicit empty password is required when connection or TLS settings change")
 		}
 	}
 	now := m.now().UTC()
@@ -181,7 +187,7 @@ func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instan
 	if err != nil {
 		return Instance{}, err
 	}
-	if creating || input.Password != "" {
+	if replaceCredential {
 		instance := Instance{ID: id, Name: input.Name, Environment: input.Environment, Host: input.Host, Port: input.Port, Username: input.Username, TLSMode: input.TLSMode, CAPath: input.CAPath, CredentialConfigured: true}
 		if err := m.backend.StoreCredential(ctx, instance, input.Password); err != nil {
 			if creating {
