@@ -11,7 +11,7 @@ func TestPrimaryNavigationPagesShareHeadingContract(t *testing.T) {
 	t.Parallel()
 
 	templates := []string{
-		"applications.html", "containers.html", "files.html", "quick-access.html", "variables.html", "runs.html",
+		"applications.html", "containers.html", "files.html", "documents.html", "quick-access.html", "variables.html", "runs.html",
 		"audit.html", "service-logs.html", "quick-runs.html", "schedules.html", "external-interfaces.html",
 	}
 	for _, name := range templates {

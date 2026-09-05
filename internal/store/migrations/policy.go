@@ -25,7 +25,8 @@ package migrations
 // file Quick access, and website monitoring; schema 62 adds an opt-in
 // manual-start confirmation for Quick Runs; schema 63 records the visible
 // source name for scheduled MySQL backups; schema 64 moves Redis logical
-// database selection from connection metadata to individual read operations.
+// database selection from connection metadata to individual read operations;
+// schema 65 adds the grouped document collection.
 //
 // The explicit current-version guard forces a deliberate policy update when a
 // future schema is introduced instead of silently promising an untested path.
@@ -34,7 +35,7 @@ func Compatible(current, existing int) bool {
 		return true
 	}
 	switch current {
-	case 57, 58, 59, 60, 61, 62, 63, 64:
+	case 57, 58, 59, 60, 61, 62, 63, 64, 65:
 		return existing >= 20 && existing < current
 	default:
 		return false

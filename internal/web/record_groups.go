@@ -68,7 +68,7 @@ func (a *App) resolveRecordGroupID(value string) (*string, error) {
 func recordGroupReturnTo(request *http.Request) string {
 	value := strings.TrimSpace(request.URL.Query().Get("return_to"))
 	switch value {
-	case "/config/quick-access", "/config/quick-runs", "/config/schedules", "/resources/variables", "/resources/files", "/monitor/websites":
+	case "/config/quick-access", "/config/quick-runs", "/config/schedules", "/resources/variables", "/resources/files", "/resources/documents", "/monitor/websites":
 		return value
 	}
 	switch {
@@ -76,6 +76,8 @@ func recordGroupReturnTo(request *http.Request) string {
 		return "/config/quick-access"
 	case strings.HasPrefix(request.URL.Path, "/config/schedules"):
 		return "/config/schedules"
+	case strings.HasPrefix(request.URL.Path, "/resources/documents"):
+		return "/resources/documents"
 	case strings.HasPrefix(request.URL.Path, "/resources/files"):
 		return "/resources/files"
 	case strings.HasPrefix(request.URL.Path, "/resources/variables"):
@@ -92,6 +94,7 @@ type recordGroupImpact struct {
 	Schedules int
 	Variables int
 	Files     int
+	Documents int
 	Websites  int
 }
 
@@ -111,6 +114,7 @@ func (a *App) deleteRecordGroupTask(response http.ResponseWriter, request *http.
 		{`SELECT COUNT(*) FROM schedules WHERE group_id=? AND deleted=0`, &impact.Schedules},
 		{`SELECT COUNT(*) FROM variables WHERE group_id=?`, &impact.Variables},
 		{`SELECT COUNT(*) FROM file_quick_access_pins WHERE group_id=?`, &impact.Files},
+		{`SELECT COUNT(*) FROM documents WHERE group_id=?`, &impact.Documents},
 		{`SELECT COUNT(*) FROM website_monitors WHERE group_id=? AND deleted_at IS NULL`, &impact.Websites},
 	} {
 		if err := a.db.QueryRow(count.query, id).Scan(count.value); err != nil {
@@ -366,6 +370,7 @@ func (a *App) deleteRecordGroup(response http.ResponseWriter, request *http.Requ
 		{"schedules", "id", "updated_at", " AND deleted=0"},
 		{"variables", "name", "updated_at", ""},
 		{"file_quick_access_pins", "path_key", "", ""},
+		{"documents", "path_key", "", ""},
 		{"website_monitors", "id", "updated_at", " AND deleted_at IS NULL"},
 	} {
 		var ungroupedOrder int
