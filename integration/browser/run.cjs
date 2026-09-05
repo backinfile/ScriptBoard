@@ -2663,6 +2663,7 @@ async function assertExternalInterfaces(page, fixture) {
 
     const workbenchPage = await context.newPage();
     await require('./workbench.cjs')(workbenchPage, fixture.baseURL);
+    await require('./inspiration-space.cjs')(workbenchPage, fixture.baseURL);
     await workbenchPage.close();
 
     const expectedServerErrorConsole = "Failed to load resource: the server responded with a status of 500 (Internal Server Error)";

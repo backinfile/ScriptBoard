@@ -8996,8 +8996,7 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 .wb svg{width:18px;height:18px;flex-shrink:0}
 .wb input,.wb textarea,.wb select{border:1px solid var(--rule);border-radius:6px;padding:7px 9px;min-width:0;max-width:100%;background:var(--surface)}
 .wb input[readonly]{border-color:transparent;background:transparent;cursor:default}
-.wb-top{height:62px;flex-shrink:0;background:var(--surface);padding:0 24px;display:flex;align-items:center;border-bottom:1px solid var(--rule)}
-.wb-top h1{font-size:1.05rem;margin:0;line-height:1.4;font-weight:600}
+.wb-top{flex-shrink:0;background:var(--surface);border-bottom:1px solid var(--rule)}
 .wb-boardbar{display:flex;gap:16px;align-items:center;margin:0 24px;border-bottom:1px solid var(--rule);flex-shrink:0;min-height:57px}
 .wb-tabs{display:flex;gap:22px;overflow:auto;min-width:0;flex:1}
 .wb .wb-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:14px 0;color:var(--muted)}
@@ -9038,10 +9037,18 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 .wb[data-mode=view] .wb-edit-only{display:none!important}
 @media(max-width:1200px) and (min-width:1024px){.wb-note,.wb-todo,.wb-timer,.wb-links,.wb-draw[data-size=small],.wb-draw[data-size=medium]{grid-column:span 6}.wb-dock{flex-wrap:wrap}}
 @media(max-width:1023px){.workspace.wb-enhanced{height:100dvh}.wb-top{padding-left:68px}.wb-dock{left:50%;max-width:calc(100% - 28px)}.wb-note,.wb-todo,.wb-timer,.wb-links,.wb-draw[data-size=small]{grid-column:span 6}.wb-draw[data-size=medium]{grid-column:1/-1}}
-@media(max-width:700px){.wb-top{height:62px}.wb-top h1{font-size:1rem}.wb-boardbar{margin:0 12px;gap:8px}.wb-tabs{gap:18px}.wb-boardbar>button{font-size:.75rem;padding:7px}.wb-scroll{padding:0 12px 142px;scroll-padding-bottom:142px}.wb-tools{flex-wrap:wrap;gap:5px}.wb-tools>input:first-child{width:150px}.wb-tools input[type=search]{max-width:145px}.wb-tools>button{order:3}.wb-grid>.wb-widget{grid-column:1/-1}.wb-dock{bottom:12px;flex-wrap:wrap;width:max-content;gap:1px;padding:7px}.wb-dock>button{padding:7px;font-size:.7rem;flex-direction:column;gap:3px}.wb-modes{width:100%;justify-content:center}.wb-modes button{flex:1}.wb[data-mode=view] .wb-modes{width:auto}.wb-widget-head{padding:10px 12px}.wb .wb-icon{width:36px;height:36px;min-width:36px}.wb-notice{font-size:.7rem}}
+@media(max-width:700px){.wb-top{min-height:154px}.wb-boardbar{margin:0 12px;gap:8px}.wb-tabs{gap:18px}.wb-boardbar>button{font-size:.75rem;padding:7px}.wb-scroll{padding:0 12px 142px;scroll-padding-bottom:142px}.wb-tools{flex-wrap:wrap;gap:5px}.wb-tools>input:first-child{width:150px}.wb-tools input[type=search]{max-width:145px}.wb-tools>button{order:3}.wb-grid>.wb-widget{grid-column:1/-1}.wb-dock{bottom:12px;flex-wrap:wrap;width:max-content;gap:1px;padding:7px}.wb-dock>button{padding:7px;font-size:.7rem;flex-direction:column;gap:3px}.wb-modes{width:100%;justify-content:center}.wb-modes button{flex:1}.wb[data-mode=view] .wb-modes{width:auto}.wb-widget-head{padding:10px 12px}.wb .wb-icon{width:36px;height:36px;min-width:36px}.wb-notice{font-size:.7rem}}
 /* Keep inherited form field widths and borders from changing the workspace's read-only headings. */
 .wb.wb-enhanced input[readonly]{border-color:transparent;background:transparent;cursor:default}
 .wb.wb-enhanced .wb-widget-head>input{flex:1;width:0;padding:3px 0;border:0;font-weight:600;font-size:.78rem;background:transparent}
 .wb.wb-enhanced[data-mode=edit] .wb-widget-head>input{border-bottom:1px dashed var(--rule-strong);border-radius:0}
 .wb.wb-enhanced .wb-tools>input:first-child{font-size:1rem;font-weight:600;width:200px;background:transparent}
 @media(max-width:700px){.wb.wb-enhanced .wb-tools>input:first-child{width:150px}}
+
+/* Compact the fixed header and canvas controls on short screens so XL retains a drawable area. */
+@media(max-height:600px){
+ .wb-top{min-height:64px;padding-top:12px;padding-bottom:12px}.wb-top .page-eyebrow,.wb-top p:last-child{display:none}.wb-top h1{font-size:1.35rem;margin:0}
+ .wb .wb-widget-head{padding:6px 12px;min-height:40px}.wb.wb-enhanced .wb-widget-head>input{padding-top:2px;padding-bottom:2px}.wb .wb-widget-head .wb-icon{height:28px;width:28px;min-width:28px}.wb .wb-canvas-nav,.wb .wb-canvas-footer{flex-wrap:nowrap;overflow-x:auto;padding:5px 8px;gap:4px}.wb .wb-canvas-nav button,.wb .wb-canvas-footer button{white-space:nowrap;flex-shrink:0}.wb .wb-canvas-footer .wb-icon{width:28px;height:28px;min-width:28px}.wb .wb-canvas-footer .wb-sizes{flex-shrink:0}
+}
+
+.wb-conflict{padding:10px 12px;border-top:1px solid var(--warning-border);background:var(--warning-soft);font-size:.75rem;display:flex;flex-wrap:wrap;gap:6px;align-items:center}.wb-conflict>span{flex-basis:100%}

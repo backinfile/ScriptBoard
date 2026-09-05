@@ -76,6 +76,7 @@ import (
 	updatepkg "scriptboard/internal/update"
 	"scriptboard/internal/variables"
 	"scriptboard/internal/websitemonitor"
+	"scriptboard/internal/workbench"
 )
 
 const initialPasswordFilename = "initial-admin-password"
@@ -511,6 +512,7 @@ func deletePasskeyWithContext(ctx context.Context, store PasskeyStore, userID, c
 }
 
 type App struct {
+	workbenchUpdates      workbench.Notifier
 	db                    *sql.DB
 	stateRoot             string
 	files                 *hostfiles.Manager

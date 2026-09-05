@@ -45,7 +45,7 @@ var webMessages = map[string]localizedMessage{
 	"external.sections":                             {"外部接口分区", "External interface sections"},
 	"external.interface_list":                       {"接口列表", "Interfaces"},
 	"external.activity_description":                 {"查看外部调用的时间、结果及关联运行。", "Review external calls, results, and linked runs."},
-	"nav.workbench":                                 {"个人工作台", "Personal workspace"},
+	"nav.workbench":                                 {"灵感空间", "Inspiration space"},
 	"login.title":                                   {"登录", "Sign in"},
 	"login.failure":                                 {"登录失败", "Sign-in failed"},
 	"login.username":                                {"用户名", "Username"},

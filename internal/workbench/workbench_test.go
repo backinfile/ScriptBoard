@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestPrivateStoreRevisionAndValidation(t *testing.T) {
+func TestSharedStoreRevisionAndValidation(t *testing.T) {
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -27,24 +27,24 @@ func TestPrivateStoreRevisionAndValidation(t *testing.T) {
 	link := Item{ID: "link", Type: "links", Title: "Reference", Links: []Link{{Title: "HTTP", URL: "http://example.com"}, {Title: "TLS", URL: "https://example.com"}}}
 	drawing := Item{ID: "draw", Type: "draw", Size: "xlarge", Strokes: []Stroke{{Color: "#3b5bfd", Points: []Point{{1, 2}, {3, 4}}}}}
 	state := State{Boards: []Board{{ID: "board", Name: "Work", Items: []Item{link, drawing}}}}
-	rev, err := Save(ctx, db, "a", state)
+	rev, err := Save(ctx, db, state)
 	if err != nil || rev != 1 {
 		t.Fatalf("save %d %v", rev, err)
 	}
-	if _, err = Save(ctx, db, "a", state); !errors.Is(err, ErrConflict) {
+	if _, err = Save(ctx, db, state); !errors.Is(err, ErrConflict) {
 		t.Fatalf("expected conflict: %v", err)
 	}
-	other, err := Load(ctx, db, "b")
-	if err != nil || len(other.Boards) != 0 {
-		t.Fatal("cross-user data leak")
+	other, err := Load(ctx, db)
+	if err != nil || len(other.Boards) != 1 {
+		t.Fatal("shared board missing")
 	}
 	state.Revision = rev
 	state.Boards[0].Name = "Updated"
-	rev, err = Save(ctx, db, "a", state)
+	rev, err = Save(ctx, db, state)
 	if err != nil || rev != 2 {
 		t.Fatal(rev, err)
 	}
-	loaded, err := Load(ctx, db, "a")
+	loaded, err := Load(ctx, db)
 	if err != nil || loaded.Boards[0].Name != "Updated" || loaded.Boards[0].Items[1].Strokes[0].Points[1] != (Point{3, 4}) {
 		t.Fatal(loaded, err)
 	}

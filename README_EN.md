@@ -17,7 +17,7 @@ ScriptBoard is built for personal servers, small-team utility hosts, and interna
 
 - **Manage files:** browse, search, preview, edit, batch-upload, and download host files; restore web-deleted files from Trash.
 - **Organize documents:** bookmark and group host documents; manage frequent directories on a dedicated Quick Access page.
-- **Personal workspace:** keep private notes, links, tasks, timers, and freehand canvases together, with server-side saving for each user.
+- **Inspiration space:** share notes, links, tasks, timers, and freehand canvases together, with server-side saving for all signed-in users.
 - **Run scripts:** execute PowerShell, Python, Shell, Batch, and CMD scripts with live output, duration, and results.
 - **Reuse tasks:** save scripts as Quick Runs with parameters, variables, timeouts, and five-field Cron schedules.
 - **Observe the host:** inspect CPU, memory, storage, applications, Docker, Kubernetes, websites, and run history.
@@ -211,10 +211,10 @@ The new one-time password is written to `state_root/secrets/initial-admin-passwo
 - [Project documentation](./docs/)
 - `scriptboard help` for all local commands
 
-## Personal workspace
+## Inspiration space
 
-Open **Resources → Personal workspace**. The floating toolbar switches between View and Edit. Add notes, links, tasks, timers, and canvases, rename blocks, and reorder them. View mode keeps links, task completion, timers, and canvas panning available.
+Open **Resources → Inspiration space**. The floating toolbar switches between View and Edit. Add notes, links, tasks, timers, and canvases, rename blocks, and reorder them. View mode keeps links, task completion, timers, and canvas panning available.
 
-Canvas presets (S / M / L / XL) resize the viewport without scaling existing strokes. Choose **Move canvas** and drag, use arrow keys, or temporarily pan with the middle mouse button. **Reset view** returns to the origin. XL fits the available workspace; the board tabs stay fixed while content scrolls.
+Use the pen, line, arrow, rectangle, or ellipse tools to drag out strokes and shapes, with undo support. Canvas presets (S / M / L / XL) resize the viewport without scaling existing strokes. Choose **Move canvas** and drag, use arrow keys, or temporarily pan with the middle mouse button. **Reset view** returns to the origin. XL fits the available workspace; the board tabs stay fixed while content scrolls.
 
-Changes are saved on the server and isolated per user. Stale browser sessions cannot overwrite newer edits; download unsaved data before reloading after a conflict. Limits per user: 32 boards, 300 total blocks, 100 blocks per board, 200 tasks or links per block, 60,000 drawing points, and a 4 MiB workspace document. Without JavaScript, basic forms remain available for notes, links and tasks; drawing, panning and live timers require JavaScript.
+SSE notifies clients after saves, and reconnecting fetches the latest state. View mode updates automatically; Edit mode refreshes untouched blocks while preserving active input. All signed-in users can view and edit the same server-saved space. Anonymous access is blocked. Different blocks save independently. Same-block conflicts preserve local content and offer the shared version or an explicit local save. Structural conflicts preserve a downloadable local backup. Default new-space limits: 32 boards, 300 total blocks, 100 blocks per board, 200 tasks or links per block, 60,000 drawing points, and a 4 MiB workspace document. Upgrades combine existing personal boards and retain enough capacity to edit all migrated data. Without JavaScript, basic forms remain available for notes, links and tasks; drawing, panning and live timers require JavaScript.

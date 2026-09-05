@@ -13,6 +13,8 @@ func (a *App) routes() http.Handler {
 	mux := newDeclaredRouteMux()
 	mux.Handle("GET /resources/workbench", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchPage)))
 	mux.Handle("GET /resources/workbench/state", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchState)))
+	mux.Handle("GET /resources/workbench/events", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchEvents)))
+	mux.Handle("PATCH /resources/workbench/state", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.patchWorkbench)))
 	mux.Handle("POST /resources/workbench/state", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.saveWorkbench)))
 	mux.Handle("POST /resources/workbench/action", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchAction)))
 	if a.mcpEnabled {

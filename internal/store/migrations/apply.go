@@ -46,7 +46,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		statements []string
 	}{
 		{name: "SQLite", statements: baseSchemaStatements},
-		{name: "Personal workbench SQLite", statements: workbench.SchemaStatements},
+		{name: "Inspiration space SQLite", statements: workbench.SchemaStatements},
 		{name: "Website Monitor SQLite", statements: websitemonitor.SchemaStatements},
 		{name: "External Interface SQLite", statements: externaltrigger.SchemaStatements},
 		{name: "Fleet status SQLite", statements: fleetstatus.SchemaStatements},
@@ -62,6 +62,11 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			if _, err := migration.Exec(statement); err != nil {
 				return fmt.Errorf("initialize %s schema: %w", schema.name, err)
 			}
+		}
+	}
+	if schemaVersion > 0 && schemaVersion <= 66 {
+		if err := workbench.MigrateShared(migration); err != nil {
+			return fmt.Errorf("migrate inspiration space: %w", err)
 		}
 	}
 	if schemaVersion >= 20 && schemaVersion <= 63 {

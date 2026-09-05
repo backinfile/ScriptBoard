@@ -1,7 +1,8 @@
-// Package workbench stores a private, versioned workspace for each authenticated user.
+// Package workbench stores the versioned inspiration space shared by authenticated users.
 package workbench
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -15,19 +16,47 @@ import (
 const MaxBytes = 4 << 20
 
 var ErrConflict = errors.New("workbench revision conflict")
+var ErrInvalid = errors.New("invalid workspace")
 var SchemaStatements = []string{`CREATE TABLE IF NOT EXISTS personal_workbenches (
  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
  revision INTEGER NOT NULL CHECK(revision > 0), content TEXT NOT NULL
+)`, `CREATE TABLE IF NOT EXISTS shared_workbench (
+ id INTEGER PRIMARY KEY CHECK(id = 1),
+ revision INTEGER NOT NULL CHECK(revision > 0), content TEXT NOT NULL, capacity TEXT NOT NULL DEFAULT '{}'
 )`}
 
+type Capacity struct {
+	Boards int `json:"boards"`
+	Items  int `json:"items"`
+	Points int `json:"points"`
+	Bytes  int `json:"bytes"`
+}
+
+func defaultCapacity() Capacity { return Capacity{32, 300, 60000, MaxBytes} }
+func ReadCapacity(ctx context.Context, db *sql.DB) (Capacity, error) {
+	c := defaultCapacity()
+	var raw string
+	err := db.QueryRowContext(ctx, "SELECT capacity FROM shared_workbench WHERE id=1").Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, nil
+	}
+	if err != nil {
+		return c, err
+	}
+	err = json.Unmarshal([]byte(raw), &c)
+	return c, err
+}
+
 type State struct {
-	Revision int64   `json:"revision"`
-	Boards   []Board `json:"boards"`
+	Capacity *Capacity `json:"capacity,omitempty"`
+	Revision int64     `json:"revision"`
+	Boards   []Board   `json:"boards"`
 }
 type Board struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Items []Item `json:"items"`
+	Revision int64  `json:"revision,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Items    []Item `json:"items"`
 }
 type Task struct {
 	Text string `json:"text"`
@@ -47,6 +76,7 @@ type Stroke struct {
 	Points []Point `json:"points"`
 }
 type Item struct {
+	Revision  int64    `json:"revision,omitempty"`
 	ID        string   `json:"id"`
 	Type      string   `json:"type"`
 	Title     string   `json:"title"`
@@ -62,10 +92,10 @@ type Item struct {
 	Pan       Pan      `json:"pan"`
 }
 
-func Load(ctx context.Context, db *sql.DB, user string) (State, error) {
+func Load(ctx context.Context, db *sql.DB) (State, error) {
 	s := State{Boards: []Board{}}
 	var content string
-	err := db.QueryRowContext(ctx, "SELECT revision,content FROM personal_workbenches WHERE user_id=?", user).Scan(&s.Revision, &content)
+	err := db.QueryRowContext(ctx, "SELECT revision,content FROM shared_workbench WHERE id=1").Scan(&s.Revision, &content)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s, nil
 	}
@@ -73,25 +103,42 @@ func Load(ctx context.Context, db *sql.DB, user string) (State, error) {
 		return s, err
 	}
 	err = json.Unmarshal([]byte(content), &s.Boards)
+	if err != nil {
+		return s, err
+	}
+	capacity, err := ReadCapacity(ctx, db)
+	s.Capacity = &capacity
 	return s, err
 }
-func Save(ctx context.Context, db *sql.DB, user string, s State) (int64, error) {
-	if err := Validate(s); err != nil {
+func Save(ctx context.Context, db *sql.DB, s State) (int64, error) {
+	current, err := Load(ctx, db)
+	if err != nil {
 		return 0, err
+	}
+	if current.Revision != s.Revision {
+		return 0, ErrConflict
+	}
+	stamp(current, &s)
+	capacity, err := ReadCapacity(ctx, db)
+	if err != nil {
+		return 0, err
+	}
+	if err := validate(s, capacity); err != nil {
+		return 0, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	data, err := json.Marshal(s.Boards)
 	if err != nil {
 		return 0, err
 	}
-	if len(data) > MaxBytes {
-		return 0, fmt.Errorf("workspace exceeds 4 MiB")
+	if len(data) > capacity.Bytes {
+		return 0, fmt.Errorf("%w: storage capacity exceeded", ErrInvalid)
 	}
 	// Compare-and-swap keeps a stale browser from overwriting another session's edits.
 	var result sql.Result
 	if s.Revision == 0 {
-		result, err = db.ExecContext(ctx, "INSERT INTO personal_workbenches(user_id,revision,content) VALUES (?,1,?) ON CONFLICT(user_id) DO NOTHING", user, string(data))
+		result, err = db.ExecContext(ctx, "INSERT INTO shared_workbench(id,revision,content) VALUES (1,1,?) ON CONFLICT(id) DO NOTHING", string(data))
 	} else {
-		result, err = db.ExecContext(ctx, "UPDATE personal_workbenches SET revision=revision+1,content=? WHERE user_id=? AND revision=?", string(data), user, s.Revision)
+		result, err = db.ExecContext(ctx, "UPDATE shared_workbench SET revision=revision+1,content=? WHERE id=1 AND revision=?", string(data), s.Revision)
 	}
 	if err != nil {
 		return 0, err
@@ -105,9 +152,10 @@ func Save(ctx context.Context, db *sql.DB, user string, s State) (int64, error) 
 	}
 	return s.Revision + 1, nil
 }
-func Validate(s State) error {
+func Validate(s State) error { return validate(s, defaultCapacity()) }
+func validate(s State, capacity Capacity) error {
 	bad := func() error { return fmt.Errorf("invalid workspace content or limit exceeded") }
-	if s.Revision < 0 || len(s.Boards) > 32 {
+	if s.Revision < 0 || len(s.Boards) > capacity.Boards {
 		return bad()
 	}
 	seen := map[string]bool{}
@@ -182,8 +230,139 @@ func Validate(s State) error {
 			}
 		}
 	}
-	if total > 300 || points > 60000 {
+	if total > capacity.Items || points > capacity.Points {
 		return bad()
 	}
 	return nil
+}
+
+// MigrateShared preserves every existing board in one space and leaves the legacy
+// rows intact. A revision above all legacy revisions rejects pre-upgrade browsers.
+func MigrateShared(tx *sql.Tx) error {
+	var exists int
+	if err := tx.QueryRow("SELECT count(*) FROM shared_workbench").Scan(&exists); err != nil {
+		return err
+	}
+	if exists != 0 {
+		return nil
+	}
+	rows, err := tx.Query("SELECT revision, content FROM personal_workbenches ORDER BY user_id")
+	if err != nil {
+		return err
+	}
+	state := State{Revision: 1, Boards: []Board{}}
+	found := false
+	for rows.Next() {
+		var revision int64
+		var content string
+		if err = rows.Scan(&revision, &content); err != nil {
+			rows.Close()
+			return err
+		}
+		var boards []Board
+		if err = json.Unmarshal([]byte(content), &boards); err != nil {
+			rows.Close()
+			return err
+		}
+		found = true
+		if revision >= state.Revision {
+			state.Revision = revision + 1
+		}
+		state.Boards = append(state.Boards, boards...)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil || !found {
+		return err
+	}
+	// Independent personal spaces could use the same IDs; remap collisions only.
+	reserved, seen := map[string]bool{}, map[string]bool{}
+	for _, b := range state.Boards {
+		reserved[b.ID] = true
+		for _, item := range b.Items {
+			reserved[item.ID] = true
+		}
+	}
+	counter := 0
+	unique := func(id string) string {
+		if !seen[id] {
+			seen[id] = true
+			return id
+		}
+		for {
+			counter++
+			next := fmt.Sprintf("shared-migrated-%d", counter)
+			if !reserved[next] {
+				reserved[next] = true
+				seen[next] = true
+				return next
+			}
+		}
+	}
+	for i := range state.Boards {
+		b := &state.Boards[i]
+		b.ID = unique(b.ID)
+		for j := range b.Items {
+			b.Items[j].ID = unique(b.Items[j].ID)
+		}
+	}
+	capacity := defaultCapacity()
+	capacity.Boards = max(capacity.Boards, len(state.Boards))
+	total, points := 0, 0
+	for _, b := range state.Boards {
+		total += len(b.Items)
+		for _, item := range b.Items {
+			for _, stroke := range item.Strokes {
+				points += len(stroke.Points)
+			}
+		}
+	}
+	capacity.Items = max(capacity.Items, total)
+	capacity.Points = max(capacity.Points, points)
+	if err = validate(state, capacity); err != nil {
+		return fmt.Errorf("combined boards exceed shared space limits; original data retained: %w", err)
+	}
+	data, err := json.Marshal(state.Boards)
+	if err != nil {
+		return err
+	}
+	capacity.Bytes = max(capacity.Bytes, len(data)+65536)
+	encodedCapacity, _ := json.Marshal(capacity)
+	_, err = tx.Exec("INSERT INTO shared_workbench(id,revision,content,capacity) VALUES(1,?,?,?)", state.Revision, string(data), string(encodedCapacity))
+	return err
+}
+
+// Compare the wire representation so absent and empty optional lists share one version.
+func sameItem(a, b Item) bool {
+	a.Revision = 0
+	b.Revision = 0
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
+	return bytes.Equal(left, right)
+}
+func stamp(current State, next *State) {
+	oldBoards := map[string]Board{}
+	for _, b := range current.Boards {
+		oldBoards[b.ID] = b
+	}
+	for i := range next.Boards {
+		b := &next.Boards[i]
+		old, exists := oldBoards[b.ID]
+		b.Revision = old.Revision
+		if !exists || old.Name != b.Name {
+			b.Revision = current.Revision + 1
+		}
+		oldItems := map[string]Item{}
+		for _, w := range old.Items {
+			oldItems[w.ID] = w
+		}
+		for j := range b.Items {
+			w := &b.Items[j]
+			old, exists := oldItems[w.ID]
+			w.Revision = old.Revision
+			if !exists || !sameItem(old, *w) {
+				w.Revision = current.Revision + 1
+			}
+		}
+	}
 }

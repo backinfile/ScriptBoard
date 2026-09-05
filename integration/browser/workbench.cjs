@@ -35,6 +35,16 @@ module.exports = async function verifyWorkbench(page, baseURL, screenshots) {
   await page.mouse.move(r.x+60,r.y+60);await page.mouse.down();await page.mouse.move(r.x+100,r.y+85,{steps:8});await page.mouse.up();await save();
   const read=async()=>{const response=await page.request.get(baseURL+'/resources/workbench/state');assert.equal(response.status(),200);return response.json();};
   const getDrawing=s=>s.boards.find(b=>b.name===boardName).items.find(w=>w.type==='draw');
+  for(const [shape,count] of [['line',2],['arrow',5],['rectangle',5],['ellipse',65]]) {
+    await drawing.locator('[data-shape="'+shape+'"]').click();r=await canvas.boundingBox();
+    await page.mouse.move(r.x+160,r.y+80);await page.mouse.down();await page.mouse.move(r.x+280,r.y+160,{steps:5});await page.mouse.up();await save();
+    assert.equal(getDrawing(await read()).strokes.at(-1).points.length,count);
+  }
+  const completed=getDrawing(await read()).strokes.length;
+  await drawing.locator('[data-shape=rectangle]').click();r=await canvas.boundingBox();await page.mouse.move(r.x+40,r.y+40);await page.mouse.down();await page.mouse.move(r.x+140,r.y+90);
+  await page.waitForTimeout(500);assert.equal(getDrawing(await read()).strokes.length,completed);
+  await canvas.dispatchEvent('pointercancel',{pointerId:1});await page.mouse.up();
+  await drawing.getByRole('button',{name:/^(撤销一笔|Undo stroke)$/}).click();await save();assert.equal(getDrawing(await read()).strokes.length,completed-1);
   const prior=getDrawing(await read()).strokes;assert(prior[0].points.length>1);
   await drawing.locator('[data-size=small]').click();await drawing.locator('[data-size=xlarge]').click();
   await drawing.getByRole('button',{name:/^(移动画布|Move canvas)$/}).click();
@@ -47,13 +57,14 @@ module.exports = async function verifyWorkbench(page, baseURL, screenshots) {
   await root.getByRole('button',{name:/^(编辑|Edit)$/}).click();await root.locator('.wb-draw [data-size=medium]').click();await save();
   if(screenshots)await page.screenshot({path:screenshots+'/workbench-desktop.png'});
   await page.setViewportSize({width:390,height:844});await root.locator('.wb-draw [data-size=xlarge]').click();await page.waitForTimeout(100);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));const mobileCard=await root.locator('.wb-draw').boundingBox(),mobileScroll=await root.locator('.wb-scroll').boundingBox();assert(mobileCard.y>=mobileScroll.y-1&&mobileCard.y+mobileCard.height<=mobileScroll.y+mobileScroll.height+1);if(screenshots)await page.screenshot({path:screenshots+'/workbench-mobile.png'});await save();
+  await page.setViewportSize({width:844,height:390});await page.waitForTimeout(150);assert((await canvas.boundingBox()).height>20);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   await page.setViewportSize({width:1440,height:1000});
   await root.locator('.wb-timer select').selectOption('0');await save();await page.reload();await page.locator('.wb-enhanced').waitFor();await root.locator('.wb-tabs').getByRole('button',{name:boardName,exact:true}).click();assert.equal(await root.locator('.wb-digits').textContent(),'00:00');
   await page.goto(baseURL+'/monitor');await page.locator('a[href="/resources/workbench"]').click();await page.locator('.wb-enhanced').waitFor();await root.locator('.wb-tabs').getByRole('button',{name:boardName,exact:true}).click();await root.getByRole('button',{name:/^(编辑|Edit)$/}).click();await root.locator('.wb-note textarea').fill('Saved before browser Back');await page.goBack();await page.waitForURL('**/monitor');await page.locator('[data-workbench]').waitFor({state:'detached'});assert.equal((await read()).boards.find(b=>b.name===boardName).items.find(w=>w.type==='note').text,'Saved before browser Back');
   await page.locator('a[href="/resources/workbench"]').click();await page.locator('.wb-enhanced').waitFor();await root.locator('.wb-tabs').getByRole('button',{name:boardName,exact:true}).click();await root.getByRole('button',{name:/^(编辑|Edit)$/}).click();
   // A stale revision cannot overwrite changes from a second browser session.
-  const data=await read();const csrf=await root.getAttribute('data-csrf');let response=await page.request.post(baseURL+'/resources/workbench/state',{data,headers:{'X-CSRF-Token':csrf}});assert.equal(response.status(),200);response=await page.request.post(baseURL+'/resources/workbench/state',{data,headers:{'X-CSRF-Token':csrf}});assert.equal(response.status(),409);
-  await root.locator('.wb-note textarea').fill('Unsent conflict text');await root.locator('.wb-status').filter({hasText:/另一个窗口|Another window/}).waitFor();assert.equal(await root.locator('.wb-note textarea').inputValue(),'Unsent conflict text');
+  await root.locator('.wb-note textarea').focus();const data=await read();data.boards.find(b=>b.name===boardName).items.find(w=>w.type==='note').text='Remote concurrent edit';const csrf=await root.getAttribute('data-csrf');let response=await page.request.post(baseURL+'/resources/workbench/state',{data,headers:{'X-CSRF-Token':csrf}});assert.equal(response.status(),200);response=await page.request.post(baseURL+'/resources/workbench/state',{data,headers:{'X-CSRF-Token':csrf}});assert.equal(response.status(),409);
+  await root.locator('.wb-note textarea').fill('Unsent conflict text');await root.locator('.wb-status').filter({hasText:/部分模块|Some blocks/}).waitFor();assert.equal(await root.locator('.wb-note textarea').inputValue(),'Unsent conflict text');
   assert.deepEqual(errors,[]);
   page.once('dialog',d=>d.accept());await page.reload();await page.locator('.wb-enhanced').waitFor();
 };
