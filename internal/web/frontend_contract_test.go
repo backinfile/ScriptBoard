@@ -328,7 +328,7 @@ func TestSingleActiveRunUsesDirectShellDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &http.Client{Jar: jar, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	passwordBytes, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	passwordBytes, err := recoveredPassword(t, application, stateRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,6 +413,9 @@ func TestLoginNegotiatesSupportedWebLocale(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
+	if _, err := application.ResetAdminCredentials("admin"); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(application.Handler())
 	t.Cleanup(server.Close)
 
@@ -464,6 +467,9 @@ func TestLocalePreferenceCookieOverridesBrowserLanguage(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
+	if _, err := application.ResetAdminCredentials("admin"); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(application.Handler())
 	t.Cleanup(server.Close)
 	jar, err := cookiejar.New(nil)

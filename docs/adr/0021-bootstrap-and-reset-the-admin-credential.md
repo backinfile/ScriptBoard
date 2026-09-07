@@ -1,5 +1,5 @@
 # 自动初始化并允许启动时重设管理员凭据
 
-> 状态：启动配置中的明文密码入口已被 [ADR-0131](./0131-remove-plaintext-admin-password-configuration.md) 取代；首次启动和本机重置的一次性凭据决策仍然有效。
+> 状态：新安装的凭据交付已由 [ADR-0182](./0182-initialize-administrator-with-a-local-setup-token.md) 取代；明文密码配置已由 [ADR-0131](./0131-remove-plaintext-admin-password-configuration.md) 取代。本机恢复入口继续保留。
 
 首次启动时 ScriptBoard 自动创建用户名为 `admin` 的唯一账号，生成随机初始密码并写入权限受限的一次性文件；首次登录强制修改并删除该文件，Windows 托盘可提供复制入口。之后可在网页修改凭据，也可在每次启动时用 `--admin-username` 配合 `--admin-password-file` 或明文 `--admin-password` 显式重设。明文参数为用户明确要求的便利入口，但帮助文本必须警告它可能暴露在进程列表、Shell 历史和服务配置中，密码文件仍为推荐方式。

@@ -834,6 +834,10 @@ func Open(config Config) (*App, error) {
 			_ = db.Close()
 			return nil, err
 		}
+		if err := application.refreshSetupToken(); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 		_, _ = auditdomain.CleanupExpiredEventsBefore(db, stateRoot, time.Now().UTC().AddDate(-1, 0, 0), application.auditCheckpoint.CheckpointEventID())
 		if err := application.auditCheckpoint.Write(context.Background(), application.auditLog, time.Now().UTC()); err != nil {
 			_ = db.Close()
@@ -1436,6 +1440,9 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 	if _, err := transaction.Exec("UPDATE users SET username = ?, password_hash = ?, auth_version = auth_version + 1, updated_at = ? WHERE role = 'administrator'", username, hash, time.Now().UTC().Unix()); err != nil {
 		return "", err
 	}
+	if _, err := transaction.Exec("DELETE FROM administrator_setup"); err != nil {
+		return "", err
+	}
 	if _, err := transaction.Exec("DELETE FROM sessions"); err != nil {
 		return "", err
 	}
@@ -1455,6 +1462,7 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 		a.recordAudit("admin_reset_passkeys", username, "failed", "local-cli")
 		return "", fmt.Errorf("reset administrator passkeys after credentials changed: %w", err)
 	}
+	_ = os.Remove(filepath.Join(a.stateRoot, "secrets", setupTokenFilename))
 	a.cancelAllAuthenticatedRequests()
 	a.recordAudit("admin_reset", username, "succeeded", "local-cli")
 	return password, nil
@@ -1489,6 +1497,9 @@ func (a *App) applyCredentialOverride(username, passwordFile string) error {
 			return errors.New("管理员密码文件过大")
 		}
 		password = strings.TrimSuffix(strings.TrimSuffix(string(content), "\n"), "\r")
+		if password == "" {
+			return errors.New("管理员密码文件不能为空")
+		}
 	}
 	if username == "" && password == "" {
 		return nil
@@ -1505,7 +1516,11 @@ func (a *App) applyCredentialOverride(username, passwordFile string) error {
 	if !validUsername(username) {
 		return errors.New("管理员用户名覆盖无效")
 	}
-	changed := username != currentUsername
+	pending, err := a.setupPending()
+	if err != nil {
+		return err
+	}
+	changed := username != currentUsername || (pending && password != "")
 	newHash := currentHash
 	if password != "" {
 		if err := validatePasswordPolicy(password, username); err != nil {
@@ -1531,6 +1546,11 @@ func (a *App) applyCredentialOverride(username, passwordFile string) error {
 	defer transaction.Rollback()
 	if _, err := transaction.Exec("UPDATE users SET username = ?, password_hash = ?, auth_version = auth_version + 1, updated_at = ? WHERE role = 'administrator'", username, newHash, time.Now().UTC().Unix()); err != nil {
 		return err
+	}
+	if password != "" {
+		if _, err := transaction.Exec("DELETE FROM administrator_setup"); err != nil {
+			return err
+		}
 	}
 	if _, err := transaction.Exec("DELETE FROM sessions"); err != nil {
 		return err
@@ -1727,33 +1747,15 @@ func (a *App) initializeAdmin(stateRoot string) error {
 		return transaction.Commit()
 	}
 
-	passwordBytes := make([]byte, 24)
-	if _, err := rand.Read(passwordBytes); err != nil {
-		return fmt.Errorf("生成初始密码: %w", err)
-	}
-	password := base64.RawURLEncoding.EncodeToString(passwordBytes)
-	hash, err := hashPassword(password)
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC().Unix()
-	if _, err := transaction.Exec(
-		"INSERT INTO users (id, username, password_hash, role, enabled, auth_version, created_at, updated_at) VALUES ('administrator', 'admin', ?, 'administrator', 1, 1, ?, ?)",
-		hash, now, now,
-	); err != nil {
+	// Reserve the unique administrator until the local setup credential is redeemed.
+	if _, err := transaction.Exec("INSERT INTO users (id, username, password_hash, role, enabled, auth_version, created_at, updated_at) VALUES ('administrator', 'admin', '', 'administrator', 1, 1, ?, ?)", now, now); err != nil {
 		return fmt.Errorf("创建 admin: %w", err)
 	}
-
-	secretsRoot := filepath.Join(stateRoot, "secrets")
-	if err := os.MkdirAll(secretsRoot, 0o700); err != nil {
-		return fmt.Errorf("创建秘密目录: %w", err)
-	}
-	passwordPath := filepath.Join(secretsRoot, initialPasswordFilename)
-	if err := os.WriteFile(passwordPath, []byte(password+"\n"), 0o600); err != nil {
-		return fmt.Errorf("写入初始密码: %w", err)
+	if _, err := transaction.Exec("INSERT INTO administrator_setup (singleton, token_hash, expires_at) VALUES (1, '', 0)"); err != nil {
+		return err
 	}
 	if err := transaction.Commit(); err != nil {
-		_ = os.Remove(passwordPath)
 		return fmt.Errorf("提交 admin 初始化: %w", err)
 	}
 	return nil
@@ -1902,7 +1904,7 @@ func (w *pageResponseWriter) finish(a *App, request *http.Request) {
 	}
 	locale := resolveWebLocale(request)
 	publicPage := strings.HasPrefix(request.URL.Path, "/public/")
-	if request.URL.Path != "/login" && !publicPage {
+	if request.URL.Path != "/login" && request.URL.Path != "/setup" && !publicPage {
 		if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
 			body = []byte(prepareApplicationDocument(body, locale))
 		} else {
@@ -5224,6 +5226,10 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 }
 
 func (a *App) login(response http.ResponseWriter, request *http.Request) {
+	if a.redirectPendingSetup(response, request) {
+		return
+	}
+
 	response.Header().Set("Cache-Control", "no-store")
 	resetReadDeadline := setRequestReadDeadline(response, unauthenticatedFormReadTimeout)
 	defer resetReadDeadline()
@@ -5402,14 +5408,18 @@ func (a *App) verifyLoginFactor(response http.ResponseWriter, request *http.Requ
 
 func (a *App) finishLogin(response http.ResponseWriter, request *http.Request, userID, username string, role identity.Role, authVersion int64, authenticationAssurance int) {
 
+	loginError := "暂时无法登录，请稍后重试"
+	if request.URL.Path == "/setup" {
+		loginError = webText(resolveWebLocale(request), "setup.created_login")
+	}
 	token, err := randomToken(32)
 	if err != nil {
-		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), loginError)
 		return
 	}
 	sessionCSRF, err := randomToken(32)
 	if err != nil {
-		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), loginError)
 		return
 	}
 	now := time.Now().UTC()
@@ -5417,7 +5427,7 @@ func (a *App) finishLogin(response http.ResponseWriter, request *http.Request, u
 		"INSERT INTO sessions (token_hash, user_id, auth_version, authentication_assurance, reauthenticated_at, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		hashToken(token), userID, authVersion, authenticationAssurance, now.Unix(), sessionCSRF, now.Unix(), now.Unix(), now.Add(7*24*time.Hour).Unix(),
 	); err != nil {
-		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), loginError)
 		return
 	}
 	http.SetCookie(response, &http.Cookie{
@@ -5770,16 +5780,23 @@ func (a *App) recordAuditWithActor(action, target, result, source, actorUserID, 
 }
 
 type loginPageData struct {
-	CSRFToken      string
-	Username       string
-	Error          string
-	Locale         webLocale
-	SecondFactor   bool
-	MFAEnabled     bool
-	PasskeyEnabled bool
+	SetupToken         string
+	Setup              bool
+	CredentialOverride bool
+	CSRFToken          string
+	Username           string
+	Error              string
+	Locale             webLocale
+	SecondFactor       bool
+	MFAEnabled         bool
+	PasskeyEnabled     bool
 }
 
 func renderLoginPage(response http.ResponseWriter, request *http.Request, status int, username, errorMessage string) {
+	renderAuthenticationPage(response, request, status, loginPageData{Username: username, Error: errorMessage})
+}
+
+func renderAuthenticationPage(response http.ResponseWriter, request *http.Request, status int, data loginPageData) {
 	token := ""
 	if cookie, err := request.Cookie(loginCSRFCookieName); err == nil {
 		token = cookie.Value
@@ -5805,7 +5822,8 @@ func renderLoginPage(response http.ResponseWriter, request *http.Request, status
 	response.WriteHeader(status)
 	locale := resolveWebLocale(request)
 	response.Header().Set("Content-Language", string(locale))
-	_ = loginTemplate.Execute(response, loginPageData{CSRFToken: token, Username: username, Error: errorMessage, Locale: locale})
+	data.CSRFToken, data.Locale = token, locale
+	_ = loginTemplate.Execute(response, data)
 }
 
 func renderLoginVerificationPage(response http.ResponseWriter, request *http.Request, status int, challenge loginChallenge, errorMessage string) {

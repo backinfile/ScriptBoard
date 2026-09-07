@@ -80,6 +80,8 @@ Pin 是展示状态，不赋予应用控制能力。Docker Pin 的 `identity` �
 
 数据库约束最多一个 `administrator`。普通用户不能提升为系统管理员；账号不永久删除。
 
+`administrator_setup` 仅在新安装尚未完成设置时保存一条记录：`singleton=1`、`token_hash`、`expires_at`。此时预留管理员没有可用密码。设置完成后在更新管理员凭据的同一事务内删除该记录；升级现有账号时不创建记录。
+
 ### Session
 
 | 字段 | 约束 |

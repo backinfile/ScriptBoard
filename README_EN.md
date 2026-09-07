@@ -93,10 +93,12 @@ mkdir -p state
 
 ## First steps
 
-1. Open <http://127.0.0.1:8787>.
-2. Sign in as `admin`. The initial password is in `state_root/secrets/initial-admin-password`.
-3. Change the password under Settings → Account, then add a passkey or TOTP if needed.
+1. Open <http://127.0.0.1:8787>. New installations show administrator setup.
+2. Use the startup setup link, or paste the token from `state_root/secrets/initialization-token`.
+3. Choose a username and password, then save to enter the application. Tokens last 24 hours; restart an unfinished installation to generate a new token.
 4. Open Resources → Host Files, select an existing script, or upload files and create a Quick Run.
+
+Existing accounts sign in normally. Automated deployments can provide `--admin-password-file` to skip setup; this configuration overrides the administrator password on every startup. Local account recovery remains available with `scriptboard admin reset`.
 
 For multi-file uploads, ScriptBoard validates the whole batch before committing it, so a failed batch does not leave partial results. Files and directories can both be pinned to instance-wide Quick access. A pinned file opens its containing directory and focuses the file; display names and ordering can be edited in place.
 

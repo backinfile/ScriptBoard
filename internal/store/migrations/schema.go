@@ -1,6 +1,11 @@
 package migrations
 
 var baseSchemaStatements = []string{
+	`CREATE TABLE IF NOT EXISTS administrator_setup (
+		singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+		token_hash TEXT NOT NULL,
+		expires_at INTEGER NOT NULL
+	)`,
 	`CREATE TABLE IF NOT EXISTS users (
 			id TEXT PRIMARY KEY,
 			username TEXT NOT NULL UNIQUE,
