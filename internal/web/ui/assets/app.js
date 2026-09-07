@@ -15,6 +15,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     "move": '<path d="m5 9-3 3 3 3m4-10 3-3 3 3m4 4 3 3-3 3m-4 4-3 3-3-3M2 12h20M12 2v20"/>',
     "locate-fixed": '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>',
     "undo-2": '<path d="M3 7v6h6M3 13a8 8 0 1 1 2.5 5.5"/>',
+    "chevron-left": '<path d="m15 18-6-6 6-6"/>',
     "chevron-up": '<path d="m18 15-6-6-6 6"/>',
     "circle": '<circle cx="12" cy="12" r="10"/>',
     "layout-dashboard": '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
@@ -49,6 +50,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     "database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
     "download": '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
     "ellipsis": '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    "type": '<path d="M4 7V4h16v3M9 20h6M12 4v16"/>',
     "eraser": '<path d="m7 21-4-4a2.8 2.8 0 0 1 0-4L13 3a2.8 2.8 0 0 1 4 0l4 4a2.8 2.8 0 0 1 0 4L11 21"/><path d="m5 11 9 9"/><path d="M5 21h14"/>',
     "eye": '<path d="M2.1 12a10.7 10.7 0 0 1 19.8 0 10.7 10.7 0 0 1-19.8 0"/><circle cx="12" cy="12" r="3"/>',
     "eye-off": '<path d="m2 2 20 20"/><path d="M6.7 6.7A11.7 11.7 0 0 0 2.1 12a10.7 10.7 0 0 0 14.1 5.2"/><path d="M10.7 10.7a3 3 0 0 0 4.2 4.2"/><path d="M14.3 5.2A10.7 10.7 0 0 1 21.9 12a11.8 11.8 0 0 1-2.2 3.2"/>',
@@ -1131,10 +1133,18 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       confirm.className = dangerous ? "button button--danger" : "button button--primary";
       confirm.type = "button";
       confirm.textContent = options.confirmLabel || (closeOnly ? words().serverErrorClose : words().confirmAction);
-      confirm.addEventListener("click", () => closeActionDialog(true, closeOnly));
+      confirm.addEventListener("click", () => {
+        if (typeof options.validate === "function" && !options.validate()) return;
+        closeActionDialog(true, closeOnly);
+      });
       footer.append(confirm);
 
-      sheet.append(header, footer);
+      sheet.append(header);
+      if (options.content instanceof HTMLElement) {
+        sheet.append(options.content);
+        options.content.addEventListener("keydown", event => { if (event.key === "Enter" && !event.isComposing && event.target instanceof HTMLInputElement) { event.preventDefault(); confirm.click(); } });
+      }
+      sheet.append(footer);
       dialog.append(sheet);
       document.body.append(dialog);
       close.addEventListener("click", () => closeActionDialog(false));
@@ -1147,7 +1157,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       });
       activeActionDialog = { dialog, resolve, returnFocus };
       dialog.showModal();
-      (closeOnly ? confirm : close).focus();
+      (options.initialFocus instanceof HTMLElement ? options.initialFocus : closeOnly ? confirm : close).focus();
     });
   }
 
@@ -8124,7 +8134,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     let cancelled = false, dispose;
     cleanups.push(() => { cancelled = true; dispose?.(); });
     loadScriptAsset('/assets/workbench.js', () => window.ScriptBoardWorkbench).then(init => {
-      if (!cancelled && root.isConnected) dispose = init(root, renderIcons);
+      if (!cancelled && root.isConnected) dispose = init(root, renderIcons, { showActionDialog });
     }).catch(() => { /* The server-rendered editor remains available if enhancement fails. */ });
   }
 

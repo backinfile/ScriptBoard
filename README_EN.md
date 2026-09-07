@@ -215,7 +215,7 @@ The new one-time password is written to `state_root/secrets/initial-admin-passwo
 
 ## Inspiration space
 
-Open **Resources → Inspiration space**. The floating toolbar switches between View and Edit. Add notes, links, tasks, timers, and canvases, rename blocks, and reorder them. View mode keeps links, task completion, timers, and canvas panning available.
+Open **Resources → Inspiration space**, select **New space**, and enter a name. Changes save automatically. Click a tab once to switch spaces; use **Space actions** on the right to rename or delete. Undo deletion from the bottom toolbar. The floating toolbar switches between View and Edit. Add notes, links, tasks, timers, and canvases, rename blocks, and reorder them. Canvases offer 10 colors, a local eraser, and editable multiline text with font size, color, dragging, deletion, and undo. View mode keeps links, task completion, timers, and canvas panning available.
 
 Use the pen, line, arrow, rectangle, or ellipse tools to drag out strokes and shapes, with undo support. Canvas presets (S / M / L / XL) resize the viewport without scaling existing strokes. Choose **Move canvas** and drag, use arrow keys, or temporarily pan with the middle mouse button. **Reset view** returns to the origin. XL fits the available workspace; the board tabs stay fixed while content scrolls.
 

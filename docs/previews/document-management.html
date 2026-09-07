@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="../../internal/web/ui/assets/app.css">
+  <title>文档管理 · ScriptBoard 预览</title>
+  <style>
+    /* 仅预览页使用的少量布局辅助，正式实现时应并入 app.css */
+    .doc-path{font:.64rem/1.4 var(--font-mono);color:var(--faint)}
+    .doc-entry-demo{border:1px dashed var(--rule-strong);border-radius:var(--radius);padding:16px 18px;margin-bottom:24px;background:var(--surface-2)}
+    .doc-entry-demo__label{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.68rem;font-weight:650;margin-bottom:12px}
+    .doc-entry-demo__label svg{width:14px;height:14px}
+    .doc-entry-demo .table-shell{margin:0}
+    /* 拖动排序：仅排序模式下显示把手并允许拖动（正式实现并入 app.css，行为对齐快捷执行排序） */
+    .doc-drag-handle{display:none;width:16px;height:16px;color:var(--faint);cursor:grab;flex:none}
+    .doc-drag-handle svg{width:16px;height:16px}
+    .documents-page[data-reorder-active] .doc-drag-handle{display:inline-flex}
+    .documents-page[data-reorder-active] [data-doc-row]{cursor:grab}
+    .documents-page[data-reorder-active] [data-doc-row].doc-row--dragging{opacity:.45}
+    .documents-page[data-reorder-active] [data-doc-row].doc-row--drop-target td{border-top:2px solid var(--accent)}
+  </style>
+</head>
+<body data-app-shell>
+<a class="skip-link" href="#main-content">跳到主要内容</a>
+<aside class="app-sidebar" id="app-sidebar" aria-label="导航">
+  <div class="sidebar-head">
+    <a class="brand-wordmark" href="#" aria-label="ScriptBoard development"><span class="brand-mark" aria-hidden="true"><span data-lucide="square-terminal"></span></span><span class="brand-name">ScriptBoard</span><span class="brand-version">dev</span></a>
+    <div class="sidebar-head__actions">
+      <button class="sidebar-collapse" type="button" aria-label="收起导航" title="收起导航"><span data-lucide="panel-left-close" aria-hidden="true"></span></button>
+    </div>
+  </div>
+  <nav class="sidebar-nav">
+    <section class="nav-group">
+      <h2>监控</h2>
+      <a href="#"><span data-lucide="activity" aria-hidden="true"></span><span>概览</span></a>
+      <a href="#"><span data-lucide="app-window" aria-hidden="true"></span><span>应用</span></a>
+      <a href="#"><span data-lucide="package" aria-hidden="true"></span><span>容器</span></a>
+      <a href="#"><span data-lucide="box" aria-hidden="true"></span><span>Kubernetes</span></a>
+      <a href="#"><span data-lucide="network" aria-hidden="true"></span><span>网站监控</span></a>
+      <a href="#"><span data-lucide="shield-check" aria-hidden="true"></span><span>主机安全</span></a>
+    </section>
+    <section class="nav-group">
+      <h2>资源</h2>
+      <a href="#"><span data-lucide="folder-code" aria-hidden="true"></span><span>文件</span></a>
+      <a href="#" aria-current="page"><span data-lucide="book-open" aria-hidden="true"></span><span>文档管理</span></a>
+      <a href="#"><span data-lucide="braces" aria-hidden="true"></span><span>变量</span></a>
+      <a href="#"><span data-lucide="database" aria-hidden="true"></span><span>数据库</span></a>
+    </section>
+    <section class="nav-group">
+      <h2>配置</h2>
+      <a href="#"><span data-lucide="zap" aria-hidden="true"></span><span>快捷执行</span></a>
+      <a href="#"><span data-lucide="calendar-clock" aria-hidden="true"></span><span>计划</span></a>
+      <a href="#"><span data-lucide="plug" aria-hidden="true"></span><span>外部接口</span></a>
+      <a href="#"><span data-lucide="layout-grid" aria-hidden="true"></span><span>自定义面板</span></a>
+      <a href="#"><span data-lucide="panel-right" aria-hidden="true"></span><span>自定义页签</span></a>
+    </section>
+    <section class="nav-group">
+      <h2>历史</h2>
+      <a href="#"><span data-lucide="square-terminal" aria-hidden="true"></span><span>运行记录</span></a>
+      <a href="#"><span data-lucide="scroll-text" aria-hidden="true"></span><span>审计</span></a>
+    </section>
+  </nav>
+  <footer class="sidebar-footer">
+    <section class="sidebar-attention" aria-label="当前状态">
+      <a class="sidebar-attention__empty" href="#">
+        <span data-lucide="circle-check" aria-hidden="true"></span>
+        <strong>没有需要关注的事项</strong>
+      </a>
+    </section>
+    <div class="sidebar-utilities">
+      <a href="#"><span data-lucide="languages" aria-hidden="true"></span><span>EN</span></a>
+      <a href="#"><span data-lucide="settings" aria-hidden="true"></span><span>设置</span></a>
+    </div>
+  </footer>
+</aside>
+
+<main class="workspace documents-page" id="main-content">
+  <header class="page-heading primary-page-heading">
+    <div>
+      <p class="page-eyebrow">资源 / 文档管理</p>
+      <h1>文档管理</h1>
+      <p>将分散在各目录中的文档集中收藏，支持分组管理，并可快速预览、编辑或跳转到所在目录。</p>
+    </div>
+    <div class="heading-actions">
+      <!-- 拖动排序开关复用快捷执行页的排序模式（见 quick-runs.html） -->
+      <button class="button button--quiet" type="button" data-doc-reorder-toggle aria-controls="doc-reorder-guidance" aria-expanded="false"><span data-lucide="arrow-up-down" aria-hidden="true"></span>排序</button>
+      <a class="button" href="#" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>创建分组</a>
+      <a class="button button--primary" href="#" data-task-link><span data-lucide="folder-code" aria-hidden="true"></span>前往文件添加</a>
+    </div>
+  </header>
+
+  <section class="quick-run-reorder-guidance" id="doc-reorder-guidance" data-doc-reorder-guidance aria-label="排序文档" hidden>
+    <div><span data-lucide="grip-vertical" aria-hidden="true"></span><strong>排序模式</strong><span>拖动文档调整顺序，顺序在分组内生效并自动保存。</span></div>
+    <div class="quick-run-reorder-actions"><button class="button button--quiet" type="button" data-doc-reorder-cancel>取消</button><button class="button" type="button" data-doc-reorder-finish>完成排序</button></div>
+  </section>
+  <p class="quick-run-reorder-status" data-doc-reorder-status aria-live="polite"></p>
+
+  <section class="file-search-region" aria-label="搜索文档">
+    <form class="file-search-form" method="get" action="#">
+      <div class="file-search-primary">
+        <label class="file-search-field">
+          <span data-lucide="search" aria-hidden="true"></span>
+          <span class="sr-only">搜索文档</span>
+          <input type="search" name="q" value="" autocomplete="off" spellcheck="false" placeholder="按名称或路径搜索文档…">
+        </label>
+        <button class="button file-search-submit" type="submit">搜索</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- 入口示意：文件页条目“...”菜单新增“添加到文档管理”（正式实现在 files.html 的 action-menu 中追加该项） -->
+  <div class="doc-entry-demo" aria-label="入口示意">
+    <p class="doc-entry-demo__label"><span data-lucide="info" aria-hidden="true"></span>入口示意 · 文件页文件条目的 “...” 菜单将新增「添加到文档管理」</p>
+    <div class="table-shell">
+      <table class="records-table file-table">
+        <tbody>
+          <tr>
+            <td data-label="名称" class="record-primary">
+              <div class="record-primary__content">
+                <span class="record-icon file-icon" aria-hidden="true" data-lucide="file-text"></span>
+                <div class="file-name-cell"><a href="#">deploy-api.md</a><small class="file-meta"><span class="file-type-badge">Markdown</span></small></div>
+              </div>
+            </td>
+            <td data-label="大小" class="file-size">3.2 KB</td>
+            <td data-label="修改时间" class="file-modified">2026-09-03 21:14</td>
+            <td class="record-actions">
+              <div class="record-actions__group">
+                <details class="action-menu" open>
+                  <summary aria-label="更多操作"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
+                  <div>
+                    <button type="button"><span data-lucide="copy" aria-hidden="true"></span><span>复制路径</span></button>
+                    <a href="#"><span data-lucide="eye" aria-hidden="true"></span>预览</a>
+                    <a href="#"><span data-lucide="square-pen" aria-hidden="true"></span>编辑</a>
+                    <a href="#"><span data-lucide="download" aria-hidden="true"></span>下载</a>
+                    <a href="#" style="color:var(--accent-text);font-weight:650"><span data-lucide="book-open" aria-hidden="true"></span>添加到文档管理</a>
+                    <button class="danger-action" type="button"><span data-lucide="trash-2" aria-hidden="true"></span>移入回收站</button>
+                  </div>
+                </details>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <section class="quick-run-group" data-record-group="grp-deploy" data-group-name="部署文档">
+    <header class="quick-run-group__header">
+      <h2 class="quick-run-group__heading">
+        <button class="quick-run-group__toggle" type="button" data-group-toggle aria-expanded="true" aria-controls="doc-group-grp-deploy">
+          <span class="quick-run-group__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
+          <span class="quick-run-group__identity"><span data-lucide="folder" aria-hidden="true"></span><span class="quick-run-group__name">部署文档</span></span>
+          <span class="quick-run-group__count">2 个文档</span>
+        </button>
+      </h2>
+      <details class="action-menu quick-run-group__menu">
+        <summary aria-label="更多操作"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
+        <div>
+          <a href="#"><span data-lucide="square-pen" aria-hidden="true"></span>编辑</a>
+          <a class="danger-action" href="#"><span data-lucide="trash-2" aria-hidden="true"></span>删除</a>
+        </div>
+      </details>
+    </header>
+    <div class="quick-run-group__body" id="doc-group-grp-deploy" data-group-body>
+      <div class="table-shell">
+        <table class="records-table">
+          <thead><tr>
+            <th><span>名称</span></th>
+            <th><span>大小</span></th>
+            <th><span>修改时间</span></th>
+            <th><span class="sr-only">操作</span></th>
+          </tr></thead>
+          <tbody>
+            <tr data-doc-row>
+              <td data-label="名称" class="record-primary">
+                <div class="record-primary__content">
+                  <span class="doc-drag-handle" data-lucide="grip-vertical" aria-hidden="true"></span>
+                  <span class="record-icon file-icon" aria-hidden="true" data-lucide="file-text"></span>
+                  <div class="file-name-cell"><a href="#">deploy-api.md</a><span class="doc-path">/srv/scripts/deploy/deploy-api.md</span></div>
+                </div>
+              </td>
+              <td data-label="大小" class="file-size">3.2 KB</td>
+              <td data-label="修改时间" class="file-modified">2026-09-03 21:14</td>
+              <td class="record-actions">
+                <div class="record-actions__group">
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="eye" aria-hidden="true"></span>预览</a>
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="square-pen" aria-hidden="true"></span>编辑</a>
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="folder-open" aria-hidden="true"></span>所在目录</a>
+                  <details class="action-menu">
+                    <summary aria-label="更多操作"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
+                    <div>
+                      <button type="button"><span data-lucide="copy" aria-hidden="true"></span><span>复制路径</span></button>
+                      <a href="#"><span data-lucide="folder-input" aria-hidden="true"></span>移动到分组</a>
+                      <button class="danger-action" type="button"><span data-lucide="x" aria-hidden="true"></span>移出文档管理</button>
+                    </div>
+                  </details>
+                </div>
+              </td>
+            </tr>
+            <tr data-doc-row>
+              <td data-label="名称" class="record-primary">
+                <div class="record-primary__content">
+                  <span class="doc-drag-handle" data-lucide="grip-vertical" aria-hidden="true"></span>
+                  <span class="record-icon file-icon" aria-hidden="true" data-lucide="file-text"></span>
+                  <div class="file-name-cell"><a href="#">rollback-runbook.md</a><span class="doc-path">/srv/scripts/deploy/rollback-runbook.md</span></div>
+                </div>
+              </td>
+              <td data-label="大小" class="file-size">5.8 KB</td>
+              <td data-label="修改时间" class="file-modified">2026-08-30 18:02</td>
+              <td class="record-actions">
+                <div class="record-actions__group">
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="eye" aria-hidden="true"></span>预览</a>
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="square-pen" aria-hidden="true"></span>编辑</a>
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="folder-open" aria-hidden="true"></span>所在目录</a>
+                  <details class="action-menu">
+                    <summary aria-label="更多操作"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
+                    <div>
+                      <button type="button"><span data-lucide="copy" aria-hidden="true"></span><span>复制路径</span></button>
+                      <a href="#"><span data-lucide="folder-input" aria-hidden="true"></span>移动到分组</a>
+                      <button class="danger-action" type="button"><span data-lucide="x" aria-hidden="true"></span>移出文档管理</button>
+                    </div>
+                  </details>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="quick-run-group" data-record-group="" data-group-name="未分组">
+    <header class="quick-run-group__header">
+      <h2 class="quick-run-group__heading">
+        <button class="quick-run-group__toggle" type="button" data-group-toggle aria-expanded="true" aria-controls="doc-group-ungrouped">
+          <span class="quick-run-group__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
+          <span class="quick-run-group__identity"><span data-lucide="folder-open" aria-hidden="true"></span><span class="quick-run-group__name">未分组</span></span>
+          <span class="quick-run-group__count">2 个文档</span>
+        </button>
+      </h2>
+    </header>
+    <div class="quick-run-group__body" id="doc-group-ungrouped" data-group-body>
+      <div class="table-shell">
+        <table class="records-table">
+          <thead><tr>
+            <th><span>名称</span></th>
+            <th><span>大小</span></th>
+            <th><span>修改时间</span></th>
+            <th><span class="sr-only">操作</span></th>
+          </tr></thead>
+          <tbody>
+            <tr data-doc-row>
+              <td data-label="名称" class="record-primary">
+                <div class="record-primary__content">
+                  <span class="doc-drag-handle" data-lucide="grip-vertical" aria-hidden="true"></span>
+                  <span class="record-icon file-icon" aria-hidden="true" data-lucide="file-text"></span>
+                  <div class="file-name-cell"><a href="#">nginx.conf</a><span class="doc-path">/etc/nginx/nginx.conf</span></div>
+                </div>
+              </td>
+              <td data-label="大小" class="file-size">1.9 KB</td>
+              <td data-label="修改时间" class="file-modified">2026-08-27 09:41</td>
+              <td class="record-actions">
+                <div class="record-actions__group">
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="eye" aria-hidden="true"></span>预览</a>
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="square-pen" aria-hidden="true"></span>编辑</a>
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="folder-open" aria-hidden="true"></span>所在目录</a>
+                  <details class="action-menu">
+                    <summary aria-label="更多操作"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
+                    <div>
+                      <button type="button"><span data-lucide="copy" aria-hidden="true"></span><span>复制路径</span></button>
+                      <a href="#"><span data-lucide="folder-input" aria-hidden="true"></span>移动到分组</a>
+                      <button class="danger-action" type="button"><span data-lucide="x" aria-hidden="true"></span>移出文档管理</button>
+                    </div>
+                  </details>
+                </div>
+              </td>
+            </tr>
+            <tr data-doc-row>
+              <td data-label="名称" class="record-primary">
+                <div class="record-primary__content">
+                  <span class="doc-drag-handle" data-lucide="grip-vertical" aria-hidden="true"></span>
+                  <span class="record-icon file-icon" aria-hidden="true" data-lucide="file-text"></span>
+                  <div class="file-name-cell"><a href="#">backup-notes.txt</a><span class="doc-path">/opt/backups/notes/backup-notes.txt</span></div>
+                </div>
+              </td>
+              <td data-label="大小" class="file-size">856 B</td>
+              <td data-label="修改时间" class="file-modified">2026-08-21 16:20</td>
+              <td class="record-actions">
+                <div class="record-actions__group">
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="eye" aria-hidden="true"></span>预览</a>
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="square-pen" aria-hidden="true"></span>编辑</a>
+                  <a class="button button--quiet button--compact" href="#"><span data-lucide="folder-open" aria-hidden="true"></span>所在目录</a>
+                  <details class="action-menu">
+                    <summary aria-label="更多操作"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
+                    <div>
+                      <button type="button"><span data-lucide="copy" aria-hidden="true"></span><span>复制路径</span></button>
+                      <a href="#"><span data-lucide="folder-input" aria-hidden="true"></span>移动到分组</a>
+                      <button class="danger-action" type="button"><span data-lucide="x" aria-hidden="true"></span>移出文档管理</button>
+                    </div>
+                  </details>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+// 预览页离线渲染图标：图标路径取自 internal/web/ui/assets/app.js 内置的 lucide 子集
+const iconPaths = {
+  "square-terminal": '<path d="m7 7 3 3-3 3M13 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/>',
+  "panel-left-close": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m17 9-3 3 3 3"/>',
+  "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  "app-window": '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M2 8h20"/><path d="M6 6h.01"/><path d="M10 6h.01"/>',
+  "package": '<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  "box": '<path d="m21 8-9-5-9 5 9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+  "network": '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3M12 12V8"/>',
+  "shield-check": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
+  "folder-code": '<path d="M10 10.5 8 12l2 1.5M14 10.5l2 1.5-2 1.5"/><path d="M2 6h5l2 2h13"/><path d="M2 6v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8"/>',
+  "book-open": '<path d="M12 5v16"/><path d="M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z"/>',
+  "braces": '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
+  "database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
+  "zap": '<path d="M4 14a1 1 0 0 1-.8-1.6l9-11a.5.5 0 0 1 .9.4L12 8.5A1 1 0 0 0 13 10h7a1 1 0 0 1 .8 1.6l-9 11a.5.5 0 0 1-.9-.4L12 15.5A1 1 0 0 0 11 14z"/>',
+  "calendar-clock": '<path d="M16 2v4"/><path d="M3 10h18"/><path d="M8 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M17 14v2l1 1"/>',
+  "plug": '<path d="M12 22v-5"/><path d="M15 8V2"/><path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"/><path d="M9 8V2"/>',
+  "layout-grid": '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
+  "panel-right": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>',
+  "scroll-text": '<path d="M15 12h-5M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1H11v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2h4"/>',
+  "languages": '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
+  "settings": '<path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.2a2 2 0 0 1-2 0l-.1-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.1.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.1.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.1-.1a2 2 0 0 1 2 0l.4.2a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.2a2 2 0 0 1 2 0l.1.1a2 2 0 0 0 2.7-.7l-.2-.4a2 2 0 0 0-.7-2.7l-.1-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.1-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.1.1a2 2 0 0 1-2 0l-.4-.2a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  "circle-check": '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  "folder": '<path d="M3 6h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  "folder-open": '<path d="M6 14l1.5-3h13l-2 7a2 2 0 0 1-2 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v1"/>',
+  "folder-plus": '<path d="M12 10v6M9 13h6"/><path d="M3 6h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  "folder-input": '<path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"/><path d="M2 13h10"/><path d="m9 16 3-3-3-3"/>',
+  "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  "chevron-right": '<path d="m9 18 6-6-6-6"/>',
+  "ellipsis": '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  "eye": '<path d="M2.1 12a10.7 10.7 0 0 1 19.8 0 10.7 10.7 0 0 1-19.8 0"/><circle cx="12" cy="12" r="3"/>',
+  "square-pen": '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>',
+  "copy": '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  "download": '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
+  "file-text": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+  "trash-2": '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v5M14 11v5"/>',
+  "x": '<path d="M18 6 6 18M6 6l12 12"/>',
+  "grip-vertical": '<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>',
+  "arrow-up-down": '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
+  "info": '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'
+};
+function renderIcons(root = document) {
+  root.querySelectorAll("[data-lucide]:not([data-icon-ready])").forEach(target => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.classList.add("lucide", `lucide-${target.dataset.lucide}`);
+    svg.innerHTML = iconPaths[target.dataset.lucide] || iconPaths.activity;
+    target.prepend(svg);
+    target.dataset.iconReady = "";
+  });
+}
+renderIcons();
+
+// 预览页排序模式：正式实现由 app.js 接管（对齐快捷执行的拖动排序），此处用 JS 模拟
+const page = document.querySelector(".documents-page");
+const reorderToggle = document.querySelector("[data-doc-reorder-toggle]");
+const reorderGuidance = document.querySelector("[data-doc-reorder-guidance]");
+const reorderStatus = document.querySelector("[data-doc-reorder-status]");
+function setReordering(active) {
+  if (active) page.dataset.reorderActive = "";
+  else delete page.dataset.reorderActive;
+  reorderToggle.setAttribute("aria-expanded", String(active));
+  reorderGuidance.hidden = !active;
+  document.querySelectorAll("[data-doc-row]").forEach(row => {
+    if (active) row.setAttribute("draggable", "true");
+    else row.removeAttribute("draggable");
+  });
+  if (!active) reorderStatus.textContent = "";
+}
+reorderToggle.addEventListener("click", () => setReordering(!page.hasAttribute("data-reorder-active")));
+reorderGuidance.querySelector("[data-doc-reorder-cancel]").addEventListener("click", () => setReordering(false));
+reorderGuidance.querySelector("[data-doc-reorder-finish]").addEventListener("click", () => {
+  setReordering(false);
+  reorderStatus.textContent = "顺序已保存";
+});
+
+// 分组内拖动排序模拟
+let dragRow = null;
+document.querySelectorAll("[data-doc-row]").forEach(row => {
+  row.addEventListener("dragstart", () => { dragRow = row; row.classList.add("doc-row--dragging"); });
+  row.addEventListener("dragend", () => {
+    row.classList.remove("doc-row--dragging");
+    document.querySelectorAll(".doc-row--drop-target").forEach(el => el.classList.remove("doc-row--drop-target"));
+    dragRow = null;
+  });
+  row.addEventListener("dragover", event => {
+    if (!dragRow || dragRow === row || dragRow.parentElement !== row.parentElement) return;
+    event.preventDefault();
+    row.classList.add("doc-row--drop-target");
+  });
+  row.addEventListener("dragleave", () => row.classList.remove("doc-row--drop-target"));
+  row.addEventListener("drop", event => {
+    event.preventDefault();
+    row.classList.remove("doc-row--drop-target");
+    if (!dragRow || dragRow === row) return;
+    row.parentElement.insertBefore(dragRow, row);
+    if (reorderStatus) reorderStatus.textContent = "排序保存中…";
+  });
+});
+
+// 预览页分组折叠：正式实现由 app-v2.js 的 data-grouped-records 接管
+document.querySelectorAll("[data-group-toggle]").forEach(toggle => {
+  const body = document.getElementById(toggle.getAttribute("aria-controls"));
+  const apply = expanded => {
+    toggle.setAttribute("aria-expanded", String(expanded));
+    if (body) body.hidden = !expanded;
+    const chevron = toggle.querySelector(".quick-run-group__chevron");
+    if (chevron) chevron.style.transform = expanded ? "rotate(90deg)" : "";
+  };
+  apply(toggle.getAttribute("aria-expanded") !== "false");
+  toggle.addEventListener("click", () => apply(toggle.getAttribute("aria-expanded") !== "true"));
+});
+</script>
+</body>
+</html>

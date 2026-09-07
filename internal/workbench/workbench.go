@@ -72,8 +72,11 @@ type Pan struct {
 	Y float64 `json:"y"`
 }
 type Stroke struct {
-	Color  string  `json:"color"`
-	Points []Point `json:"points"`
+	Color    string  `json:"color"`
+	Points   []Point `json:"points"`
+	Kind     string  `json:"kind,omitempty"`
+	Text     string  `json:"text,omitempty"`
+	FontSize int     `json:"fontSize,omitempty"`
 }
 type Item struct {
 	Revision  int64    `json:"revision,omitempty"`
@@ -218,7 +221,19 @@ func validate(s State, capacity Capacity) error {
 				return bad()
 			}
 			for _, stroke := range w.Strokes {
-				if stroke.Color != "#3b5bfd" && stroke.Color != "#343b49" {
+				if !validDrawingColor(stroke.Color) {
+					return bad()
+				}
+				switch stroke.Kind {
+				case "", "erase":
+					if stroke.Text != "" || stroke.FontSize != 0 {
+						return bad()
+					}
+				case "text":
+					if len(stroke.Points) != 1 || strings.TrimSpace(stroke.Text) == "" || len([]rune(stroke.Text)) > 2000 || stroke.FontSize < 12 || stroke.FontSize > 72 {
+						return bad()
+					}
+				default:
 					return bad()
 				}
 				points += len(stroke.Points)
@@ -234,6 +249,14 @@ func validate(s State, capacity Capacity) error {
 		return bad()
 	}
 	return nil
+}
+
+func validDrawingColor(color string) bool {
+	switch color {
+	case "#3b5bfd", "#343b49", "#dc2626", "#ea580c", "#ca8a04", "#16a34a", "#0d9488", "#0284c7", "#9333ea", "#db2777":
+		return true
+	}
+	return false
 }
 
 // MigrateShared preserves every existing board in one space and leaves the legacy

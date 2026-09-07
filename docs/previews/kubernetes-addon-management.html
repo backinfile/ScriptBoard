@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="../../internal/web/ui/assets/app.css">
+  <title>组件管理 · Kubernetes · ScriptBoard 预览</title>
+  <style>
+    /* 仅预览页使用的少量布局辅助，正式实现时应并入 app.css */
+    .addon-subnav{margin:-6px 0 24px}
+    .addon-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr);gap:20px;align-items:start}
+    @media(max-width:1100px){.addon-grid{grid-template-columns:1fr}}
+    .addon-card{background:var(--surface);border:1px solid var(--rule);border-radius:var(--radius);box-shadow:var(--shadow-card);padding:20px 22px}
+    .addon-card h3{margin-bottom:6px;font-size:.95rem}
+    .addon-card>p{color:var(--muted);font-size:.74rem}
+    .addon-checks{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:9px}
+    .addon-checks li{display:flex;align-items:flex-start;gap:9px;color:var(--muted);font-size:.74rem}
+    .addon-checks li svg{width:15px;height:15px;margin-top:1px;color:var(--success)}
+    .addon-checks li[data-tone=warn] svg{color:var(--warning)}
+    .addon-resources{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:7px}
+    .addon-resources li{display:flex;align-items:center;gap:9px;font:.7rem/1.4 var(--font-mono);color:var(--muted)}
+    .addon-resources li svg{width:14px;height:14px;color:var(--faint)}
+    .addon-resources li strong{color:var(--ink);font-weight:650}
+    .addon-badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:.64rem;font-weight:650;border:1px solid var(--rule-strong);color:var(--muted);background:var(--surface-2)}
+    .addon-badge[data-tone=light]{color:var(--success);background:var(--success-soft);border-color:var(--success-border)}
+    .addon-badge[data-tone=medium]{color:var(--accent-text);background:var(--accent-soft);border-color:var(--accent-border)}
+    .addon-badge[data-tone=heavy]{color:var(--warning);background:var(--warning-soft);border-color:var(--warning-border)}
+    .addon-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+    .addon-form label{display:grid;gap:6px;color:var(--muted);font-size:.66rem;font-weight:650}
+    .addon-form input,.addon-form select{width:100%}
+    .addon-form .addon-form__wide{grid-column:1/-1}
+    .addon-form__actions{display:flex;gap:8px;align-items:end}
+    .addon-form__actions .button{white-space:nowrap}
+    /* 预览页表格末列不限定为操作菜单宽度（正式实现按列用途选择是否保留默认 50px） */
+    .kubernetes-table th:last-child{width:auto}
+  </style>
+</head>
+<body data-app-shell>
+<a class="skip-link" href="#main-content">跳到主要内容</a>
+<aside class="app-sidebar" id="app-sidebar" aria-label="导航">
+  <div class="sidebar-head">
+    <a class="brand-wordmark" href="#" aria-label="ScriptBoard development"><span class="brand-mark" aria-hidden="true"><span data-lucide="square-terminal"></span></span><span class="brand-name">ScriptBoard</span><span class="brand-version">dev</span></a>
+    <div class="sidebar-head__actions">
+      <button class="sidebar-collapse" type="button" aria-label="收起导航" title="收起导航"><span data-lucide="panel-left-close" aria-hidden="true"></span></button>
+    </div>
+  </div>
+  <nav class="sidebar-nav">
+    <section class="nav-group">
+      <h2>监控</h2>
+      <a href="#"><span data-lucide="activity" aria-hidden="true"></span><span>概览</span></a>
+      <a href="#"><span data-lucide="app-window" aria-hidden="true"></span><span>应用</span></a>
+      <a href="#"><span data-lucide="package" aria-hidden="true"></span><span>容器</span></a>
+      <a href="#" aria-current="page"><span data-lucide="box" aria-hidden="true"></span><span>Kubernetes</span></a>
+      <a href="#"><span data-lucide="network" aria-hidden="true"></span><span>网站监控</span></a>
+      <a href="#"><span data-lucide="shield-check" aria-hidden="true"></span><span>主机安全</span></a>
+    </section>
+    <section class="nav-group">
+      <h2>资源</h2>
+      <a href="#"><span data-lucide="folder-code" aria-hidden="true"></span><span>文件</span></a>
+      <a href="#"><span data-lucide="braces" aria-hidden="true"></span><span>变量</span></a>
+      <a href="#"><span data-lucide="database" aria-hidden="true"></span><span>数据库</span></a>
+    </section>
+    <section class="nav-group">
+      <h2>配置</h2>
+      <a href="#"><span data-lucide="zap" aria-hidden="true"></span><span>快捷执行</span></a>
+      <a href="#"><span data-lucide="calendar-clock" aria-hidden="true"></span><span>计划</span></a>
+      <a href="#"><span data-lucide="plug" aria-hidden="true"></span><span>外部接口</span></a>
+      <a href="#"><span data-lucide="layout-grid" aria-hidden="true"></span><span>自定义面板</span></a>
+      <a href="#"><span data-lucide="panel-right" aria-hidden="true"></span><span>自定义页签</span></a>
+    </section>
+    <section class="nav-group">
+      <h2>历史</h2>
+      <a href="#"><span data-lucide="square-terminal" aria-hidden="true"></span><span>运行记录</span></a>
+      <a href="#"><span data-lucide="scroll-text" aria-hidden="true"></span><span>审计</span></a>
+    </section>
+  </nav>
+  <footer class="sidebar-footer">
+    <section class="sidebar-attention" aria-label="当前状态">
+      <a class="sidebar-attention__empty" href="#">
+        <span data-lucide="circle-check" aria-hidden="true"></span>
+        <strong>没有需要关注的事项</strong>
+      </a>
+    </section>
+    <div class="sidebar-utilities">
+      <a href="#"><span data-lucide="languages" aria-hidden="true"></span><span>EN</span></a>
+      <a href="#"><span data-lucide="settings" aria-hidden="true"></span><span>设置</span></a>
+    </div>
+  </footer>
+</aside>
+
+<main class="workspace kubernetes-page" id="main-content">
+  <header class="page-heading kubernetes-heading">
+    <div>
+      <p class="page-eyebrow">监控 / Kubernetes</p>
+      <h1>Kubernetes 监控</h1>
+      <p>对受控 Kubernetes 连接执行组件预检、安装、升级、卸载与状态对账。</p>
+    </div>
+  </header>
+
+  <nav class="kubernetes-page-tabs" aria-label="Kubernetes">
+    <a href="#"><span data-lucide="activity" aria-hidden="true"></span>集群监控</a>
+    <a href="#"><span data-lucide="network" aria-hidden="true"></span>集群连接</a>
+    <a href="#" aria-current="page"><span data-lucide="package" aria-hidden="true"></span>组件</a>
+    <a href="#"><span data-lucide="terminal-square" aria-hidden="true"></span>本地管理</a>
+  </nav>
+
+  <section class="kubernetes-cluster-switch" aria-label="选择集群">
+    <form method="get" action="#">
+      <label for="kubernetes-cluster"><span>选择集群</span><select id="kubernetes-cluster" name="cluster">
+        <option selected>生产 k3s · k3s-prod</option>
+        <option>预发 Kubernetes · staging</option>
+        <option>本地 k3d · k3d-dev</option>
+      </select></label>
+      <button class="button button--compact" type="submit">切换集群</button>
+      <a class="icon-button" href="#" aria-label="连接设置"><span data-lucide="settings" aria-hidden="true"></span></a>
+    </form>
+  </section>
+
+  <section class="kubernetes-control-line" aria-label="连接">
+    <div class="kubernetes-cluster-identity">
+      <span class="status-dot" data-state="up"></span>
+      <div><strong>生产 k3s</strong><small>k3s-prod · v1.30.4+k3s1</small></div>
+    </div>
+    <dl>
+      <div><dt>发行版</dt><dd>k3s</dd></div>
+      <div><dt>架构</dt><dd>amd64</dd></div>
+      <div><dt>组件管理</dt><dd>Curated · 已授权</dd></div>
+      <div><dt>Metrics API</dt><dd>可用</dd></div>
+    </dl>
+  </section>
+
+  <div class="kubernetes-alert" role="alert">
+    <span data-lucide="shield-alert" aria-hidden="true"></span>
+    <div><strong>传输安全风险</strong><p>此连接的 kubeconfig 启用了 insecure-skip-tls-verify，与集群 apiserver 的通信不校验证书，存在中间人攻击风险。建议在 kubeconfig 中配置 CA 证书后重新导入。</p></div>
+  </div>
+
+  <dl class="kubernetes-facts" aria-label="集群能力">
+    <div><dt>组件目录</dt><dd>5</dd><small>版本锁定 · 随应用发布</small></div>
+    <div><dt>已安装</dt><dd>3</dd><small>2 就绪 · 1 升级中</small></div>
+    <div><dt>监控目标</dt><dd>4</dd><small>按标签监控</small></div>
+    <div><dt>默认 StorageClass</dt><dd style="font-size:1.6rem;letter-spacing:-.02em">local-path</dd><small>RBAC · Ingress 预检通过</small></div>
+  </dl>
+
+  <nav class="kubernetes-page-tabs addon-subnav" aria-label="组件" data-addon-subnav>
+    <a href="#addon-catalog" aria-current="page" data-addon-tab="catalog"><span data-lucide="package" aria-hidden="true"></span>组件目录</a>
+    <a href="#addon-installed" data-addon-tab="installed"><span data-lucide="list-checks" aria-hidden="true"></span>已安装</a>
+    <a href="#addon-monitors" data-addon-tab="monitors"><span data-lucide="scan-search" aria-hidden="true"></span>监控目标</a>
+    <a href="#addon-operations" data-addon-tab="operations"><span data-lucide="history" aria-hidden="true"></span>操作记录</a>
+  </nav>
+
+  <section class="kubernetes-section" id="addon-catalog" aria-labelledby="addon-catalog-heading" data-addon-panel="catalog">
+    <header class="section-heading kubernetes-section-heading">
+      <div><p class="section-index">CATALOG · 5</p><h2 id="addon-catalog-heading">组件目录</h2><p>内置、版本锁定、经过验证的组件目录；升级 ScriptBoard 不会自动升级集群组件。</p></div>
+    </header>
+    <div class="kubernetes-table-shell">
+      <table class="kubernetes-table">
+        <caption class="sr-only">组件目录</caption>
+        <thead><tr>
+          <th scope="col">组件</th>
+          <th scope="col">Chart 版本</th>
+          <th scope="col">兼容 Kubernetes</th>
+          <th scope="col">资源档位</th>
+          <th scope="col">状态</th>
+          <th scope="col"><span class="sr-only">操作</span></th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td><span class="kubernetes-workload-open"><span><strong>Docker Registry</strong><small>registry · 集群内 Distribution</small></span></span></td>
+          <td><code>distribution 2.8.3</code></td>
+          <td>≥ 1.26</td>
+          <td><span class="addon-badge" data-tone="light">轻量 · 单副本</span></td>
+          <td><span class="kubernetes-state" data-state="ready"><i></i>已安装</span></td>
+          <td><button class="button button--compact" type="button" disabled>已安装</button></td>
+        </tr>
+        <tr>
+          <td><span class="kubernetes-workload-open"><span><strong>MySQL</strong><small>database · 单实例 + PVC</small></span></span></td>
+          <td><code>mysql 8.0.36</code></td>
+          <td>≥ 1.26</td>
+          <td><span class="addon-badge" data-tone="medium">中等</span></td>
+          <td><span class="kubernetes-state" data-state="ready"><i></i>已安装</span></td>
+          <td><button class="button button--compact" type="button" disabled>已安装</button></td>
+        </tr>
+        <tr>
+          <td><span class="kubernetes-workload-open"><span><strong>Redis / Valkey</strong><small>cache · 兼容 Redis 协议单实例</small></span></span></td>
+          <td><code>valkey 7.2.5</code></td>
+          <td>≥ 1.26</td>
+          <td><span class="addon-badge" data-tone="light">轻量</span></td>
+          <td><span class="kubernetes-state" data-state="progressing"><i></i>升级中</span></td>
+          <td><button class="button button--compact" type="button" disabled>升级中</button></td>
+        </tr>
+        <tr>
+          <td><span class="kubernetes-workload-open"><span><strong>Prometheus</strong><small>monitoring · 裁剪版 kube-prometheus-stack</small></span></span></td>
+          <td><code>kube-prometheus-stack 61.3.2</code></td>
+          <td>≥ 1.27</td>
+          <td><span class="addon-badge" data-tone="heavy">偏重 · 含 CRD</span></td>
+          <td><span class="kubernetes-state"><i></i>未安装</span></td>
+          <td><button class="button button--compact button--primary" type="button"><span data-lucide="plus" aria-hidden="true"></span>安装</button></td>
+        </tr>
+        <tr>
+          <td><span class="kubernetes-workload-open"><span><strong>VictoriaLogs</strong><small>logging · victoria-logs-single + collector</small></span></span></td>
+          <td><code>victoria-logs-single 0.6.4</code></td>
+          <td>≥ 1.26</td>
+          <td><span class="addon-badge" data-tone="medium">中等</span></td>
+          <td><span class="kubernetes-state"><i></i>未安装</span></td>
+          <td><button class="button button--compact button--primary" type="button"><span data-lucide="plus" aria-hidden="true"></span>安装</button></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="kubernetes-section" aria-labelledby="addon-plan-heading" data-addon-panel="catalog">
+    <header class="section-heading kubernetes-section-heading">
+      <div><p class="section-index">CHANGE PLAN</p><h2 id="addon-plan-heading">变更计划示例：安装 Prometheus</h2><p>提交前展示预检结果、即将创建的资源范围与风险；Broker 重新计算并比对计划摘要后执行。</p></div>
+    </header>
+    <div class="addon-grid">
+      <div class="addon-card">
+        <h3>即将创建的资源</h3>
+        <p>catalog_id: <code>prometheus</code> · release: <code>monitoring/prometheus</code> · chart <code>kube-prometheus-stack 61.3.2</code>（版本锁定）</p>
+        <ul class="addon-resources">
+          <li><span data-lucide="file-text" aria-hidden="true"></span><strong>Namespace</strong> monitoring</li>
+          <li><span data-lucide="file-text" aria-hidden="true"></span><strong>CRD</strong> servicemonitors / podmonitors / prometheusrules（集群级，4 项）</li>
+          <li><span data-lucide="file-text" aria-hidden="true"></span><strong>ClusterRole</strong> prometheus-operator、prometheus（集群级，2 项）</li>
+          <li><span data-lucide="file-text" aria-hidden="true"></span><strong>Deployment / Service</strong> operator、prometheus（命名空间内，6 项）</li>
+          <li><span data-lucide="hard-drive" aria-hidden="true"></span><strong>PVC</strong> prometheus-data · 20Gi · local-path</li>
+        </ul>
+      </div>
+      <div class="addon-card">
+        <h3>预检结果</h3>
+        <p>连接指纹与传输配置未变化 · 计划有效期 10 分钟</p>
+        <ul class="addon-checks">
+          <li><span data-lucide="circle-check" aria-hidden="true"></span>RBAC：SelfSubjectAccessReview 通过（含集群级权限）</li>
+          <li><span data-lucide="circle-check" aria-hidden="true"></span>Kubernetes v1.30.4 与 Chart 兼容（要求 ≥ 1.27）</li>
+          <li><span data-lucide="circle-check" aria-hidden="true"></span>默认 StorageClass local-path 存在</li>
+          <li><span data-lucide="circle-check" aria-hidden="true"></span>命名空间与 Release 无所有权冲突</li>
+          <li data-tone="warn"><span data-lucide="triangle-alert" aria-hidden="true"></span>涉及集群级资源（CRD、ClusterRole），提交时需要近期 AAL2 认证</li>
+        </ul>
+        <p style="margin-top:16px"><button class="button button--primary" type="button"><span data-lucide="lock" aria-hidden="true"></span>完成认证并提交计划</button></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="kubernetes-section" id="addon-installed" aria-labelledby="addon-installed-heading" data-addon-panel="installed" hidden>
+    <header class="section-heading kubernetes-section-heading">
+      <div><p class="section-index">INSTALLED · 3</p><h2 id="addon-installed-heading">已安装</h2><p>期望状态存于本地，实际状态由 Kubernetes API 与 Helm Release 对账得出。</p></div>
+    </header>
+    <div class="kubernetes-table-shell">
+      <table class="kubernetes-table">
+        <caption class="sr-only">已安装组件</caption>
+        <thead><tr>
+          <th scope="col">Release</th>
+          <th scope="col">命名空间</th>
+          <th scope="col">版本（期望 → 观测）</th>
+          <th scope="col">状态</th>
+          <th scope="col">最近对账</th>
+          <th scope="col"><span class="sr-only">更多操作</span></th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td><span class="kubernetes-workload-open"><span><strong>registry</strong><small>Docker Registry · distribution</small></span></span></td>
+          <td><code>registry</code></td>
+          <td><code>2.8.3 → 2.8.3</code></td>
+          <td><span class="kubernetes-state" data-state="ready"><i></i>Ready</span></td>
+          <td>2 分钟前</td>
+          <td><details class="action-menu"><summary aria-label="更多操作 registry"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+            <button type="button"><span data-lucide="rotate-cw" aria-hidden="true"></span>升级到已验证版本</button>
+            <button type="button"><span data-lucide="eye" aria-hidden="true"></span>查看详情</button>
+            <button type="button"><span data-lucide="trash-2" aria-hidden="true"></span>卸载（保留 PVC）</button>
+          </div></details></td>
+        </tr>
+        <tr>
+          <td><span class="kubernetes-workload-open"><span><strong>mysql</strong><small>MySQL · 单实例</small></span></span></td>
+          <td><code>database</code></td>
+          <td><code>8.0.36 → 8.0.36</code></td>
+          <td><span class="kubernetes-state" data-state="ready"><i></i>Ready</span></td>
+          <td>2 分钟前</td>
+          <td><details class="action-menu"><summary aria-label="更多操作 mysql"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+            <button type="button"><span data-lucide="rotate-cw" aria-hidden="true"></span>升级到已验证版本</button>
+            <button type="button"><span data-lucide="eye" aria-hidden="true"></span>查看详情</button>
+            <button type="button"><span data-lucide="trash-2" aria-hidden="true"></span>卸载（保留 PVC）</button>
+          </div></details></td>
+        </tr>
+        <tr>
+          <td><span class="kubernetes-workload-open"><span><strong>cache</strong><small>Redis / Valkey · 单实例</small></span></span></td>
+          <td><code>cache</code></td>
+          <td><code>7.2.5 → 7.2.4</code></td>
+          <td><span class="kubernetes-state" data-state="progressing"><i></i>Upgrading</span></td>
+          <td>进行中 · 任务 op_9f2c</td>
+          <td><details class="action-menu"><summary aria-label="更多操作 cache"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+            <button type="button"><span data-lucide="history" aria-hidden="true"></span>查看任务进度</button>
+            <button type="button"><span data-lucide="eye" aria-hidden="true"></span>查看详情</button>
+          </div></details></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="kubernetes-section" id="addon-monitors" aria-labelledby="addon-monitors-heading" data-addon-panel="monitors" hidden>
+    <header class="section-heading kubernetes-section-heading">
+      <div><p class="section-index">MONITOR TARGETS · 4</p><h2 id="addon-monitors-heading">监控目标</h2><p>按标签监控：通过 Kubernetes Label Selector 生成受控的 ServiceMonitor / PodMonitor。</p></div>
+    </header>
+    <div class="addon-card" style="margin-bottom:20px">
+      <h3>新建监控目标</h3>
+      <p>镜像 tag 仅表示镜像版本，不参与工作负载选择；创建前预览匹配资源数量。</p>
+      <form class="addon-form" method="get" action="#" style="margin-top:14px">
+        <label>目标类型<select><option selected>Service</option><option>Pod</option></select></label>
+        <label>命名空间范围<select><option selected>全部命名空间</option><option>default</option><option>backend</option></select></label>
+        <label class="addon-form__wide">Label Selector<input type="text" value="app=api,environment=prod" placeholder="app=api,environment=prod"></label>
+        <label>端口名<input type="text" value="http"></label>
+        <label>路径<input type="text" value="/metrics"></label>
+        <label>Scheme<select><option selected>http</option><option>https</option></select></label>
+        <label>抓取间隔<select><option>15s</option><option selected>30s</option><option>60s</option></select></label>
+        <div class="addon-form__actions">
+          <button class="button" type="button"><span data-lucide="scan-search" aria-hidden="true"></span>预览匹配</button>
+          <button class="button button--primary" type="button"><span data-lucide="plus" aria-hidden="true"></span>创建监控目标</button>
+        </div>
+      </form>
+      <p class="inline-notice" style="margin-top:14px"><span data-lucide="info" aria-hidden="true"></span> 匹配预览：<strong>3 个 Service</strong> 符合 <code>app=api,environment=prod</code>，范围合理。零匹配或选择范围过大时会在此提示。</p>
+    </div>
+    <div class="kubernetes-table-shell">
+      <table class="kubernetes-table">
+        <caption class="sr-only">监控目标</caption>
+        <thead><tr>
+          <th scope="col">名称</th>
+          <th scope="col">类型</th>
+          <th scope="col">Label Selector</th>
+          <th scope="col">抓取</th>
+          <th scope="col">状态</th>
+          <th scope="col"><span class="sr-only">更多操作</span></th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td><strong>api-prod</strong></td>
+          <td>ServiceMonitor</td>
+          <td><code>app=api,environment=prod</code></td>
+          <td><code>:http /metrics · 30s</code></td>
+          <td><span class="kubernetes-state" data-state="ready"><i></i>3 个 target up</span></td>
+          <td><details class="action-menu"><summary aria-label="更多操作 api-prod"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+            <button type="button"><span data-lucide="eye" aria-hidden="true"></span>查看匹配资源</button>
+            <button type="button"><span data-lucide="trash-2" aria-hidden="true"></span>删除</button>
+          </div></details></td>
+        </tr>
+        <tr>
+          <td><strong>worker-jobs</strong></td>
+          <td>PodMonitor</td>
+          <td><code>app=worker</code></td>
+          <td><code>:metrics /metrics · 60s</code></td>
+          <td><span class="kubernetes-state" data-state="ready"><i></i>5 个 target up</span></td>
+          <td><details class="action-menu"><summary aria-label="更多操作 worker-jobs"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+            <button type="button"><span data-lucide="eye" aria-hidden="true"></span>查看匹配资源</button>
+            <button type="button"><span data-lucide="trash-2" aria-hidden="true"></span>删除</button>
+          </div></details></td>
+        </tr>
+        <tr>
+          <td><strong>legacy-batch</strong></td>
+          <td>PodMonitor</td>
+          <td><code>app=batch,tier=legacy</code></td>
+          <td><code>:http /metrics · 30s</code></td>
+          <td><span class="kubernetes-state" data-state="degraded"><i></i>端点不可抓取</span></td>
+          <td><details class="action-menu"><summary aria-label="更多操作 legacy-batch"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+            <button type="button"><span data-lucide="eye" aria-hidden="true"></span>查看诊断</button>
+            <button type="button"><span data-lucide="trash-2" aria-hidden="true"></span>删除</button>
+          </div></details></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="kubernetes-section" id="addon-operations" aria-labelledby="addon-operations-heading" data-addon-panel="operations" hidden>
+    <header class="section-heading kubernetes-section-heading">
+      <div><p class="section-index">OPERATIONS</p><h2 id="addon-operations-heading">操作记录</h2><p>任务持久化保存；页面断线或 Web 重启后可凭 operation ID 恢复进度。</p></div>
+    </header>
+    <div class="kubernetes-table-shell">
+      <table class="kubernetes-table">
+        <caption class="sr-only">操作记录</caption>
+        <thead><tr>
+          <th scope="col">时间</th>
+          <th scope="col">操作</th>
+          <th scope="col">目标</th>
+          <th scope="col">阶段</th>
+          <th scope="col">结果</th>
+          <th scope="col">操作者</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td>2026-09-03 11:20</td>
+          <td><strong>升级</strong></td>
+          <td><code>cache/cache</code> · valkey 7.2.4 → 7.2.5</td>
+          <td><span class="kubernetes-state" data-state="progressing"><i></i>Verifying</span></td>
+          <td>Helm revision 4 · 等待健康检查</td>
+          <td>admin</td>
+        </tr>
+        <tr>
+          <td>2026-09-02 16:04</td>
+          <td><strong>安装</strong></td>
+          <td><code>database/mysql</code> · mysql 8.0.36</td>
+          <td><span class="kubernetes-state" data-state="ready"><i></i>Succeeded</span></td>
+          <td>耗时 82s · 凭据已写入集群 Secret</td>
+          <td>admin</td>
+        </tr>
+        <tr>
+          <td>2026-08-30 09:47</td>
+          <td><strong>安装</strong></td>
+          <td><code>monitoring/prometheus</code> · kube-prometheus-stack 61.3.2</td>
+          <td><span class="kubernetes-state" data-state="degraded"><i></i>Failed</span></td>
+          <td>ERR_CHART_TIMEOUT · 镜像拉取超时；可重试，不会重复创建 Release</td>
+          <td>ops-li</td>
+        </tr>
+        <tr>
+          <td>2026-08-28 14:12</td>
+          <td><strong>卸载</strong></td>
+          <td><code>logging/fluent-bit</code></td>
+          <td><span class="kubernetes-state" data-state="ready"><i></i>Succeeded</span></td>
+          <td>PVC 已按选择保留 · CRD 未删除（被其他 Release 共用）</td>
+          <td>admin</td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+// 预览页离线渲染图标：图标路径取自 internal/web/ui/assets/app.js 内置的 lucide 子集
+const iconPaths = {
+  "square-terminal": '<path d="m7 7 3 3-3 3M13 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/>',
+  "panel-left-close": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m17 9-3 3 3 3"/>',
+  "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  "app-window": '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M2 8h20"/><path d="M6 6h.01"/><path d="M10 6h.01"/>',
+  "package": '<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  "box": '<path d="m21 8-9-5-9 5 9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+  "network": '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3M12 12V8"/>',
+  "shield-check": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
+  "folder-code": '<path d="M10 10.5 8 12l2 1.5M14 10.5l2 1.5-2 1.5"/><path d="M2 6h5l2 2h13"/><path d="M2 6v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8"/>',
+  "braces": '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
+  "database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
+  "zap": '<path d="M4 14a1 1 0 0 1-.8-1.6l9-11a.5.5 0 0 1 .9.4L12 8.5A1 1 0 0 0 13 10h7a1 1 0 0 1 .8 1.6l-9 11a.5.5 0 0 1-.9-.4L12 15.5A1 1 0 0 0 11 14z"/>',
+  "calendar-clock": '<path d="M16 2v4"/><path d="M3 10h18"/><path d="M8 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M17 14v2l1 1"/>',
+  "plug": '<path d="M12 22v-5"/><path d="M15 8V2"/><path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"/><path d="M9 8V2"/>',
+  "layout-grid": '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
+  "panel-right": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>',
+  "scroll-text": '<path d="M15 12h-5M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1H11v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2h4"/>',
+  "languages": '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
+  "settings": '<path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.2a2 2 0 0 1-2 0l-.1-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.1.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.1.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.1-.1a2 2 0 0 1 2 0l.4.2a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.2a2 2 0 0 1 2 0l.1.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.1-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.1-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.1.1a2 2 0 0 1-2 0l-.4-.2a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  "circle-check": '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  "chevron-right": '<path d="m9 18 6-6-6-6"/>',
+  "terminal-square": '<path d="m7 7 3 3-3 3M13 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/>',
+  "shield-alert": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+  "list-checks": '<path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="m3 17 2 2 4-4"/><path d="M13 12h8"/><path d="M13 18h8"/>',
+  "scan-search": '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/>',
+  "history": '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  "file-text": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+  "hard-drive": '<path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/><path d="M2 12h20"/><path d="M6 16h.01M10 16h.01"/>',
+  "triangle-alert": '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4M12 17h.01"/>',
+  "lock": '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  "plus": '<path d="M5 12h14M12 5v14"/>',
+  "ellipsis": '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  "rotate-cw": '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+  "eye": '<path d="M2.1 12a10.7 10.7 0 0 1 19.8 0 10.7 10.7 0 0 1-19.8 0"/><circle cx="12" cy="12" r="3"/>',
+  "trash-2": '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v5M14 11v5"/>',
+  "info": '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'
+};
+function renderIcons(root = document) {
+  root.querySelectorAll("[data-lucide]:not([data-icon-ready])").forEach(target => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.classList.add("lucide", `lucide-${target.dataset.lucide}`);
+    svg.innerHTML = iconPaths[target.dataset.lucide] || iconPaths.activity;
+    target.prepend(svg);
+    target.dataset.iconReady = "";
+  });
+}
+renderIcons();
+
+// 预览页子页签切换：正式实现时由服务端按 ?tab= 渲染，此处用 JS 模拟
+const addonSubnav = document.querySelector("[data-addon-subnav]");
+if (addonSubnav) {
+  addonSubnav.addEventListener("click", event => {
+    const link = event.target.closest("[data-addon-tab]");
+    if (!link) return;
+    event.preventDefault();
+    const tab = link.dataset.addonTab;
+    addonSubnav.querySelectorAll("[data-addon-tab]").forEach(item => {
+      if (item === link) item.setAttribute("aria-current", "page");
+      else item.removeAttribute("aria-current");
+    });
+    document.querySelectorAll("[data-addon-panel]").forEach(panel => {
+      panel.hidden = panel.dataset.addonPanel !== tab;
+    });
+    history.replaceState(null, "", link.getAttribute("href"));
+  });
+  const initial = location.hash && addonSubnav.querySelector(`a[href="${location.hash}"]`);
+  if (initial) initial.click();
+}
+</script>
+</body>
+</html>
