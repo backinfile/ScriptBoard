@@ -24,6 +24,7 @@ This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs
 + release 分支和正式 Tag 不可修改；发现问题须回到 `dev` 修复、测试，再发布新版本。修复问题时要添加简要注释记录下
 + worktree创建目录：../worktrees/projectName/xxxx
 + 本地部署在默认情况下都是测试用的，可以添加足够的测试数据来进行测试（不用删除），可以直接打印本地部署的相关密码等到输出中。
++ 要求同步修改readme文档，要求：尽量精简描述；文字需要面向使用者，不要过多的解释性文字。
 
 ## 前端设计原则
 
