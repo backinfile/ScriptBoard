@@ -41,6 +41,11 @@ module.exports = async function fileJumpTest(page, baseURL, hostRoot, screenshot
   await page.keyboard.press('Enter');await page.waitForURL(u=>u.searchParams.get('focus_path')===path.join(child,'nested-match.txt'));
   await page.locator('[data-file-focus]').waitFor();assert.equal(await page.locator('.file-jump-dialog').count(),0);
   await page.goBack();await page.locator('[data-file-jump-open]').waitFor();assert.equal(new URL(page.url()).searchParams.get('path'),root);
+  // Wait for the restored directory's dialog entry after asynchronous history navigation.
+  await page.waitForFunction(expected => {
+    const opener = document.querySelector('[data-file-jump-open]');
+    return opener && new URL(opener.href).searchParams.get('path') === expected;
+  }, root);
   await open();await page.locator('#jump-path').fill('./entry-44.txt');await page.locator('#jump-path').press('Enter');
   await page.waitForURL(u=>u.searchParams.get('focus_path')===path.join(root,'entry-44.txt'));await page.locator('[data-file-focus]').waitFor();
   assert.match(await page.locator('.pagination').textContent(),/3 \/ 3/);

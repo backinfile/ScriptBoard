@@ -6,7 +6,7 @@
 
 ScriptBoard is built for personal servers, small-team utility hosts, and internal operations machines. It works with scripts already on the host, without requiring you to move them into a special repository or build an orchestration stack first.
 
-[Download the latest release](https://github.com/backinfile/ScriptBoard/releases/latest) · [Install](#install) · [First steps](#first-steps) · [Troubleshooting](#troubleshooting)
+[Download the latest release](https://github.com/backinfile/ScriptBoard/releases/latest) · [Release notes](./docs/RELEASE_NOTES.md) · [Install](#install) · [First steps](#first-steps) · [Troubleshooting](#troubleshooting)
 
 > [!WARNING]
 > ScriptBoard is not a sandbox for untrusted code. Run only trusted scripts, grant access only to trusted users, and do not expose the management interface directly to the public internet.

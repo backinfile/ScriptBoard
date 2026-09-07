@@ -26,7 +26,11 @@ module.exports = async function verifyWorkbench(page, baseURL, screenshots) {
   await links.getByRole('textbox',{name:/^(链接地址|Link URL)$/}).fill('https://example.com/edited');
   await links.getByRole('button',{name:/^(保存链接|Save link)$/}).click();
   await root.locator('.wb-timer').last().getByRole('button',{name:/^(开始|Start)$/}).click();
-  await page.waitForTimeout(1200);
+  // Wait for visible progress when the browser schedules background-page timers.
+  await page.waitForFunction(() => {
+    const digits = [...document.querySelectorAll('.wb-digits')].at(-1);
+    return digits && digits.textContent !== '25:00';
+  }, null, { timeout: 5000 });
   assert.notEqual(await root.locator('.wb-digits').last().textContent(),'25:00');
   await root.locator('.wb-timer').last().getByRole('button',{name:/^(暂停|Pause)$/}).click();
   const drawing=root.locator('.wb-draw').last();

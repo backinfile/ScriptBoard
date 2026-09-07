@@ -9046,10 +9046,11 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 
 
 
-/* Compact the fixed header and canvas controls on short screens so XL retains a drawable area. */
+/* Compact the fixed header and canvas controls on short screens so XL retains a drawable area.
+   Keep the title input minimum compact too, alongside its padding. */
 @media(max-height:600px){
  .wb-top{min-height:64px;padding-top:12px;padding-bottom:12px}.wb-top .page-eyebrow,.wb-top p:last-child{display:none}.wb-top h1{font-size:1.35rem;margin:0}
- .wb .wb-widget-head{padding:6px 12px;min-height:40px}.wb.wb-enhanced .wb-widget-head>input{padding-top:2px;padding-bottom:2px}.wb .wb-widget-head .wb-icon{height:28px;width:28px;min-width:28px}.wb .wb-canvas-nav,.wb .wb-canvas-footer{flex-wrap:nowrap;overflow-x:auto;padding:5px 8px;gap:4px}.wb .wb-canvas-nav button,.wb .wb-canvas-footer button{white-space:nowrap;flex-shrink:0}.wb .wb-canvas-footer .wb-icon{width:28px;height:28px;min-width:28px}.wb .wb-canvas-footer .wb-sizes{flex-shrink:0}
+ .wb .wb-widget-head{padding:6px 12px;min-height:40px}.wb.wb-enhanced .wb-widget-head>input{min-height:28px;padding-top:2px;padding-bottom:2px}.wb .wb-widget-head .wb-icon{height:28px;width:28px;min-width:28px}.wb .wb-canvas-nav,.wb .wb-canvas-footer{flex-wrap:nowrap;overflow-x:auto;padding:5px 8px;gap:4px}.wb .wb-canvas-nav button,.wb .wb-canvas-footer button{white-space:nowrap;flex-shrink:0}.wb .wb-canvas-footer .wb-icon{width:28px;height:28px;min-width:28px}.wb .wb-canvas-footer .wb-sizes{flex-shrink:0}
 }
 
 .wb-conflict{padding:10px 12px;border-top:1px solid var(--warning-border);background:var(--warning-soft);font-size:.75rem;display:flex;flex-wrap:wrap;gap:6px;align-items:center}.wb-conflict>span{flex-basis:100%}

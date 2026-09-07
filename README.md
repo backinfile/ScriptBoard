@@ -6,7 +6,7 @@
 
 ScriptBoard 适合个人服务器、小团队工具机和内部运维主机。安装后即可使用主机上已有的脚本，无需迁移文件或搭建额外的脚本仓库。
 
-[下载最新版本](https://github.com/backinfile/ScriptBoard/releases/latest) · [快速安装](#快速安装) · [开始使用](#开始使用)
+[下载最新版本](https://github.com/backinfile/ScriptBoard/releases/latest) · [发布说明](./docs/RELEASE_NOTES.md) · [快速安装](#快速安装) · [开始使用](#开始使用)
 
 > [!WARNING]
 > ScriptBoard 可以运行主机上的脚本。请只向可信用户开放，并避免将管理界面直接暴露到公网。
