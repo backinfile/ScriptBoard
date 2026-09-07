@@ -27,7 +27,7 @@ func (a *App) oauthAuthorizeGet(response http.ResponseWriter, request *http.Requ
 	current, _, ok := a.loadSession(request)
 	if !ok {
 		if target := request.URL.RequestURI(); strings.HasPrefix(target, "/oauth/authorize?") && len(target) <= 4096 {
-			http.SetCookie(response, &http.Cookie{Name: oauthReturnCookieName, Value: base64.RawURLEncoding.EncodeToString([]byte(target)), Path: "/", MaxAge: 300, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
+			http.SetCookie(response, &http.Cookie{Name: oauthReturnCookieName, Value: base64.RawURLEncoding.EncodeToString([]byte(target)), Path: "/", MaxAge: 300, HttpOnly: true, Secure: isSecureRequest(request), SameSite: embeddingSameSite(request, http.SameSiteLaxMode)})
 		}
 		http.Redirect(response, request, "/login", http.StatusSeeOther)
 		return

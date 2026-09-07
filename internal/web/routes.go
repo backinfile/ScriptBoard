@@ -489,14 +489,17 @@ func (a *App) routes() http.Handler {
 			return
 		}
 		response.Header().Set("X-Content-Type-Options", "nosniff")
-		response.Header().Set("X-Frame-Options", "DENY")
+		if len(a.frameAncestors) == 0 {
+			response.Header().Set("X-Frame-Options", "DENY")
+		}
+		request = request.WithContext(context.WithValue(request.Context(), embeddingContextKey{}, len(a.frameAncestors) > 0))
 		// Keep same-origin form submissions bound to a concrete Origin. Chromium
 		// serializes the Origin as "null" for native POST forms under no-referrer,
 		// which makes strict same-origin validation indistinguishable from an
 		// opaque, potentially hostile origin.
 		response.Header().Set("Referrer-Policy", "same-origin")
 		response.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
-		response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		response.Header().Set("Content-Security-Policy", a.contentSecurityPolicy())
 		if isSecureRequest(request) {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}

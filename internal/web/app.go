@@ -382,6 +382,7 @@ const (
 )
 
 type Config struct {
+	FrameAncestors                  []string
 	StateRoot                       string
 	ConfigPath                      string
 	InstallRoot                     string
@@ -512,6 +513,7 @@ func deletePasskeyWithContext(ctx context.Context, store PasskeyStore, userID, c
 }
 
 type App struct {
+	frameAncestors        []string
 	workbenchUpdates      workbench.Notifier
 	db                    *sql.DB
 	stateRoot             string
@@ -604,6 +606,9 @@ type loginFailure struct {
 }
 
 func Open(config Config) (*App, error) {
+	if err := validateEmbeddingConfig(config.FrameAncestors); err != nil {
+		return nil, err
+	}
 	if err := rejectIncompatibleExistingStateRoot(config.StateRoot); err != nil {
 		return nil, err
 	}
@@ -709,7 +714,7 @@ func Open(config Config) (*App, error) {
 		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, stateBackups: config.StateBackups, approvalUploads: approvalUploads, instanceLock: instanceLock, mfa: mfaStore,
 		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(), loginChallenges: newLoginChallengeStore(),
 		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
-		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
+		frameAncestors: append([]string(nil), config.FrameAncestors...), allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
 		mcpEnabled: mcpEnabled, mcpHTTP: mcpaccess.NewHTTPBoundary(config.CanonicalExternalURL),
 		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
@@ -5176,7 +5181,7 @@ func (a *App) changeUsername(response http.ResponseWriter, request *http.Request
 	}
 	a.cancelAuthenticatedRequests(current.userID)
 	a.recordAuditForRequest(request, "rename_self", username+" -> "+newUsername, "succeeded")
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: embeddingSameSite(request, http.SameSiteLaxMode)})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
 
@@ -5238,7 +5243,7 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 	}
 	a.cancelAuthenticatedRequests(current.userID)
 	a.recordAuditForRequest(request, "change_password", username, "succeeded")
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: embeddingSameSite(request, http.SameSiteLaxMode)})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
 
@@ -5338,7 +5343,7 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		}
 		http.SetCookie(response, &http.Cookie{
 			Name: loginChallengeCookieName, Value: challengeID, Path: "/", MaxAge: int(loginChallengeLifetime.Seconds()),
-			HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode,
+			HttpOnly: true, Secure: isSecureRequest(request), SameSite: embeddingSameSite(request, http.SameSiteStrictMode),
 		})
 		completeLogin(response, request, "/login/verify")
 		return
@@ -5453,10 +5458,10 @@ func (a *App) finishLogin(response http.ResponseWriter, request *http.Request, u
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   isSecureRequest(request),
-		SameSite: http.SameSiteLaxMode,
+		SameSite: embeddingSameSite(request, http.SameSiteLaxMode),
 		MaxAge:   7 * 24 * 60 * 60,
 	})
-	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode})
+	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: embeddingSameSite(request, http.SameSiteStrictMode)})
 	auditSession := session{userID: userID, username: username, role: role, authVersion: authVersion, authenticationAssurance: authenticationAssurance, reauthenticatedAt: now.Unix()}
 	auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, auditSession))
 	a.recordAuditWithRequestActor(auditRequest, "login", username, "succeeded", request.RemoteAddr, userID, username, role)
@@ -5466,7 +5471,7 @@ func (a *App) finishLogin(response http.ResponseWriter, request *http.Request, u
 			destination = string(decoded)
 		}
 	}
-	http.SetCookie(response, &http.Cookie{Name: oauthReturnCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: oauthReturnCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: embeddingSameSite(request, http.SameSiteLaxMode)})
 	completeLogin(response, request, destination)
 }
 
@@ -5497,7 +5502,7 @@ func loginRemoteHost(request *http.Request) string {
 }
 
 func expireLoginChallengeCookie(response http.ResponseWriter, request *http.Request) {
-	http.SetCookie(response, &http.Cookie{Name: loginChallengeCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode})
+	http.SetCookie(response, &http.Cookie{Name: loginChallengeCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: embeddingSameSite(request, http.SameSiteStrictMode)})
 }
 
 func setRequestReadDeadline(response http.ResponseWriter, timeout time.Duration) func() {
@@ -5543,7 +5548,7 @@ func (a *App) logout(response http.ResponseWriter, request *http.Request) {
 	}
 	a.securityDraftMu.Unlock()
 	a.recordAuditForRequest(request, "logout", current.username, "succeeded")
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: embeddingSameSite(request, http.SameSiteLaxMode)})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
 
@@ -5831,7 +5836,7 @@ func renderAuthenticationPage(response http.ResponseWriter, request *http.Reques
 			Path:     "/",
 			HttpOnly: true,
 			Secure:   isSecureRequest(request),
-			SameSite: http.SameSiteStrictMode,
+			SameSite: embeddingSameSite(request, http.SameSiteStrictMode),
 		})
 	}
 	response.Header().Set("Cache-Control", "no-store")
@@ -5855,7 +5860,7 @@ func renderLoginVerificationPage(response http.ResponseWriter, request *http.Req
 			http.Error(response, "unable to create login verification form", http.StatusInternalServerError)
 			return
 		}
-		http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Value: token, Path: "/", HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode})
+		http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Value: token, Path: "/", HttpOnly: true, Secure: isSecureRequest(request), SameSite: embeddingSameSite(request, http.SameSiteStrictMode)})
 	}
 	locale := resolveWebLocale(request)
 	response.Header().Set("Cache-Control", "no-store")
@@ -5904,7 +5909,7 @@ func renderLoginFailure(response http.ResponseWriter, request *http.Request, sta
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   isSecureRequest(request),
-		SameSite: http.SameSiteStrictMode,
+		SameSite: embeddingSameSite(request, http.SameSiteStrictMode),
 	})
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")

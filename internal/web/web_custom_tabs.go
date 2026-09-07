@@ -155,7 +155,7 @@ func (a *App) customTabFramePage(response http.ResponseWriter, request *http.Req
 	if tab.CredentialMode != customtab.ModeIsolated {
 		sandbox += " allow-same-origin allow-storage-access-by-user-activation"
 	}
-	response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; frame-src "+tab.Origin)
+	response.Header().Set("Content-Security-Policy", a.contentSecurityPolicy()+"; frame-src "+tab.Origin)
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = customTabFrameTemplate.Execute(response, customTabFrameView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, ID: tab.ID, Name: tab.Name, TargetURL: tab.TargetURL, Origin: tab.Origin, Sandbox: sandbox, CredentialMode: string(tab.CredentialMode), ChallengeEndpoint: "/defined/tabs/" + tab.ID + "/key-challenge", DeliveryEndpoint: "/defined/tabs/" + tab.ID + "/key-delivery"})

@@ -21,6 +21,7 @@ import (
 )
 
 type Config struct {
+	FrameAncestors                     []string            `yaml:"frame_ancestors"`
 	StateRoot                          string              `yaml:"state_root"`
 	Listen                             string              `yaml:"listen"`
 	TLSCert                            string              `yaml:"tls_cert"`
@@ -47,6 +48,7 @@ type Config struct {
 }
 
 type yamlConfig struct {
+	FrameAncestors                     []string            `yaml:"frame_ancestors"`
 	StateRoot                          string              `yaml:"state_root"`
 	Listen                             string              `yaml:"listen"`
 	TLSCert                            string              `yaml:"tls_cert"`
@@ -135,6 +137,15 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.DurationVar(&result.UpdateInterval, "update-check-interval", result.UpdateInterval, "更新检查间隔")
 	flags.StringVar(&result.AdminUsername, "admin-username", result.AdminUsername, "权威管理员用户名覆盖")
 	flags.StringVar(&result.AdminPasswordFile, "admin-password-file", result.AdminPasswordFile, "权威管理员密码文件")
+	frameAncestorFlagSeen := false
+	flags.Func("frame-ancestor", "允许嵌入本实例的 HTTP/HTTPS Origin（可重复）", func(value string) error {
+		if !frameAncestorFlagSeen {
+			result.FrameAncestors = nil
+			frameAncestorFlagSeen = true
+		}
+		result.FrameAncestors = append(result.FrameAncestors, value)
+		return nil
+	})
 	trustedProxyFlagSeen := false
 	allowedHostFlagSeen := false
 	flags.Func("trusted-proxy", "可信反向代理 IP 或 CIDR（可重复）", func(value string) error {
@@ -167,6 +178,9 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	}
 	if flags.NArg() != 0 {
 		return Config{}, fmt.Errorf("未知位置参数: %v", flags.Args())
+	}
+	if err := ValidateFrameAncestors(result.FrameAncestors); err != nil {
+		return Config{}, err
 	}
 	if result.RunTimeoutGrace <= 0 {
 		return Config{}, fmt.Errorf("Run 超时强杀宽限必须大于零")
@@ -292,6 +306,9 @@ func requestedConfigPath(arguments []string, fallback string) (string, bool) {
 }
 
 func applyYAML(result *Config, values yamlConfig) {
+	if values.FrameAncestors != nil {
+		result.FrameAncestors = append([]string(nil), values.FrameAncestors...)
+	}
 	if values.StateRoot != "" {
 		result.StateRoot = values.StateRoot
 	}
@@ -361,6 +378,9 @@ func applyYAML(result *Config, values yamlConfig) {
 }
 
 func applyEnvironment(result *Config, getenv func(string) string) {
+	if value := getenv("SCRIPTBOARD_FRAME_ANCESTORS"); value != "" {
+		result.FrameAncestors = splitCommaList(value)
+	}
 	if value := getenv("SCRIPTBOARD_MCP_ENABLED"); value != "" {
 		if enabled, err := strconv.ParseBool(value); err == nil {
 			result.MCPEnabled = enabled

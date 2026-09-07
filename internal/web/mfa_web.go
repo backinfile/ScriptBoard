@@ -152,5 +152,5 @@ func renderMFAEnrollmentQRCode(uri string) (template.HTML, error) {
 }
 
 func expireSessionCookie(response http.ResponseWriter, request *http.Request) {
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: embeddingSameSite(request, http.SameSiteLaxMode)})
 }
