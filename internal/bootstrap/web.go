@@ -108,6 +108,19 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 		scheme = "https"
 	}
 	fmt.Fprintln(stdout, "ScriptBoard 已启动："+scheme+"://"+listener.Addr().String())
+	// Use the configured public origin so setup links also work behind an allowed reverse proxy.
+	setupBase := loaded.CanonicalExternalURL
+	if setupBase == "" {
+		setupBase = scheme + "://" + listener.Addr().String()
+	}
+	setupURL, err := application.SetupURL(setupBase)
+	if err != nil {
+		return fmt.Errorf("read setup link: %w", err)
+	}
+	if setupURL != "" {
+		fmt.Fprintln(stdout, "设置管理员（24 小时内有效）："+setupURL)
+	}
+
 	go func() {
 		select {
 		case <-runContext.Done():

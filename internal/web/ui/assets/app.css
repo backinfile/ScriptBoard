@@ -5022,8 +5022,8 @@ body.has-task-panel { overflow: hidden; }
 .login-sheet header { margin-bottom: 28px; }
 .login-sheet header h1 { margin-bottom: 8px; }
 .login-sheet header p { margin: 0; color: var(--muted); }
-.login-sheet form[data-login-form] { display: grid; gap: 16px; }
-.login-sheet form[data-login-form] button { width: 100%; justify-content: space-between; margin-top: 4px; }
+.login-sheet form:is([data-login-form], [data-setup-form]) { display: grid; gap: 16px; }
+.login-sheet form:is([data-login-form], [data-setup-form]) button { width: 100%; justify-content: space-between; margin-top: 4px; }
 .login-error { display: grid; gap: 2px; margin-bottom: 18px; padding: 12px 14px; color: var(--danger); background: var(--danger-soft); border: 1px solid var(--danger-border); border-radius: var(--control-radius); }
 .login-locale { margin-top: 28px; }
 .login-locale button { display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 5px 0; color: var(--muted); background: transparent; border: 0; font-size: .78rem; }
@@ -8431,13 +8431,13 @@ body.login-page {
   letter-spacing: -.02em;
 }
 .login-sheet header h1:only-child { margin-bottom: 0; }
-.login-sheet form[data-login-form] label {
+.login-sheet form:is([data-login-form], [data-setup-form]) label {
   display: grid;
   gap: 5px;
   font-size: .78rem;
   font-weight: 600;
 }
-.login-sheet form[data-login-form] input {
+.login-sheet form:is([data-login-form], [data-setup-form]) input {
   width: 100%;
   padding: 8px 11px;
   color: var(--ink);
@@ -8446,7 +8446,7 @@ body.login-page {
   border-radius: var(--radius-sm);
   font-size: .84rem;
 }
-.login-sheet form[data-login-form] input:focus {
+.login-sheet form:is([data-login-form], [data-setup-form]) input:focus {
   border-color: var(--accent);
   box-shadow: var(--focus);
   outline: 0;

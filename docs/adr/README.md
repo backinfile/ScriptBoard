@@ -101,3 +101,5 @@ ADR 解释“为什么这样决定”，以下文档说明“产品要做什么�
 - [领域词汇](../../CONTEXT.md)
 
 修改基线文档时，应检查相关 ADR 是否仍然一致；若产品方向发生冲突，先新增或取代 ADR。
+
+首次管理员设置参见 [ADR-0182](./0182-initialize-administrator-with-a-local-setup-token.md)。

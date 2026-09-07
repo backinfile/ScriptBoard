@@ -7,7 +7,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,7 +41,7 @@ func TestPasskeyCeremoniesRequireCSRFAndUserVerification(t *testing.T) {
 	t.Cleanup(server.Close)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	passwordBytes, _ := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	passwordBytes, _ := recoveredPassword(t, application, stateRoot)
 	password := strings.TrimSpace(string(passwordBytes))
 	login(t, client, server.URL, password, http.StatusSeeOther)
 	mfaPage := getBody(t, client, server.URL+"/settings/account/mfa", http.StatusOK)
@@ -149,7 +148,7 @@ func TestPasskeyLoginIsOnlyOfferedAfterPasswordVerification(t *testing.T) {
 	t.Cleanup(server.Close)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	passwordBytes, _ := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	passwordBytes, _ := recoveredPassword(t, application, stateRoot)
 
 	page := getBody(t, client, server.URL+"/login", http.StatusOK)
 	if strings.Contains(string(page), `data-passkey-login`) || strings.Contains(string(page), `name="passkey_response"`) {

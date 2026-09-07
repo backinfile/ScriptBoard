@@ -60,7 +60,12 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /{$}", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		http.Redirect(response, request, "/monitor", http.StatusSeeOther)
 	})))
+	mux.Public("GET /setup", a.setupPage)
+	mux.Public("POST /setup", a.completeSetup)
 	mux.Public("GET /login", func(response http.ResponseWriter, request *http.Request) {
+		if a.redirectPendingSetup(response, request) {
+			return
+		}
 		if _, _, ok := a.loadSession(request); ok {
 			http.Redirect(response, request, "/monitor", http.StatusSeeOther)
 			return

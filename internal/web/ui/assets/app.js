@@ -1,3 +1,11 @@
+// Keep the local setup credential out of request URLs and clear it from browser history.
+if (window.location.pathname === "/setup" && window.location.hash.startsWith("#token=")) {
+  const setupToken = window.location.hash.slice(7);
+  window.history.replaceState(null, "", window.location.pathname);
+  const tokenInput = document.querySelector("[data-setup-form] [name=token]");
+  if (tokenInput) tokenInput.value = setupToken;
+}
+
 (() => {
   "use strict";
 

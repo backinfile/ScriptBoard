@@ -64,13 +64,14 @@ sudo ./scriptboard-vX.Y.Z-linux-amd64.run
 
 ## 开始使用
 
-1. 打开 <http://127.0.0.1:8787>。
-2. 使用用户名 `admin` 登录。
-3. 从以下位置读取初始密码：
-   - Windows：`C:\ProgramData\ScriptBoard\state\secrets\initial-admin-password`
-   - Linux：`/var/lib/scriptboard/state/secrets/initial-admin-password`
-4. 登录后立即修改密码。
-5. 前往“资源 → 文件”，选择已有脚本或上传文件，然后开始运行。
+1. 打开 <http://127.0.0.1:8787>，首次访问会进入管理员设置页。
+2. 使用启动窗口的初始化链接，或读取令牌文件后粘贴到页面：
+   - Windows：`C:\ProgramData\ScriptBoard\state\secrets\initialization-token`
+   - Linux：`/var/lib/scriptboard/state/secrets/initialization-token`
+3. 设置用户名和密码，保存后自动进入应用。令牌有效期为 24 小时；未完成设置时重启服务会生成新令牌。
+4. 前往“资源 → 文件”，选择已有脚本或上传文件，然后开始运行。
+
+已有账号直接登录。自动部署可配置 `--admin-password-file` 跳过首次设置；该配置会在每次启动时覆盖管理员密码。忘记密码时使用下方的本机恢复命令。
 
 编辑 Redis 连接时，密码留空会保留原密码；无密码实例修改地址、端口或 TLS 设置时，请明确勾选“使用空密码”。
 

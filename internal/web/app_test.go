@@ -22,7 +22,7 @@ import (
 	app "scriptboard/internal/web"
 )
 
-func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
+func TestRecoveredCredentialAndProtectedLoginPage(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -36,8 +36,7 @@ func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = application.Close() })
 
-	passwordPath := filepath.Join(stateRoot, "secrets", "initial-admin-password")
-	password, err := os.ReadFile(passwordPath)
+	password, err := recoveredPassword(t, application, stateRoot)
 	if err != nil {
 		t.Fatalf("read initial password: %v", err)
 	}
@@ -196,6 +195,9 @@ func TestLoginRejectsOversizedRequests(t *testing.T) {
 		t.Fatalf("open application: %v", err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
+	if _, err := application.ResetAdminCredentials("admin"); err != nil {
+		t.Fatal(err)
+	}
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -381,6 +383,9 @@ func TestLoginPageExposesAJAXEnhancementHooks(t *testing.T) {
 		t.Fatalf("open application: %v", err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
+	if _, err := application.ResetAdminCredentials("admin"); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(application.Handler())
 	t.Cleanup(server.Close)
 
@@ -1299,6 +1304,9 @@ func TestInvalidLoginRendersInlineErrorPage(t *testing.T) {
 		t.Fatalf("open application: %v", err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
+	if _, err := application.ResetAdminCredentials("admin"); err != nil {
+		t.Fatal(err)
+	}
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -1357,6 +1365,9 @@ func TestInvalidAJAXLoginReturnsStructuredErrorAndFreshCSRFToken(t *testing.T) {
 		t.Fatalf("open application: %v", err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
+	if _, err := application.ResetAdminCredentials("admin"); err != nil {
+		t.Fatal(err)
+	}
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -1426,7 +1437,7 @@ func TestAJAXLoginReturnsServerSelectedRedirect(t *testing.T) {
 		t.Fatalf("open application: %v", err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
-	password, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	password, err := recoveredPassword(t, application, stateRoot)
 	if err != nil {
 		t.Fatalf("read initial password: %v", err)
 	}
@@ -1501,7 +1512,7 @@ func TestLoginFormRemainsValidWhenLoginPageIsLoadedAgain(t *testing.T) {
 		t.Fatalf("open application: %v", err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
-	password, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	password, err := recoveredPassword(t, application, stateRoot)
 	if err != nil {
 		t.Fatalf("read initial password: %v", err)
 	}
@@ -1567,6 +1578,9 @@ func TestLoginRateLimitCannotBeBypassedByChangingUsername(t *testing.T) {
 		t.Fatalf("open application: %v", err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
+	if _, err := application.ResetAdminCredentials("admin"); err != nil {
+		t.Fatal(err)
+	}
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -1604,6 +1618,9 @@ func TestLoginRateLimitCannotBeBypassedByChangingSourceAddress(t *testing.T) {
 		t.Fatalf("open application: %v", err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
+	if _, err := application.ResetAdminCredentials("admin"); err != nil {
+		t.Fatal(err)
+	}
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -1757,7 +1774,7 @@ func TestSecondInstanceUsingSameStateRootIsRejected(t *testing.T) {
 	}
 }
 
-func TestInitialPasswordLoginCanAccessApplication(t *testing.T) {
+func TestRecoveredPasswordLoginCanAccessApplication(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -1770,7 +1787,7 @@ func TestInitialPasswordLoginCanAccessApplication(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = application.Close() })
 
-	passwordBytes, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	passwordBytes, err := recoveredPassword(t, application, stateRoot)
 	if err != nil {
 		t.Fatalf("read initial password: %v", err)
 	}
@@ -1848,7 +1865,7 @@ func TestFirstPasswordChangeRevokesSessionAndRemovesCredentialFile(t *testing.T)
 	t.Cleanup(func() { _ = application.Close() })
 
 	passwordPath := filepath.Join(stateRoot, "secrets", "initial-admin-password")
-	passwordBytes, err := os.ReadFile(passwordPath)
+	passwordBytes, err := recoveredPassword(t, application, stateRoot)
 	if err != nil {
 		t.Fatalf("read initial password: %v", err)
 	}
@@ -1997,6 +2014,17 @@ func hostFilesHrefWithQuery(path string, values url.Values) string {
 
 func authenticatedClientWithConfig(t *testing.T, config app.Config) (*http.Client, string) {
 	t.Helper()
+	if config.AdminPasswordFile == "" {
+		passwordPath := filepath.Join(config.StateRoot, "secrets", "initial-admin-password")
+		if err := os.MkdirAll(filepath.Dir(passwordPath), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(passwordPath, []byte("A dedicated integration test password 2026!"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		config.AdminPasswordFile = passwordPath
+	}
+
 	application, err := app.Open(config)
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -2014,7 +2042,7 @@ func authenticatedClientWithConfig(t *testing.T, config app.Config) (*http.Clien
 			return http.ErrUseLastResponse
 		},
 	}
-	passwordBytes, err := os.ReadFile(filepath.Join(config.StateRoot, "secrets", "initial-admin-password"))
+	passwordBytes, err := recoveredPassword(t, application, config.StateRoot)
 	if err != nil {
 		t.Fatalf("read initial password: %v", err)
 	}
@@ -2096,4 +2124,15 @@ func hiddenValue(t *testing.T, body []byte, name string) string {
 		t.Fatalf("hidden %s not found in response: %q", name, body)
 	}
 	return string(match[1])
+}
+
+// Authentication fixtures start with a usable account through the local recovery flow.
+func recoveredPassword(t *testing.T, application *app.App, stateRoot string) ([]byte, error) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(stateRoot, "secrets", "initialization-token")); err == nil {
+		if _, err := application.ResetAdminCredentials("admin"); err != nil {
+			return nil, err
+		}
+	}
+	return os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
 }

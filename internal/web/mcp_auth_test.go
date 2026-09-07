@@ -7,8 +7,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -98,6 +96,9 @@ func TestOAuthAuthorizationResumesAfterLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
+	if _, err := application.ResetAdminCredentials("admin"); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(application.Handler())
 	t.Cleanup(server.Close)
 	jar, _ := cookiejar.New(nil)
@@ -117,7 +118,7 @@ func TestOAuthAuthorizationResumesAfterLogin(t *testing.T) {
 	}
 	body, _ := io.ReadAll(loginPage.Body)
 	_ = loginPage.Body.Close()
-	password, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	password, err := recoveredPassword(t, application, stateRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
