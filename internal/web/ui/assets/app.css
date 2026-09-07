@@ -8986,9 +8986,9 @@ body:has(.wb-enhanced){height:100dvh;overflow:hidden}
 .workspace.wb-enhanced{width:100%;max-width:none;margin:0;padding:0;height:100dvh;min-height:0;overflow:hidden}
 .wb [data-wb-app]{height:100%;display:flex;flex-direction:column;position:relative}
 html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none}
-.wb button,.wb input,.wb select,.wb textarea{font:inherit;color:var(--ink)}
-.wb button{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--rule);border-radius:7px;padding:7px 11px;background:var(--surface);cursor:pointer;white-space:nowrap;line-height:1.5}
-.wb button:hover{background:var(--accent-soft);border-color:var(--accent-border)}
+.wb :where(button,input,select,textarea){font:inherit}.wb :where(button:not(.button),input,select,textarea){color:var(--ink)}
+.wb button:where(:not(.button, .action-menu button)){display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--rule);border-radius:7px;padding:7px 11px;background:var(--surface);cursor:pointer;white-space:nowrap;line-height:1.5}
+.wb button:where(:not(.button, .action-menu button)):hover{background:var(--accent-soft);border-color:var(--accent-border)}
 .wb button:focus-visible,.wb input:focus-visible,.wb textarea:focus-visible,.wb select:focus-visible,.wb canvas:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .wb button[aria-pressed=true]{color:var(--accent-text);background:var(--accent-soft);border-color:var(--accent-border)}
 .wb .wb-quiet{background:transparent;border-color:transparent}
@@ -8996,15 +8996,16 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 .wb svg{width:18px;height:18px;flex-shrink:0}
 .wb input,.wb textarea,.wb select{border:1px solid var(--rule);border-radius:6px;padding:7px 9px;min-width:0;max-width:100%;background:var(--surface)}
 .wb input[readonly]{border-color:transparent;background:transparent;cursor:default}
-.wb-top{flex-shrink:0;background:var(--surface);border-bottom:1px solid var(--rule)}
+/* Keep the fixed inspiration heading on the same page surface as the database heading. */
+.wb-top{flex-shrink:0}
 .wb-boardbar{display:flex;gap:16px;align-items:center;margin:0 24px;border-bottom:1px solid var(--rule);flex-shrink:0;min-height:57px}
 .wb-tabs{display:flex;gap:22px;overflow:auto;min-width:0;flex:1}
 .wb .wb-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:14px 0;color:var(--muted)}
 .wb .wb-tabs button.wb-selected{border-bottom-color:var(--accent);color:var(--accent-text);font-weight:600}
 .wb-scroll{flex:1;min-height:0;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;padding:0 24px 112px;scroll-padding-block:12px 112px}
-.wb-tools{display:flex;align-items:center;gap:12px;margin:16px 0 6px;flex-shrink:0}
-.wb-tools>input:first-child{font-size:1rem;font-weight:600;width:200px;background:transparent}
-.wb-tools input[type=search]{margin-left:auto;max-width:220px;background:transparent}
+
+
+
 .wb-notice{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:26px;margin-bottom:12px;flex-shrink:0;font-size:.72rem;color:var(--muted)}
 .wb-notice button{font-size:.72rem;padding:3px 6px}
 .wb-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:stretch;flex:1 0 auto;grid-auto-rows:minmax(270px,auto)}
@@ -9037,13 +9038,13 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 .wb[data-mode=view] .wb-edit-only{display:none!important}
 @media(max-width:1200px) and (min-width:1024px){.wb-note,.wb-todo,.wb-timer,.wb-links,.wb-draw[data-size=small],.wb-draw[data-size=medium]{grid-column:span 6}.wb-dock{flex-wrap:wrap}}
 @media(max-width:1023px){.workspace.wb-enhanced{height:100dvh}.wb-top{padding-left:68px}.wb-dock{left:50%;max-width:calc(100% - 28px)}.wb-note,.wb-todo,.wb-timer,.wb-links,.wb-draw[data-size=small]{grid-column:span 6}.wb-draw[data-size=medium]{grid-column:1/-1}}
-@media(max-width:700px){.wb-top{min-height:154px}.wb-boardbar{margin:0 12px;gap:8px}.wb-tabs{gap:18px}.wb-boardbar>button{font-size:.75rem;padding:7px}.wb-scroll{padding:0 12px 142px;scroll-padding-bottom:142px}.wb-tools{flex-wrap:wrap;gap:5px}.wb-tools>input:first-child{width:150px}.wb-tools input[type=search]{max-width:145px}.wb-tools>button{order:3}.wb-grid>.wb-widget{grid-column:1/-1}.wb-dock{bottom:12px;flex-wrap:wrap;width:max-content;gap:1px;padding:7px}.wb-dock>button{padding:7px;font-size:.7rem;flex-direction:column;gap:3px}.wb-modes{width:100%;justify-content:center}.wb-modes button{flex:1}.wb[data-mode=view] .wb-modes{width:auto}.wb-widget-head{padding:10px 12px}.wb .wb-icon{width:36px;height:36px;min-width:36px}.wb-notice{font-size:.7rem}}
+@media(max-width:700px){.wb-top{min-height:154px}.wb-boardbar{margin:0 12px;gap:8px}.wb-tabs{gap:18px}.wb-boardbar>button{font-size:.75rem;padding:7px}.wb-scroll{padding:0 12px 142px;scroll-padding-bottom:142px}.wb-grid>.wb-widget{grid-column:1/-1}.wb-dock{bottom:12px;flex-wrap:wrap;width:max-content;gap:1px;padding:7px}.wb-dock>button{padding:7px;font-size:.7rem;flex-direction:column;gap:3px}.wb-modes{width:100%;justify-content:center}.wb-modes button{flex:1}.wb[data-mode=view] .wb-modes{width:auto}.wb-widget-head{padding:10px 12px}.wb .wb-icon{width:36px;height:36px;min-width:36px}.wb-notice{font-size:.7rem}}
 /* Keep inherited form field widths and borders from changing the workspace's read-only headings. */
 .wb.wb-enhanced input[readonly]{border-color:transparent;background:transparent;cursor:default}
 .wb.wb-enhanced .wb-widget-head>input{flex:1;width:0;padding:3px 0;border:0;font-weight:600;font-size:.78rem;background:transparent}
 .wb.wb-enhanced[data-mode=edit] .wb-widget-head>input{border-bottom:1px dashed var(--rule-strong);border-radius:0}
-.wb.wb-enhanced .wb-tools>input:first-child{font-size:1rem;font-weight:600;width:200px;background:transparent}
-@media(max-width:700px){.wb.wb-enhanced .wb-tools>input:first-child{width:150px}}
+
+
 
 /* Compact the fixed header and canvas controls on short screens so XL retains a drawable area. */
 @media(max-height:600px){
@@ -9052,3 +9053,16 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 }
 
 .wb-conflict{padding:10px 12px;border-top:1px solid var(--warning-border);background:var(--warning-soft);font-size:.75rem;display:flex;flex-wrap:wrap;gap:6px;align-items:center}.wb-conflict>span{flex-basis:100%}
+
+
+
+@media(max-height:600px){.wb-top{flex-direction:row;align-items:center;gap:12px}.wb-top .mysql-heading-actions{flex-shrink:0}}
+
+/* Space actions share the application menu and dialog instead of inline destructive controls. */
+.wb-boardbar{gap:10px}.wb-tabs{gap:4px}.wb .wb-tabs button{flex:0 0 auto;max-width:240px;overflow:hidden;text-overflow:ellipsis;display:block;padding:14px 13px;font-size:.82rem;font-weight:550}.wb-space-menu{flex:0 0 auto;margin-left:6px}.wb .wb-tab-scroll{flex:0 0 auto}.wb .wb-tab-scroll:disabled{opacity:.35;cursor:default}
+.action-dialog__fields{padding:0 24px 24px}.action-dialog__fields label{display:grid;gap:8px;font-size:.82rem;font-weight:600}.action-dialog__fields input{width:100%}
+@media(max-width:700px){.wb .wb-tabs button{max-width:180px;padding-inline:10px}.wb-boardbar{gap:4px}.wb .wb-tab-scroll{width:28px;min-width:28px}.wb-space-menu{margin-left:2px}}
+
+.wb-notice[hidden]{display:none}.wb-scroll{padding-top:16px}
+.wb-colors{display:flex;flex-wrap:wrap;gap:2px;max-width:360px}.wb .wb-colors .wb-icon{width:28px;height:28px;min-width:28px;padding:5px}.wb-colors svg{fill:currentColor;stroke-width:1}.wb-colors [aria-pressed=true]{outline:2px solid var(--ink);outline-offset:-2px}.wb-text-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--rule)}.wb-text-actions[hidden]{display:none}.wb-text-actions small{flex:1;font-size:.7rem;color:var(--muted)}.wb .wb-text-actions button{font-size:.72rem;padding:5px 8px}.wb canvas[data-tool=text]{cursor:text}.wb canvas[data-tool=erase]{cursor:cell}.action-dialog__fields{display:grid;gap:16px}.action-dialog__fields textarea,.action-dialog__fields select{width:100%}.action-dialog__fields textarea{resize:vertical;min-height:100px;max-height:35vh}
+@media(max-height:600px){.wb-colors{flex-wrap:nowrap;flex-shrink:0}}

@@ -6,10 +6,11 @@ module.exports = async function verifyWorkbench(page, baseURL, screenshots) {
   await page.goto(baseURL + '/resources/workbench');
   await page.locator('.wb-enhanced').waitFor();
   const root=page.locator('[data-workbench]');
-  const save=()=>page.locator('.wb-status').filter({hasText:/已保存|Saved/}).waitFor();
+  const save=()=>page.locator('[data-workbench][data-save-state=saved]').waitFor();
   await root.getByRole('button',{name:/^(编辑|Edit)$/}).click();
-  await root.getByRole('button',{name:/^(新建面板|New board)$/}).click();
-  await root.getByRole('textbox',{name:/^(面板名称|Board name)$/}).fill(boardName);
+  await root.getByRole('button',{name:/^(新建空间|New space)$/}).click();
+  await page.getByRole('dialog').getByRole('textbox',{name:/^(空间名称|Space name)$/}).fill(boardName);
+  await page.getByRole('dialog').getByRole('button',{name:/^(创建空间|Create space)$/}).click();
   for(const kind of ['note','todo','timer','links','draw']) await root.locator('[data-add="'+kind+'"]').click();
   await root.locator('.wb-note textarea').last().fill('A saved note <script>literal</script>');
   const todo=root.locator('.wb-todo').last();
