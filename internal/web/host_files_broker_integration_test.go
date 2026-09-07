@@ -149,6 +149,22 @@ func TestManagedFilesPageReadsHostThroughBroker(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "broker-only.txt") {
 		t.Fatalf("managed Host Files page status=%d body=%s", response.StatusCode, body)
 	}
+	// Navigation and recursive search must use the broker even when local topology refuses access.
+	for _, query := range []url.Values{
+		{"path": {hostRoot}, "target": {"./broker-only.txt"}, "format": {"json"}},
+		{"path": {hostRoot}, "mode": {"search"}, "q": {"broker-only"}, "format": {"json"}},
+		{"path": {hostRoot}, "mode": {"search"}, "scope": {"all"}, "q": {"broker-only"}, "format": {"json"}},
+	} {
+		result, requestErr := httpClient.Get(serverURL + "/resources/files/jump?" + query.Encode())
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		content, readErr := io.ReadAll(result.Body)
+		_ = result.Body.Close()
+		if readErr != nil || result.StatusCode != http.StatusOK || !strings.Contains(string(content), "broker-only") {
+			t.Fatalf("broker jump status=%d body=%s error=%v", result.StatusCode, content, readErr)
+		}
+	}
 	if _, err := os.Stat(filepath.Join(hostRoot, "broker-only.txt")); err != nil {
 		t.Fatal(err)
 	}

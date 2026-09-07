@@ -15,7 +15,7 @@ ScriptBoard is built for personal servers, small-team utility hosts, and interna
 
 ## What it does
 
-- **Manage files:** browse, search, preview, edit, batch-upload, and download host files; restore web-deleted files from Trash.
+- **Manage files:** browse, search, preview, edit, batch-upload, and download host files; restore web-deleted files from Trash. Use **Go to** to enter a path or search the current directory, subdirectories, or all host locations and open the page containing the highlighted file.
 - **Organize documents:** bookmark and group host documents; manage frequent directories on a dedicated Quick Access page.
 - **Inspiration space:** share notes, links, tasks, timers, and freehand canvases together, with server-side saving for all signed-in users.
 - **Run scripts:** execute PowerShell, Python, Shell, Batch, and CMD scripts with live output, duration, and results.

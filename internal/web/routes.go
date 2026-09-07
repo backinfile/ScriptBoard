@@ -332,6 +332,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /resources/documents/move-group", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.moveDocumentToGroupTask)))
 	mux.Handle("POST /resources/documents", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.updateDocument)))
 	mux.Handle("POST /resources/documents/reorder", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.reorderDocuments)))
+	mux.Handle("GET /resources/files/jump", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.fileJumpPage)))
 	mux.Handle("GET /resources/files/validate", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.validateFileQuickAccess)))
 	mux.Handle("GET /resources/files/quick-access", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.fileQuickAccessPins)))
 	mux.Handle("POST /resources/files/quick-access", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.updateFileQuickAccessPin)))

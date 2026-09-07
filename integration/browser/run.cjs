@@ -2661,6 +2661,10 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(await noScriptRunning.locator('form[method="post"] input[name="csrf_token"]').count(), 1);
     await noScriptContext.close();
 
+    const jumpPage = await context.newPage();
+    await require('./file-jump.cjs')(jumpPage, fixture.baseURL, fixture.hostRoot, snapshotRoot);
+    await jumpPage.close();
+
     const workbenchPage = await context.newPage();
     await require('./workbench.cjs')(workbenchPage, fixture.baseURL);
     await require('./inspiration-space.cjs')(workbenchPage, fixture.baseURL);

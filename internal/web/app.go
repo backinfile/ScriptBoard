@@ -2241,11 +2241,11 @@ func safeWebErrorMessage(message string) string {
 	return strings.TrimSpace(string(clean))
 }
 
-var appCSS = mustWebAsset("ui/assets/app.css")
+var appCSS = mustWebAsset("ui/assets/app.css") + "\n" + mustWebAsset("ui/assets/file-jump.css")
 
 var workbenchJS = mustWebAsset("ui/assets/workbench.js")
 
-var appJS = mustWebAsset("ui/assets/app.js")
+var appJS = mustWebAsset("ui/assets/file-jump.js") + "\n" + mustWebAsset("ui/assets/app.js")
 
 var markdownItJS = mustWebAsset("ui/assets/markdown-it.min.js")
 
@@ -4768,7 +4768,8 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
-	if isDeferredDataShell(request) {
+	// Resolve focused navigation before rendering the shell so filters and page state stay aligned.
+	if isDeferredDataShell(request) && request.URL.Query().Get("focus_path") == "" {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = filesTemplate.Execute(response, struct {
 			CSRFToken, CurrentPath, ReturnTo, Query, SortField, Direction string
@@ -4792,9 +4793,25 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		writeHostFileError(response, "无法读取主机目录", err)
 		return
 	}
+	// File-location links reveal their target before sorting and selecting its page.
+	focus := request.URL.Query().Get("focus_path")
+	if focus != "" {
+		for _, entry := range entries {
+			if hostfiles.ComparisonKey(entry.Path) == hostfiles.ComparisonKey(focus) {
+				query = ""
+				showHidden = showHidden || entry.Hidden
+				break
+			}
+		}
+	}
 	listing := prepareFileListingWithContent(entries, query, sortField, direction, showHidden, func(listed listedFile) (fileCategory, bool) {
 		return a.classifyFileContent(listed)
 	})
+	focusedRequest := fileFocusRequest(request, listing)
+	if focusedRequest.URL.RawQuery != request.URL.RawQuery {
+		http.Redirect(response, request, focusedRequest.URL.RequestURI(), http.StatusSeeOther)
+		return
+	}
 	pagination := newPagination(request, len(listing))
 	if pagination.HasPrevious {
 		pagination.PreviousURL = filesStateURL(relative, query, sortField, direction, showHidden, pagination.Page-1)

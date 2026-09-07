@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "jump.title"}} · ScriptBoard</title></head>
+<body><main class="workspace file-jump-page">
+<section class="action-dialog__sheet file-jump-sheet" data-file-jump-sheet data-locale="{{.Locale}}">
+<header><span class="action-dialog__mark"><span data-lucide="arrow-right" aria-hidden="true"></span></span><div><h2 id="file-jump-title">{{t .Locale "jump.title"}}</h2><p>{{t .Locale "jump.description"}}</p></div><a class="icon-button" href="{{.ReturnURL}}" data-jump-close aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
+<nav class="file-jump-tabs" aria-label="{{t .Locale "jump.mode"}}">
+<a id="jump-address-tab" href="?path={{urlquery .CurrentPath}}&sort={{.SortField}}&direction={{.Direction}}&show_hidden={{if .ShowHidden}}1{{end}}" data-jump-tab="address" {{if eq .Mode "address"}}aria-current="page"{{end}}>{{t .Locale "jump.address"}}</a>
+<a id="jump-search-tab" href="?path={{urlquery .CurrentPath}}&mode=search&sort={{.SortField}}&direction={{.Direction}}&show_hidden={{if .ShowHidden}}1{{end}}" data-jump-tab="search" {{if eq .Mode "search"}}aria-current="page"{{end}}>{{t .Locale "jump.search"}}</a>
+</nav>
+<p class="file-jump-location">{{t .Locale "jump.base"}} <code>{{if .CurrentPath}}{{.CurrentPath}}{{else}}{{t .Locale "files.root"}}{{end}}</code></p>
+<form id="jump-address-panel" class="file-jump-panel" method="get" action="/resources/files/jump" data-native data-jump-form="address" {{if ne .Mode "address"}}hidden{{end}}>
+<input type="hidden" name="path" value="{{.CurrentPath}}"><input type="hidden" name="sort" value="{{.SortField}}"><input type="hidden" name="direction" value="{{.Direction}}"><input type="hidden" name="show_hidden" value="{{if .ShowHidden}}1{{end}}">
+<label for="jump-path">{{t .Locale "jump.path"}}</label><input id="jump-path" name="target" value="{{.Target}}" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="jump-path-hint jump-address-status"><p id="jump-path-hint" class="file-jump-hint">{{t .Locale "jump.path_hint"}}</p>
+<p id="jump-address-status" class="file-jump-status" role="status" aria-live="polite">{{if eq .Mode "address"}}{{.Error}}{{end}}</p>
+<footer><a class="button button--quiet" href="{{.ReturnURL}}" data-jump-close>{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "jump.go"}}</button></footer>
+</form>
+<form id="jump-search-panel" class="file-jump-panel" method="get" action="/resources/files/jump" data-native data-jump-form="search" {{if ne .Mode "search"}}hidden{{end}}>
+<input type="hidden" name="mode" value="search"><input type="hidden" name="path" value="{{.CurrentPath}}"><input type="hidden" name="sort" value="{{.SortField}}"><input type="hidden" name="direction" value="{{.Direction}}"><input type="hidden" name="show_hidden" value="{{if .ShowHidden}}1{{end}}">
+<label for="jump-query">{{t .Locale "jump.name"}}</label><div class="file-jump-search-input"><input id="jump-query" type="search" name="q" value="{{.Query}}" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="jump-search-status"><button class="button" type="submit">{{t .Locale "jump.search"}}</button></div>
+<label class="file-jump-scope">{{t .Locale "jump.scope"}}<select name="scope"><option value="recursive" {{if and .Recursive (not .All)}}selected{{end}}>{{t .Locale "jump.recursive"}}</option><option value="current" {{if not .Recursive}}selected{{end}}>{{t .Locale "jump.current"}}</option><option value="all" {{if .All}}selected{{end}}>{{t .Locale "jump.all"}}</option></select></label>
+<p class="file-jump-hint" data-jump-all-hint {{if not .All}}hidden{{end}}>{{t .Locale "jump.all_hint"}}</p>
+<p id="jump-search-status" class="file-jump-status" role="status" aria-live="polite">{{if eq .Mode "search"}}{{if .Error}}{{.Error}}{{else if not .Query}}{{t .Locale "jump.empty"}}{{else if not .Entries}}{{t .Locale "jump.no_results"}}{{else}}{{len .Entries}} {{t .Locale "common.records"}}{{end}}{{end}} {{if .Partial}}{{t .Locale "jump.partial"}}{{end}}</p>
+<ul class="file-jump-results" data-jump-results aria-label="{{t .Locale "jump.results"}}">{{range .Entries}}<li><a href="{{.URL}}" data-jump-result><span data-lucide="{{if eq .Kind "directory"}}folder{{else}}file{{end}}" aria-hidden="true"></span><span><strong>{{range .Parts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</strong><small>{{.Path}}</small></span><span data-lucide="arrow-right" aria-hidden="true"></span></a></li>{{end}}</ul>
+</form>
+</section></main></body></html>

@@ -938,7 +938,9 @@ func TestFileQuickAccessSupportsFilesLabelsAndOrdering(t *testing.T) {
 	if result.Pins[1].Href != wantHref {
 		t.Fatalf("file Quick access href=%q, want %q", result.Pins[1].Href, wantHref)
 	}
-	response, err = client.Get(serverURL + result.Pins[1].Href)
+	follow := *client
+	follow.CheckRedirect = nil
+	response, err = follow.Get(serverURL + result.Pins[1].Href)
 	if err != nil {
 		t.Fatal(err)
 	}

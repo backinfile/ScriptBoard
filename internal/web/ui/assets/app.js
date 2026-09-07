@@ -1318,6 +1318,9 @@
       sequence: ++navigationSequence,
       controller: new AbortController(),
     };
+    const cancelFromCaller = () => request.controller.abort();
+    options.signal?.addEventListener("abort", cancelFromCaller, { once: true });
+    if (options.signal?.aborted) cancelFromCaller();
     navigationRequest = request;
     navigationBusy = true;
     const regionSelector = options.regionSelector || "";
@@ -1355,14 +1358,14 @@
         if (showServerError(result, {
           url, method: "GET", returnFocus,
           includeClientErrors: true,
-          retry: () => navigate(url, push, { ...options, returnFocus }),
+          retry: () => navigate(url, push, { ...options, signal: undefined, returnFocus }),
         })) return;
         return;
       }
       if (!result.document) {
         showServerError(result, {
           url, method: "GET", returnFocus, force: true,
-          retry: () => navigate(url, push, { ...options, returnFocus }),
+          retry: () => navigate(url, push, { ...options, signal: undefined, returnFocus }),
         });
         return;
       }
@@ -1373,7 +1376,7 @@
       if (!nextMain || !currentMain) {
         showServerError(result, {
           url, method: "GET", returnFocus, force: true,
-          retry: () => navigate(url, push, { ...options, returnFocus }),
+          retry: () => navigate(url, push, { ...options, signal: undefined, returnFocus }),
         });
         return;
       }
@@ -1384,6 +1387,9 @@
         return;
       }
       if (navigationRequest !== request || request.sequence !== navigationSequence) return;
+      // Detach before page disposal: closing a committed jump must not abort its navigation.
+      if (request.controller.signal.aborted) return;
+      options.signal?.removeEventListener("abort", cancelFromCaller);
       cleanupPage();
       syncPageTheme(result.document);
       // 标记已发生 pjax 交换：入场动画只在首次完整加载播放，页签/同页操作不再整页重放。
@@ -1422,7 +1428,7 @@
           if (showServerError(dataResult, {
             url, method: "GET", returnFocus,
             includeClientErrors: true,
-            retry: () => navigate(url, false, { ...options, deferredData: true, returnFocus }),
+            retry: () => navigate(url, false, { ...options, signal: undefined, deferredData: true, returnFocus }),
           })) {
             showDeferredDataFailure(url, title);
             return;
@@ -1433,7 +1439,7 @@
         if (!dataResult.document) {
           showServerError(dataResult, {
             url, method: "GET", returnFocus, force: true,
-            retry: () => navigate(url, false, { ...options, deferredData: true, returnFocus }),
+            retry: () => navigate(url, false, { ...options, signal: undefined, deferredData: true, returnFocus }),
           });
           showDeferredDataFailure(url, title);
           return;
@@ -1443,7 +1449,7 @@
         if (!nextRegion || !currentRegion) {
           showServerError(dataResult, {
             url, method: "GET", returnFocus, force: true,
-            retry: () => navigate(url, false, { ...options, deferredData: true, returnFocus }),
+            retry: () => navigate(url, false, { ...options, signal: undefined, deferredData: true, returnFocus }),
           });
           showDeferredDataFailure(url, title);
           return;
@@ -1476,10 +1482,11 @@
       } else {
         showServerError({ response: { status: 0, url }, text: words().loadFailed }, {
           url, method: "GET", returnFocus, force: true,
-          retry: () => navigate(url, push, { ...options, returnFocus }),
+          retry: () => navigate(url, push, { ...options, signal: undefined, returnFocus }),
         });
       }
     } finally {
+      options.signal?.removeEventListener("abort", cancelFromCaller);
       if (navigationRequest === request) {
         navigationRequest = null;
         navigationBusy = false;
@@ -8121,6 +8128,7 @@
     localizeTimes();
     initMarkdownPreview();
     initWorkbench(cleanups);
+    if (window.ScriptBoardFileJump) cleanups.push(window.ScriptBoardFileJump({ navigate, renderIcons, makeIcon }));
     initScriptPreview();
     initTextPreviewPager(cleanups);
     initPasswordControls(document, cleanups);
