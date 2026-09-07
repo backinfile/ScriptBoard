@@ -2595,7 +2595,8 @@ func (a *App) setWebLocale(response http.ResponseWriter, request *http.Request) 
 		MaxAge:   365 * 24 * 60 * 60,
 		HttpOnly: true,
 		Secure:   isSecureRequest(request),
-		SameSite: http.SameSiteLaxMode,
+		// Preserve language selection inside trusted cross-site HTTPS frames.
+		SameSite: embeddingSameSite(request, http.SameSiteLaxMode),
 	})
 	destination := safeLocalReturnPath(request.FormValue("return_to"))
 	if destination == "" {

@@ -82,6 +82,31 @@ func TestEmbeddingLoginAndNestedCustomTab(t *testing.T) {
 					t.Fatalf("invalid login cookie: %v", cookie)
 				}
 			}
+			response, err = client.PostForm(server.URL+"/settings/locale", url.Values{"locale": {"en-US"}, "csrf_token": {formToken(t, page)}, "return_to": {"/login"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response.Body.Close()
+			if response.StatusCode != http.StatusSeeOther {
+				t.Fatalf("locale POST: %d", response.StatusCode)
+			}
+			foundLocale := false
+			for _, cookie := range response.Cookies() {
+				if cookie.Name != "scriptboard_locale" {
+					continue
+				}
+				foundLocale = true
+				want := http.SameSiteLaxMode
+				if tc.enabled && tc.secure {
+					want = http.SameSiteNoneMode
+				}
+				if cookie.SameSite != want || cookie.Secure != tc.secure || !cookie.HttpOnly || cookie.Value != "en-US" {
+					t.Fatalf("invalid locale cookie: %v", cookie)
+				}
+			}
+			if !foundLocale {
+				t.Fatal("missing locale cookie")
+			}
 			response, err = client.PostForm(server.URL+"/login", url.Values{"username": {"admin"}, "password": {password}, "csrf_token": {formToken(t, page)}})
 			if err != nil {
 				t.Fatal(err)

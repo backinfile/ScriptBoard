@@ -146,10 +146,11 @@ func merge(current, base, next State) (State, []string) {
 	for _, b := range next.Boards {
 		old, existed := before[b.ID]
 		index := slices.IndexFunc(result.Boards, func(x Board) bool { return x.ID == b.ID })
+		// Lost creation responses can be retried after Save assigns server revisions.
 		if !existed {
 			if index < 0 {
 				result.Boards = append(result.Boards, b)
-			} else if !reflect.DeepEqual(result.Boards[index], b) {
+			} else if !sameBoardContent(result.Boards[index], b) {
 				conflicts = append(conflicts, "board:"+b.ID)
 			}
 			continue

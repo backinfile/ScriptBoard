@@ -363,6 +363,20 @@ func sameItem(a, b Item) bool {
 	right, _ := json.Marshal(b)
 	return bytes.Equal(left, right)
 }
+
+// Compare board content in order while ignoring server-assigned board and item versions.
+func sameBoardContent(a, b Board) bool {
+	if a.ID != b.ID || a.Name != b.Name || len(a.Items) != len(b.Items) {
+		return false
+	}
+	for i := range a.Items {
+		if !sameItem(a.Items[i], b.Items[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func stamp(current State, next *State) {
 	oldBoards := map[string]Board{}
 	for _, b := range current.Boards {

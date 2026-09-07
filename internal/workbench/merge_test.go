@@ -3,6 +3,7 @@ package workbench
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -110,5 +111,65 @@ func TestEmptyListsDoNotModifyUntouchedModules(t *testing.T) {
 	result := patchForTest(t, db, base, next)
 	if result.State.Boards[0].Items[3].Revision != base.Boards[0].Items[3].Revision {
 		t.Fatal("empty-list rendering modified another module")
+	}
+}
+
+// Retry the original wire request, including versions from before the first save.
+func TestPatchRetryCreatedBoard(t *testing.T) {
+	for _, populated := range []bool{false, true} {
+		name := "empty"
+		if populated {
+			name = "populated"
+		}
+		t.Run(name, func(t *testing.T) {
+			db, base := sharedTestDB(t)
+			next := cloneState(base)
+			board := Board{ID: "created", Name: "New space", Items: []Item{}}
+			if populated {
+				board.Items = append(board.Items, Item{ID: "created-note", Type: "note", Text: "Keep this note"}, Item{ID: "created-tasks", Type: "todo"})
+			}
+			next.Boards = append(next.Boards, board)
+			payload, err := json.Marshal(Patch{Base: base, Next: next})
+			if err != nil {
+				t.Fatal(err)
+			}
+			replay := func() PatchResult {
+				t.Helper()
+				var patch Patch
+				if err := json.Unmarshal(payload, &patch); err != nil {
+					t.Fatal(err)
+				}
+				result, err := ApplyPatch(context.Background(), db, patch)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return result
+			}
+			first, retried := replay(), replay()
+			if len(first.Conflicts) != 0 || len(retried.Conflicts) != 0 {
+				t.Fatalf("creation retry conflicts: first=%v retry=%v", first.Conflicts, retried.Conflicts)
+			}
+			if retried.State.Revision != first.State.Revision || len(retried.State.Boards) != len(next.Boards) {
+				t.Fatal("retry changed the saved state", retried)
+			}
+			// A real concurrent change must still conflict with this stale creation.
+			changed := cloneState(retried.State)
+			if populated {
+				changed.Boards[len(changed.Boards)-1].Items[0].Text = "Another member's edit"
+			} else {
+				changed.Boards[len(changed.Boards)-1].Name = "Renamed by another member"
+			}
+			if _, err := Save(context.Background(), db, changed); err != nil {
+				t.Fatal(err)
+			}
+			rejected := replay()
+			if !slices.Contains(rejected.Conflicts, "board:created") {
+				t.Fatal("retry overwrote concurrent board changes", rejected)
+			}
+			actual := rejected.State.Boards[len(rejected.State.Boards)-1]
+			if populated && actual.Items[0].Text != "Another member's edit" || !populated && actual.Name != "Renamed by another member" {
+				t.Fatal("concurrent changes were lost", actual)
+			}
+		})
 	}
 }
