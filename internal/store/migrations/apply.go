@@ -563,6 +563,17 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			return fmt.Errorf("initialize SQLite indexes: %w", err)
 		}
 	}
+	for _, table := range []string{"runs", "quick_runs", "schedules"} {
+		exists, err := storesqlite.ColumnExists(migration, table, "memory_limit")
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := migration.Exec("ALTER TABLE " + table + " ADD COLUMN memory_limit TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
+		}
+	}
 	if _, err := migration.Exec(fmt.Sprintf("PRAGMA user_version=%d", options.CurrentVersion)); err != nil {
 		return fmt.Errorf("record SQLite schema version: %w", err)
 	}

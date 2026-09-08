@@ -11,10 +11,14 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"scriptboard/internal/resourcelimits"
 	"strings"
 )
 
-type localProcessLauncher struct{ executorChains map[string][]string }
+type localProcessLauncher struct {
+	executorChains map[string][]string
+	memory         resourcelimits.Memory
+}
 
 type localManagedProcess struct {
 	command *exec.Cmd
@@ -23,8 +27,12 @@ type localManagedProcess struct {
 	cleanup func()
 }
 
-func NewLocalProcessLauncher(executorChains map[string][]string) ProcessLauncher {
-	return &localProcessLauncher{executorChains: executorChains}
+func NewLocalProcessLauncher(executorChains map[string][]string, policies ...resourcelimits.Memory) ProcessLauncher {
+	memory := resourcelimits.Defaults()
+	if len(policies) > 0 {
+		memory = policies[0].Resolved()
+	}
+	return &localProcessLauncher{executorChains: executorChains, memory: memory}
 }
 
 func (launcher *localProcessLauncher) RuntimeIdentity() string {
@@ -37,6 +45,13 @@ func (launcher *localProcessLauncher) RuntimeIdentity() string {
 func (launcher *localProcessLauncher) Launch(_ context.Context, request LaunchRequest) (ManagedProcess, string, error) {
 	if request.RunID == "" || strings.ContainsAny(request.RunID, "\x00\r\n") {
 		return nil, "", errors.New("Runner job ID is invalid")
+	}
+	memory := launcher.memory
+	if request.MemoryLimit != "" {
+		memory.PerRun = request.MemoryLimit
+	}
+	if err := memory.Validate(); err != nil {
+		return nil, "", err
 	}
 	script, err := os.Open(request.ScriptPath)
 	if err != nil {
@@ -66,8 +81,13 @@ func (launcher *localProcessLauncher) Launch(_ context.Context, request LaunchRe
 		command.Dir = request.WorkingDirectory
 		command.Env = runEnvironment(request.RunID, request.ScriptPath)
 		configureProcess(command)
+		resourceCleanup, resourceErr := prepareMemory(command, memory, request.RunID)
+		if resourceErr != nil {
+			return nil, "", resourceErr
+		}
 		stdout, pipeErr := command.StdoutPipe()
 		if pipeErr != nil {
+			resourceCleanup()
 			startErrors = append(startErrors, executor.path+": "+pipeErr.Error())
 			continue
 		}
@@ -80,23 +100,35 @@ func (launcher *localProcessLauncher) Launch(_ context.Context, request LaunchRe
 		if startErr := command.Start(); startErr != nil {
 			_ = stdout.Close()
 			_ = stderr.Close()
+			resourceCleanup()
 			startErrors = append(startErrors, executor.path+": "+startErr.Error())
 			continue
 		}
-		cleanup, attachErr := attachProcess(command.Process)
+		cleanup, attachErr := attachProcess(command.Process, memory)
 		if attachErr != nil {
 			_ = command.Process.Kill()
 			_ = command.Wait()
+			resourceCleanup()
 			return nil, "", attachErr
 		}
-		return &localManagedProcess{command: command, stdout: stdout, stderr: stderr, cleanup: cleanup}, executor.path, nil
+		if err := resumeMemoryProcess(command); err != nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			cleanup()
+			resourceCleanup()
+			return nil, "", err
+		}
+		combinedCleanup := func() { cleanup(); resourceCleanup() }
+		return &localManagedProcess{command: command, stdout: stdout, stderr: stderr, cleanup: combinedCleanup}, executor.path, nil
 	}
 	return nil, "", fmt.Errorf("all configured executors failed to start: %s", strings.Join(startErrors, "; "))
 }
 
 func (process *localManagedProcess) Stdout() io.ReadCloser { return process.stdout }
 func (process *localManagedProcess) Stderr() io.ReadCloser { return process.stderr }
-func (process *localManagedProcess) Wait() error           { return process.command.Wait() }
+func (process *localManagedProcess) Wait() error {
+	return memoryWaitError(process.command, process.command.Wait())
+}
 func (process *localManagedProcess) Terminate(force bool) error {
 	return terminateProcess(process.command.Process, force)
 }

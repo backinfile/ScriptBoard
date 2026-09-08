@@ -6,6 +6,7 @@ import (
 )
 
 type LaunchRequest struct {
+	MemoryLimit      string   `json:"memoryLimit,omitempty"`
 	RunID            string   `json:"runId"`
 	ScriptPath       string   `json:"scriptPath"`
 	ScriptDigest     string   `json:"scriptDigest"`

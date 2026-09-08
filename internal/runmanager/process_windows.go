@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"scriptboard/internal/resourcelimits"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,10 +24,16 @@ var (
 	aggregateJobOnce sync.Once
 	aggregateJob     windows.Handle
 	aggregateJobErr  error
+	aggregateMemory  string
 )
 
-func runnerAggregateJob() (windows.Handle, error) {
+func runnerAggregateJob(policies ...resourcelimits.Memory) (windows.Handle, error) {
+	requested := resourcelimits.Defaults()
+	if len(policies) > 0 {
+		requested = policies[0].Resolved()
+	}
 	aggregateJobOnce.Do(func() {
+		aggregateMemory = requested.Total
 		aggregateJob, aggregateJobErr = windows.CreateJobObject(nil, nil)
 		if aggregateJobErr != nil {
 			return
@@ -34,12 +41,23 @@ func runnerAggregateJob() (windows.Handle, error) {
 		information := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 		information.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS | windows.JOB_OBJECT_LIMIT_JOB_MEMORY
 		information.BasicLimitInformation.ActiveProcessLimit = 64
-		information.JobMemoryLimit = 4 << 30
+		memory := resourcelimits.Defaults()
+		if len(policies) > 0 {
+			memory = policies[0].Resolved()
+		}
+		total, _ := resourcelimits.Parse(memory.Total)
+		information.JobMemoryLimit = uintptr(total)
+		if total == 0 {
+			information.BasicLimitInformation.LimitFlags &^= windows.JOB_OBJECT_LIMIT_JOB_MEMORY
+		}
 		if _, aggregateJobErr = windows.SetInformationJobObject(aggregateJob, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&information)), uint32(unsafe.Sizeof(information))); aggregateJobErr != nil {
 			windows.CloseHandle(aggregateJob)
 			aggregateJob = 0
 		}
 	})
+	if aggregateMemory != requested.Total {
+		return 0, fmt.Errorf("Runner total memory policy changed; restart the Runner to apply it")
+	}
 	return aggregateJob, aggregateJobErr
 }
 
@@ -114,8 +132,8 @@ func configureProcess(command *exec.Cmd) {
 	command.SysProcAttr.CreationFlags |= windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW
 }
 
-func attachProcess(process *os.Process) (func(), error) {
-	aggregate, err := runnerAggregateJob()
+func attachProcess(process *os.Process, policies ...resourcelimits.Memory) (func(), error) {
+	aggregate, err := runnerAggregateJob(policies...)
 	if err != nil {
 		return nil, fmt.Errorf("create aggregate Runner Job Object: %w", err)
 	}
@@ -126,8 +144,20 @@ func attachProcess(process *os.Process) (func(), error) {
 	information := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	information.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS | windows.JOB_OBJECT_LIMIT_PROCESS_MEMORY | windows.JOB_OBJECT_LIMIT_JOB_MEMORY
 	information.BasicLimitInformation.ActiveProcessLimit = 64
-	information.ProcessMemoryLimit = 2 << 30
-	information.JobMemoryLimit = 4 << 30
+	memory := resourcelimits.Defaults()
+	if len(policies) > 0 {
+		memory = policies[0].Resolved()
+	}
+	single, _ := resourcelimits.Parse(memory.Process)
+	perRun, _ := resourcelimits.Parse(memory.PerRun)
+	information.ProcessMemoryLimit = uintptr(single)
+	information.JobMemoryLimit = uintptr(perRun)
+	if single == 0 {
+		information.BasicLimitInformation.LimitFlags &^= windows.JOB_OBJECT_LIMIT_PROCESS_MEMORY
+	}
+	if perRun == 0 {
+		information.BasicLimitInformation.LimitFlags &^= windows.JOB_OBJECT_LIMIT_JOB_MEMORY
+	}
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&information)), uint32(unsafe.Sizeof(information))); err != nil {
 		windows.CloseHandle(job)
 		return nil, fmt.Errorf("configure Job Object: %w", err)

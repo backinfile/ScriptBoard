@@ -28,6 +28,7 @@ package migrations
 // database selection from connection metadata to individual read operations;
 // schema 65 adds the grouped document collection; schema 66 adds personal workspaces; schema 67 shares the inspiration space.
 //
+// Schema 69 adds task memory policies and resolved Run memory snapshots.
 // The explicit current-version guard forces a deliberate policy update when a
 // future schema is introduced instead of silently promising an untested path.
 func Compatible(current, existing int) bool {
@@ -35,7 +36,7 @@ func Compatible(current, existing int) bool {
 		return true
 	}
 	switch current {
-	case 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68:
+	case 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69:
 		return existing >= 20 && existing < current
 	default:
 		return false

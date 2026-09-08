@@ -64,7 +64,7 @@ func testScheduleConcurrentStart(t *testing.T, automatic bool) {
 			finished_at INTEGER,
 			exit_code INTEGER,
 			error TEXT NOT NULL DEFAULT '',
-			timeout_seconds INTEGER NOT NULL DEFAULT 0,
+			memory_limit TEXT NOT NULL DEFAULT '', timeout_seconds INTEGER NOT NULL DEFAULT 0,
 			log_path TEXT NOT NULL
 			, source_name TEXT NOT NULL DEFAULT ''
 			, source_id TEXT NOT NULL DEFAULT ''
@@ -83,7 +83,7 @@ func testScheduleConcurrentStart(t *testing.T, automatic bool) {
 			, initiated_by_user_id TEXT NOT NULL DEFAULT ''
 			, initiated_by_username TEXT NOT NULL DEFAULT ''
 		)`,
-		`CREATE TABLE schedules (id TEXT,name TEXT,script_path TEXT,arguments_template TEXT,timeout_seconds INTEGER,allow_overlap INTEGER,deleted INTEGER,expression TEXT,enabled INTEGER,next_fire_at INTEGER,updated_at INTEGER)`,
+		`CREATE TABLE schedules (id TEXT,name TEXT,script_path TEXT,arguments_template TEXT,memory_limit TEXT NOT NULL DEFAULT '', timeout_seconds INTEGER,allow_overlap INTEGER,deleted INTEGER,expression TEXT,enabled INTEGER,next_fire_at INTEGER,updated_at INTEGER)`,
 		`CREATE TABLE schedule_triggers (id TEXT,schedule_id TEXT,scheduled_for INTEGER,result TEXT,run_id TEXT,error TEXT)`} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -104,7 +104,7 @@ func testScheduleConcurrentStart(t *testing.T, automatic bool) {
 	}
 	runs := runmanager.NewWithLauncher(db, files, root, 0, nil, overlapLauncher{})
 	defer runs.Close()
-	if _, err := db.Exec(`INSERT INTO schedules VALUES ('review','review',?,'',0,0,0,'* * * * *',1,1,1)`, path); err != nil {
+	if _, err := db.Exec(`INSERT INTO schedules VALUES ('review','review',?,'','',0,0,0,'* * * * *',1,1,1)`, path); err != nil {
 		t.Fatal(err)
 	}
 	entered := make(chan struct{}, 2)

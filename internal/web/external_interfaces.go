@@ -2006,7 +2006,7 @@ func (a *App) executeExternalQuickRunPrepared(ctx context.Context, entry externa
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}
-	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: config.ScriptSHA256, DisallowOverlap: true, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label + " / " + a.quickRunSourceSnapshot(quick), SourceID: entry.ID, Variables: variables, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
+	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: config.ScriptSHA256, DisallowOverlap: true, ArgumentsTemplate: quick.ArgumentsTemplate, MemoryLimit: quick.MemoryLimit, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label + " / " + a.quickRunSourceSnapshot(quick), SourceID: entry.ID, Variables: variables, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
 	if err != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}

@@ -357,7 +357,7 @@ func openRunMetadataTestDB(t *testing.T, root string) *sql.DB {
 		finished_at INTEGER,
 		exit_code INTEGER,
 		error TEXT NOT NULL,
-		timeout_seconds INTEGER NOT NULL,
+		memory_limit TEXT NOT NULL DEFAULT '', timeout_seconds INTEGER NOT NULL,
 		log_path TEXT NOT NULL,
 		log_expired INTEGER NOT NULL,
 		log_incomplete INTEGER NOT NULL,

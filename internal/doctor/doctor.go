@@ -154,6 +154,7 @@ func checkUpdateInstallation(report *Report, stateRoot string) {
 			err = loadErr
 		} else {
 			runnerIdentityMode = loaded.RunnerIdentityMode
+			report.Checks = append(report.Checks, Check{Name: "runner-memory-configuration", Healthy: true, Detail: fmt.Sprintf("configured total=%s per-run=%s process=%s swap=%s; consult Runner startup log for applied policy", loaded.Total, loaded.PerRun, loaded.Process, loaded.Swap)})
 		}
 	}
 	if err == nil {

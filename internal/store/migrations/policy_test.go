@@ -3,6 +3,11 @@ package migrations
 import "testing"
 
 func TestCompatible(t *testing.T) {
+	for version := 20; version <= 68; version++ {
+		if !Compatible(69, version) {
+			t.Fatalf("schema 69 rejects predecessor %d", version)
+		}
+	}
 	for version := 20; version <= 56; version++ {
 		if !Compatible(57, version) {
 			t.Fatalf("schema 57 should accept supported predecessor %d", version)

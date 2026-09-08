@@ -60,6 +60,7 @@ func New(options Options) *Controller { return &Controller{options: options} }
 
 type quickRun struct {
 	ID, Name, ScriptPath, ArgumentsTemplate, ScriptSHA256 string
+	MemoryLimit                                           string
 	TimeoutSeconds                                        int
 	Revision                                              int64
 	GroupID                                               sql.NullString
@@ -67,7 +68,7 @@ type quickRun struct {
 
 func (controller *Controller) load(ctx context.Context, id string) (quickRun, error) {
 	var q quickRun
-	err := controller.options.DB.QueryRowContext(ctx, `SELECT id,name,script_path,arguments_template,timeout_seconds,script_sha256,revision,group_id FROM quick_runs WHERE id=?`, id).Scan(&q.ID, &q.Name, &q.ScriptPath, &q.ArgumentsTemplate, &q.TimeoutSeconds, &q.ScriptSHA256, &q.Revision, &q.GroupID)
+	err := controller.options.DB.QueryRowContext(ctx, `SELECT id,name,script_path,arguments_template,memory_limit,timeout_seconds,script_sha256,revision,group_id FROM quick_runs WHERE id=?`, id).Scan(&q.ID, &q.Name, &q.ScriptPath, &q.ArgumentsTemplate, &q.MemoryLimit, &q.TimeoutSeconds, &q.ScriptSHA256, &q.Revision, &q.GroupID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return q, ErrNotFound
 	}
@@ -114,7 +115,7 @@ func (controller *Controller) Start(ctx context.Context, request StartRequest) (
 	if err != nil {
 		return StartResult{}, fmt.Errorf("%w: %v", ErrVariablesUnavailable, err)
 	}
-	runID, err := controller.options.Runs.Start(runmanager.StartRequest{ScriptPath: q.ScriptPath, ExpectedDigest: q.ScriptSHA256, ArgumentsTemplate: q.ArgumentsTemplate, TimeoutSeconds: q.TimeoutSeconds, SourceType: "admin/quick-run", SourceName: controller.snapshot(ctx, q), SourceID: q.ID, Variables: variables, InitiatorUserID: request.Actor.UserID, InitiatorUsername: request.Actor.Username, PreparedScript: &prepared, PreparedDirectory: &directory})
+	runID, err := controller.options.Runs.Start(runmanager.StartRequest{ScriptPath: q.ScriptPath, ExpectedDigest: q.ScriptSHA256, ArgumentsTemplate: q.ArgumentsTemplate, MemoryLimit: q.MemoryLimit, TimeoutSeconds: q.TimeoutSeconds, SourceType: "admin/quick-run", SourceName: controller.snapshot(ctx, q), SourceID: q.ID, Variables: variables, InitiatorUserID: request.Actor.UserID, InitiatorUsername: request.Actor.Username, PreparedScript: &prepared, PreparedDirectory: &directory})
 	if err != nil {
 		return StartResult{}, err
 	}

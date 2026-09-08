@@ -71,7 +71,6 @@ func TestLinuxRunnerUnitRequiresSeccompAndNetworkIsolation(t *testing.T) {
 	text := string(source)
 	for _, required := range []string{
 		"MemoryDenyWriteExecute=true",
-		"MemorySwapMax=0",
 		"SystemCallArchitectures=native", "SystemCallFilter=@system-service", "SystemCallErrorNumber=EPERM",
 		"PrivateDevices=true", "ProtectKernelLogs=true", "RestrictRealtime=true",
 		"RestrictAddressFamilies=AF_UNIX", "IPAddressDeny=any",
@@ -90,8 +89,8 @@ func TestLinuxRunnerUnitRequiresSeccompAndNetworkIsolation(t *testing.T) {
 			t.Fatalf("Linux runtime service is still enabled eagerly: %q", forbidden)
 		}
 	}
-	if count := strings.Count(text, "MemorySwapMax=0"); count != 1 {
-		t.Fatalf("Linux Runner unit requires a swap limit, found %d", count)
+	if policy := linuxRunnerServicePolicy(RunnerIdentityIsolated); !strings.Contains(policy, "MemorySwapMax=0") || !strings.Contains(policy, "ProtectControlGroups=true") {
+		t.Fatalf("Runner memory policy: %s", policy)
 	}
 }
 

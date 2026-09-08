@@ -613,3 +613,7 @@ schema 65 增加 `documents`，持久化当前实例的文档收藏条目（每�
 | created_at | UTC |
 
 全局按 `path_key` 唯一，重复添加只刷新路径不产生重复行。目标文件离线或被删除时保留记录并在页面标注不存在；添加时必须通过 Host Filesystem 的现存路径边界且只接受普通文件。排序提交分组内完整清单，并发增删时整体拒绝部分覆盖。
+
+### Schema 69：任务内存额度
+
+`quick_runs.memory_limit` 与 `schedules.memory_limit` 为非空 TEXT，默认空字符串表示继承部署配置。`runs.memory_limit` 保存当次解析后的任务额度；历史记录默认空字符串。容量为带单位的正整数或 `unlimited`。快捷项额度变更递增发布 revision。

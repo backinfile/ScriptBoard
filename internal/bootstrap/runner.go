@@ -9,6 +9,7 @@ import (
 
 	"scriptboard/internal/config"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/runmanager"
 	"scriptboard/internal/runnerhost"
 )
 
@@ -42,12 +43,22 @@ func RunRunner(ctx context.Context, arguments []string, getenv func(string) stri
 			return fmt.Errorf("refuse to start managed Runner Host with unsafe OS identity: %w", err)
 		}
 	}
+	if !*developmentCurrentUser {
+		if err := runmanager.InitializeRunnerMemory(loaded.Memory); err != nil {
+			return fmt.Errorf("initialize Runner memory delegation: %w", err)
+		}
+	}
+	policyState := "configured"
+	if !*developmentCurrentUser {
+		policyState = "applied"
+	}
+	fmt.Printf("Runner memory policy %s: total=%s per-run-default=%s process=%s swap=%s\n", policyState, loaded.Total, loaded.PerRun, loaded.Process, loaded.Swap)
 	transport, err := runnerhost.Listen(runnerhost.TransportOptions{StateRoot: absolute, Endpoint: *endpoint, AllowedIdentity: *allowedIdentity, DevelopmentCurrentUser: *developmentCurrentUser})
 	if err != nil {
 		return err
 	}
 	defer transport.Close()
-	server, err := runnerhost.NewServer(runnerhost.ServerOptions{Listener: transport.Listener, VerifyPeer: transport.VerifyPeer, ExecutorChains: loaded.ExecutorChains, Maximum: *maximum})
+	server, err := runnerhost.NewServer(runnerhost.ServerOptions{Memory: loaded.Memory, Listener: transport.Listener, VerifyPeer: transport.VerifyPeer, ExecutorChains: loaded.ExecutorChains, Maximum: *maximum})
 	if err != nil {
 		return err
 	}

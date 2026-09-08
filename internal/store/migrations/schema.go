@@ -82,7 +82,8 @@ var baseSchemaStatements = []string{
 			finished_at INTEGER,
 			exit_code INTEGER,
 			error TEXT NOT NULL DEFAULT '',
-			timeout_seconds INTEGER NOT NULL DEFAULT 0,
+			memory_limit TEXT NOT NULL DEFAULT '',
+ timeout_seconds INTEGER NOT NULL DEFAULT 0,
 			log_path TEXT NOT NULL
 			, source_name TEXT NOT NULL DEFAULT ''
 			, source_id TEXT NOT NULL DEFAULT ''
@@ -126,7 +127,8 @@ var baseSchemaStatements = []string{
 			script_path TEXT NOT NULL,
 			script_path_key TEXT NOT NULL,
 			arguments_template TEXT NOT NULL,
-			timeout_seconds INTEGER NOT NULL,
+			memory_limit TEXT NOT NULL DEFAULT '',
+ timeout_seconds INTEGER NOT NULL,
 			source_run_id TEXT REFERENCES runs(id),
 			sort_order INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
@@ -154,7 +156,8 @@ var baseSchemaStatements = []string{
 			script_path_key TEXT NOT NULL,
 			arguments_template TEXT NOT NULL,
 			expression TEXT NOT NULL,
-			timeout_seconds INTEGER NOT NULL,
+			memory_limit TEXT NOT NULL DEFAULT '',
+ timeout_seconds INTEGER NOT NULL,
 			enabled INTEGER NOT NULL,
 			allow_overlap INTEGER NOT NULL,
 			next_fire_at INTEGER NOT NULL,

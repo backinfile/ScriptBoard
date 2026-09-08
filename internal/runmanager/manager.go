@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"scriptboard/internal/resourcelimits"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +39,7 @@ type StartRequest struct {
 	SourceType        string
 	SourceName        string
 	SourceID          string
+	MemoryLimit       string
 	TimeoutSeconds    int
 	Variables         map[string]string
 	InitiatorUserID   string
@@ -51,6 +53,7 @@ type OneTimeStartRequest struct {
 	Extension         string
 	Source            string
 	ArgumentsTemplate string
+	MemoryLimit       string
 	TimeoutSeconds    int
 	Variables         map[string]string
 	AuditSource       string
@@ -78,6 +81,7 @@ type Run struct {
 	FinishedAt         *time.Time
 	ExitCode           *int
 	Error              string
+	MemoryLimit        string
 	TimeoutSeconds     int
 	Events             []Event
 	LogExpired         bool
@@ -155,6 +159,7 @@ func (r *activeRun) signalChanged() {
 }
 
 type Manager struct {
+	defaultMemory       string
 	db                  *sql.DB
 	auditLog            *auditlog.Store
 	files               *hostfiles.Manager
@@ -223,6 +228,11 @@ func (m *Manager) ValidateExecutor(extension string) error {
 }
 
 func (m *Manager) Start(request StartRequest) (string, error) {
+	memory, err := resourcelimits.Task(request.MemoryLimit)
+	if err != nil {
+		return "", err
+	}
+	request.MemoryLimit = memory
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 	if !m.accepting {
@@ -277,7 +287,7 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 		id: id, displayPath: script.Path, script: script, workingDirectory: workingDirectory,
 		scriptKind: "host_file", executors: executors, templateArguments: templateArguments, arguments: arguments,
 		argumentsTemplate: request.ArgumentsTemplate, sourceType: request.SourceType, sourceName: request.SourceName,
-		sourceID: request.SourceID, timeoutSeconds: request.TimeoutSeconds,
+		sourceID: request.SourceID, memoryLimit: request.MemoryLimit, timeoutSeconds: request.TimeoutSeconds,
 		initiatorUserID: request.InitiatorUserID, initiatorUsername: request.InitiatorUsername,
 	})
 }
@@ -296,6 +306,7 @@ type preparedStart struct {
 	sourceType        string
 	sourceName        string
 	sourceID          string
+	memoryLimit       string
 	timeoutSeconds    int
 	auditSource       string
 	initiatorUserID   string
@@ -304,6 +315,11 @@ type preparedStart struct {
 }
 
 func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
+	memory, err := resourcelimits.Task(request.MemoryLimit)
+	if err != nil {
+		return "", err
+	}
+	request.MemoryLimit = memory
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 	if !m.accepting {
@@ -389,7 +405,7 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 		workingDirectory: workingDirectory, scriptKind: "one_time", sourceFilename: sourceFilename,
 		executors: executors, templateArguments: templateArguments, arguments: arguments,
 		argumentsTemplate: request.ArgumentsTemplate, sourceType: "one_time", sourceName: "one-time",
-		timeoutSeconds: request.TimeoutSeconds, auditSource: request.AuditSource,
+		memoryLimit: request.MemoryLimit, timeoutSeconds: request.TimeoutSeconds, auditSource: request.AuditSource,
 		initiatorUserID: request.InitiatorUserID, initiatorUsername: request.InitiatorUsername, initiatorRole: request.InitiatorRole,
 	})
 	if err != nil {
@@ -399,6 +415,12 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 }
 
 func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
+	if prepared.memoryLimit == "" {
+		prepared.memoryLimit = m.defaultMemory
+		if prepared.memoryLimit == "" {
+			prepared.memoryLimit = resourcelimits.Defaults().PerRun
+		}
+	}
 	id := prepared.id
 	leaseID := "run:" + id
 	leasePaths := []string{prepared.script.Path}
@@ -481,11 +503,11 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	}
 	if _, err := transaction.Exec(`INSERT INTO runs
 		(id, script_path, script_path_key, script_sha256, arguments_template, template_arguments_json, arguments_json, executor,
-		source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds, log_path,
+		source_type, source_name, source_id, runtime_identity, status, created_at, memory_limit, timeout_seconds, log_path,
 		script_kind, working_directory, working_directory_key, source_filename, source_audit_event_id, initiated_by_user_id, initiated_by_username)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, prepared.displayPath, hostfiles.ComparisonKey(prepared.displayPath), prepared.script.Digest, prepared.argumentsTemplate, string(templateArgumentJSON), string(argumentJSON), prepared.executors[0].path,
-		prepared.sourceType, prepared.sourceName, prepared.sourceID, runtimeIdentity, now.UnixNano(), prepared.timeoutSeconds, logPath,
+		prepared.sourceType, prepared.sourceName, prepared.sourceID, runtimeIdentity, now.UnixNano(), prepared.memoryLimit, prepared.timeoutSeconds, logPath,
 		prepared.scriptKind, prepared.workingDirectory.Path, hostfiles.ComparisonKey(prepared.workingDirectory.Path), prepared.sourceFilename, auditID,
 		prepared.initiatorUserID, prepared.initiatorUsername,
 	); err != nil {
@@ -511,7 +533,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		}
 	}
 	process, executorPath, err := m.launcher.Launch(context.Background(), LaunchRequest{
-		RunID: id, ScriptPath: prepared.script.Path, ScriptDigest: prepared.script.Digest,
+		MemoryLimit: prepared.memoryLimit, RunID: id, ScriptPath: prepared.script.Path, ScriptDigest: prepared.script.Digest,
 		WorkingDirectory: prepared.workingDirectory.Path, Arguments: prepared.arguments,
 	})
 	if err != nil {
@@ -920,7 +942,7 @@ func (m *Manager) Stop(id string) error {
 }
 
 const runMetadataColumns = `id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, source_id, runtime_identity,
-	status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes,
+	status, created_at, started_at, finished_at, exit_code, error, memory_limit, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes,
 	script_kind, working_directory, source_filename, source_expired, source_audit_event_id, initiated_by_user_id, initiated_by_username`
 
 type runScanner interface {
@@ -935,7 +957,7 @@ func scanRunMetadata(scanner runScanner) (Run, string, error) {
 	var sourceAuditEventID sql.NullInt64
 	err := scanner.Scan(
 		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor, &result.SourceType, &result.SourceName, &result.SourceID, &result.RuntimeIdentity,
-		&result.Status, &createdAt, &startedAt, &finishedAt, &exitCode, &result.Error, &result.TimeoutSeconds, &logPath, &result.LogExpired, &result.LogIncomplete, &result.LogTruncated, &result.DroppedBytes,
+		&result.Status, &createdAt, &startedAt, &finishedAt, &exitCode, &result.Error, &result.MemoryLimit, &result.TimeoutSeconds, &logPath, &result.LogExpired, &result.LogIncomplete, &result.LogTruncated, &result.DroppedBytes,
 		&result.ScriptKind, &result.WorkingDirectory, &result.SourceFilename, &result.SourceExpired, &sourceAuditEventID,
 		&result.InitiatorUserID, &result.InitiatorUsername,
 	)
@@ -1580,3 +1602,6 @@ func ParseArguments(input string) ([]string, error) {
 	}
 	return arguments, nil
 }
+
+// SetDefaultMemory is configured before the manager starts accepting requests.
+func (m *Manager) SetDefaultMemory(value string) { m.defaultMemory = value }

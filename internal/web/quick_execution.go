@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"scriptboard/internal/resourcelimits"
 	"strings"
 	"time"
 
@@ -174,6 +175,10 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		http.Error(response, "Quick Run name is invalid", http.StatusBadRequest)
 		return
 	}
+	if _, err := resourcelimits.Task(request.FormValue("memory_limit")); err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
 	timeoutSeconds, err := quickrun.ParseTimeout(request.FormValue("timeout_seconds"))
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
@@ -221,7 +226,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		}
 		a.renderQuickCreateConflict(response, request, quickCreateValues{
 			WorkingDirectory: workingDirectory, Language: language.ID, FileName: quickrun.FileStem(fileName, language.Extension),
-			Source: source, Name: name, Arguments: argumentsTemplate, TimeoutSeconds: timeoutSeconds, GroupID: request.FormValue("group_id"),
+			Source: source, Name: name, Arguments: argumentsTemplate, MemoryLimit: request.FormValue("memory_limit"), TimeoutSeconds: timeoutSeconds, GroupID: request.FormValue("group_id"),
 			RequireConfirmation: request.FormValue("require_confirmation") == "1",
 		}, targetPath, quickrun.FileStem(suggested, language.Extension), targetInfo.Mode().IsRegular() && !a.runs.ConflictsPath(targetPath))
 		return
@@ -321,9 +326,9 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 	now := time.Now().UTC().Unix()
 	if err == nil {
 		_, err = transaction.Exec(`INSERT INTO quick_runs
-			(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 1, ?)`,
-			id, name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), argumentsTemplate, timeoutSeconds, sortOrder, now, groupID, request.FormValue("require_confirmation") == "1", prepared.Digest, now)
+			(id, name, script_path, script_path_key, arguments_template, memory_limit, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 1, ?)`,
+			id, name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), argumentsTemplate, request.FormValue("memory_limit"), timeoutSeconds, sortOrder, now, groupID, request.FormValue("require_confirmation") == "1", prepared.Digest, now)
 	}
 	if err == nil {
 		err = transaction.Commit()
@@ -344,6 +349,7 @@ type quickCreateValues struct {
 	Source              string
 	Name                string
 	Arguments           string
+	MemoryLimit         string
 	TimeoutSeconds      int
 	GroupID             string
 	RequireConfirmation bool
@@ -369,7 +375,7 @@ func (a *App) renderQuickCreateConflict(response http.ResponseWriter, request *h
 		Description: webText(resolveWebLocale(request), "task.quick_create.description"),
 		BackURL:     "/config/quick-runs", Action: "/config/quick-runs/from-source", Languages: quickrun.PlatformLanguages(runtime.GOOS),
 		WorkingDirectory: values.WorkingDirectory, FileName: values.FileName, Source: values.Source, Name: values.Name,
-		Arguments: values.Arguments, TimeoutSeconds: values.TimeoutSeconds, GroupID: values.GroupID, Groups: groups, Language: values.Language,
+		Arguments: values.Arguments, MemoryLimit: values.MemoryLimit, TimeoutSeconds: values.TimeoutSeconds, GroupID: values.GroupID, Groups: groups, Language: values.Language,
 		RequireConfirmation: values.RequireConfirmation,
 		Conflict:            true, ConflictPath: targetPath, SuggestedName: suggestedName, CanOverwrite: canOverwrite,
 		QuickReferences: quickReferences, ScheduleReferences: scheduleReferences,
@@ -419,7 +425,7 @@ func (a *App) startOneTimeRun(response http.ResponseWriter, request *http.Reques
 		Extension:         language.Extension,
 		Source:            source,
 		ArgumentsTemplate: argumentsTemplate,
-		TimeoutSeconds:    timeoutSeconds,
+		MemoryLimit:       request.FormValue("memory_limit"), TimeoutSeconds: timeoutSeconds,
 		Variables:         variables,
 		AuditSource:       request.RemoteAddr,
 		InitiatorUserID:   current.userID,
@@ -485,7 +491,7 @@ func (a *App) rerunOneTimeRun(response http.ResponseWriter, request *http.Reques
 		Extension:         filepath.Ext(sourceRun.SourceFilename),
 		Source:            string(source),
 		ArgumentsTemplate: sourceRun.ArgumentsTemplate,
-		TimeoutSeconds:    sourceRun.TimeoutSeconds,
+		MemoryLimit:       sourceRun.MemoryLimit, TimeoutSeconds: sourceRun.TimeoutSeconds,
 		Variables:         variables,
 		AuditSource:       request.RemoteAddr,
 		InitiatorUserID:   current.userID,

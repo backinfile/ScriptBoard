@@ -271,6 +271,7 @@
             <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
+          <label>{{t .Locale "task.memory_limit"}}<input name="memory_limit" autocomplete="off" spellcheck="false" value="{{.MemoryLimit}}" placeholder="{{t .Locale "task.memory_inherit"}}" aria-describedby="task-memory-hint"><small id="task-memory-hint">{{t .Locale "task.memory_hint"}}</small></label>
         </section>
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "quick_runs.run_once"}}</button></footer>
@@ -302,6 +303,7 @@
             <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
+          <label>{{t .Locale "task.memory_limit"}}<input name="memory_limit" autocomplete="off" spellcheck="false" value="{{.MemoryLimit}}" placeholder="{{t .Locale "task.memory_inherit"}}" aria-describedby="task-memory-hint"><small id="task-memory-hint">{{t .Locale "task.memory_hint"}}</small></label>
           <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
           <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "quick_runs.require_confirmation"}}</strong><small>{{t .Locale "quick_runs.require_confirmation_hint"}}</small></span><input class="switch" type="checkbox" name="require_confirmation" value="1" {{if .RequireConfirmation}}checked{{end}}></label>
         </section>
@@ -337,6 +339,7 @@
             <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
+          <label>{{t .Locale "task.memory_limit"}}<input name="memory_limit" autocomplete="off" spellcheck="false" value="{{.MemoryLimit}}" placeholder="{{t .Locale "task.memory_inherit"}}" aria-describedby="task-memory-hint"><small id="task-memory-hint">{{t .Locale "task.memory_hint"}}</small></label>
         </section>
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "task.start_run"}}</button></footer>
@@ -375,6 +378,7 @@
             <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
+          <label>{{t .Locale "task.memory_limit"}}<input name="memory_limit" autocomplete="off" spellcheck="false" value="{{.MemoryLimit}}" placeholder="{{t .Locale "task.memory_inherit"}}" aria-describedby="task-memory-hint"><small id="task-memory-hint">{{t .Locale "task.memory_hint"}}</small></label>
           <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
           <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "quick_runs.require_confirmation"}}</strong><small>{{t .Locale "quick_runs.require_confirmation_hint"}}</small></span><input class="switch" type="checkbox" name="require_confirmation" value="1"></label>
         </section>
@@ -438,6 +442,7 @@
             <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
+          <label>{{t .Locale "task.memory_limit"}}<input name="memory_limit" autocomplete="off" spellcheck="false" value="{{.MemoryLimit}}" placeholder="{{t .Locale "task.memory_inherit"}}" aria-describedby="task-memory-hint"><small id="task-memory-hint">{{t .Locale "task.memory_hint"}}</small></label>
           <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "task.quick_edit.sync_external"}}</strong><small>{{t .Locale "task.quick_edit.sync_external_hint"}}</small></span><input class="switch" type="checkbox" name="sync_external_interfaces" value="1"></label>
           <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "quick_runs.require_confirmation"}}</strong><small>{{t .Locale "quick_runs.require_confirmation_hint"}}</small></span><input class="switch" type="checkbox" name="require_confirmation" value="1" {{if .RequireConfirmation}}checked{{end}}></label>
         </section>
@@ -461,6 +466,7 @@
             <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
+          <label>{{t .Locale "task.memory_limit"}}<input name="memory_limit" autocomplete="off" spellcheck="false" value="{{.MemoryLimit}}" placeholder="{{t .Locale "task.memory_inherit"}}" aria-describedby="task-memory-hint"><small id="task-memory-hint">{{t .Locale "task.memory_hint"}}</small></label>
           <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
           <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "quick_runs.require_confirmation"}}</strong><small>{{t .Locale "quick_runs.require_confirmation_hint"}}</small></span><input class="switch" type="checkbox" name="require_confirmation" value="1" {{if .RequireConfirmation}}checked{{end}}></label>
         </section>
@@ -577,6 +583,7 @@
             <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{if .TimeoutInput}}{{.TimeoutInput}}{{else}}{{.TimeoutSeconds}}{{end}}">
             <small>{{t .Locale "schedules.timeout_hint"}}</small>
           </label>
+          <label>{{t .Locale "task.memory_limit"}}<input name="memory_limit" autocomplete="off" spellcheck="false" value="{{.MemoryLimit}}" placeholder="{{t .Locale "task.memory_inherit"}}" aria-describedby="task-memory-hint"><small id="task-memory-hint">{{t .Locale "task.memory_hint"}}</small></label>
           <div class="schedule-policy-field"><span>{{t .Locale "schedules.overlap_policy"}}</span><label class="switch-row schedule-switch"><span class="switch-row__text"><strong>{{t .Locale "task.disallow_overlap"}}</strong><small>{{t .Locale "schedules.overlap_hint"}}</small></span><input class="switch" name="disallow_overlap" type="checkbox" value="1" {{if .DisallowOverlap}}checked{{end}}></label></div>
         </div>
       </section>

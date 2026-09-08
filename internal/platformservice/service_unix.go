@@ -9,6 +9,9 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
+	"scriptboard/internal/config"
+	"scriptboard/internal/resourcelimits"
 	"strconv"
 	"strings"
 
@@ -132,7 +135,11 @@ WantedBy=multi-user.target
 `, systemdQuote(executable), systemdQuote(configPath))
 	brokerUnit := linuxBrokerServiceUnit(brokerExecutable, configPath, stateRoot)
 	runnerUser, runnerGroup := linuxRunnerServiceAccount(runnerIdentityMode)
-	runnerPolicy := linuxRunnerServicePolicy(runnerIdentityMode)
+	loadedMemory, err := loadRunnerMemory(configPath)
+	if err != nil {
+		return err
+	}
+	runnerPolicy := linuxRunnerServicePolicy(runnerIdentityMode, loadedMemory)
 	runnerUnit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard Run Worker
 Requires=scriptboard-runner.socket
@@ -370,6 +377,9 @@ func prepareLinuxRunnerServiceIdentity() error {
 func SwitchExecutable(_, _, _ string) error {
 	// The systemd service points at Install Root/current. installation.SetCurrent
 	// atomically changes that symlink, so the unit never needs to be rewritten.
+	if err := refreshRunnerMemoryPolicy(); err != nil {
+		return err
+	}
 	return retireLinuxAIUnits()
 }
 
@@ -468,6 +478,9 @@ func retireLinuxAIUnitsWith(units []retiredLinuxUnit, control func(...string) er
 }
 
 func Start() error {
+	if err := refreshRunnerMemoryPolicy(); err != nil {
+		return err
+	}
 	if err := systemctl("start", "scriptboard-broker.service"); err != nil {
 		return err
 	}
@@ -520,6 +533,10 @@ func IsRunning() (bool, error) {
 }
 
 func MatchesExecutable(executable, configPath, stateRoot, runnerIdentityMode string) (bool, error) {
+	memory, err := loadRunnerMemory(configPath)
+	if err != nil {
+		return false, err
+	}
 	unit, err := os.ReadFile(unitPath)
 	if err != nil {
 		return false, err
@@ -566,6 +583,11 @@ func MatchesExecutable(executable, configPath, stateRoot, runnerIdentityMode str
 					strings.Contains(runnerText, "SystemCallFilter=@system-service") &&
 					strings.Contains(runnerText, "SystemCallArchitectures=native")
 			}
+			for _, property := range strings.Split(strings.TrimSpace(linuxRunnerServicePolicy(runnerIdentityMode, memory)), "\n") {
+				if !strings.Contains("\n"+runnerText, "\n"+property+"\n") {
+					runnerMatches = false
+				}
+			}
 			return runnerMatches, nil
 		}
 	}
@@ -579,13 +601,13 @@ func linuxRunnerServiceAccount(mode string) (string, string) {
 	return "root", "root"
 }
 
-func linuxRunnerServicePolicy(mode string) string {
-	// Trusted privileged Runs still share one bounded Runner cgroup so a script
-	// cannot consume all host memory or create an unbounded process tree.
-	resourcePolicy := `TasksMax=64
-MemoryMax=2G
-MemorySwapMax=0
-`
+func linuxRunnerServicePolicy(mode string, policies ...resourcelimits.Memory) string {
+	// Privilege and resource budgets are independent; concurrent Runs share the configured service quota.
+	memory := resourcelimits.Defaults()
+	if len(policies) > 0 {
+		memory = policies[0].Resolved()
+	}
+	resourcePolicy := fmt.Sprintf("TasksMax=64\nMemoryMax=%s\nMemorySwapMax=%s\nDelegate=memory\nReadWritePaths=/sys/fs/cgroup/system.slice/scriptboard-runner.service\n", resourcelimits.Systemd(memory.Total), resourcelimits.Systemd(memory.Swap))
 	if mode != RunnerIdentityIsolated {
 		return resourcePolicy
 	}
@@ -643,4 +665,70 @@ func systemdQuote(value string) string {
 	value = strings.ReplaceAll(value, "\n", "")
 	value = strings.ReplaceAll(value, "\r", "")
 	return `"` + value + `"`
+}
+
+func loadRunnerMemory(path string) (resourcelimits.Memory, error) {
+	loaded, err := config.Load([]string{"--config", path}, os.Getenv)
+	return loaded.Memory, err
+}
+
+// Refresh only owned resource properties, preserving other unit settings and overrides.
+func refreshRunnerMemoryPolicy() error {
+	body, err := os.ReadFile(runnerUnitPath)
+	if err != nil {
+		return err
+	}
+	pattern := regexp.MustCompile(`--config ("(?:\\.|[^"\\])*")`)
+	match := pattern.FindStringSubmatch(string(body))
+	if len(match) != 2 {
+		return fmt.Errorf("cannot read Runner configuration path from service unit")
+	}
+	configPath, err := strconv.Unquote(match[1])
+	if err != nil {
+		return err
+	}
+	configPath = strings.ReplaceAll(configPath, "%%", "%")
+	memory, err := loadRunnerMemory(configPath)
+	if err != nil {
+		return err
+	}
+	updated := runnerMemoryUnitText(body, memory)
+	if updated == string(body) {
+		return nil
+	}
+	temp, err := os.CreateTemp(filepath.Dir(runnerUnitPath), ".scriptboard-runner-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+	if _, err = temp.WriteString(updated); err != nil {
+		temp.Close()
+		return err
+	}
+	if err = temp.Chmod(0644); err != nil {
+		temp.Close()
+		return err
+	}
+	if err = temp.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(temp.Name(), runnerUnitPath); err != nil {
+		return err
+	}
+	return systemctl("daemon-reload")
+}
+
+func runnerMemoryUnitText(body []byte, memory resourcelimits.Memory) string {
+	var lines []string
+	for _, line := range strings.Split(string(body), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "MemoryMax=") || strings.HasPrefix(trimmed, "MemorySwapMax=") || trimmed == "Delegate=memory" || trimmed == "ReadWritePaths=/sys/fs/cgroup/system.slice/scriptboard-runner.service" {
+			continue
+		}
+		lines = append(lines, line)
+		if trimmed == "[Service]" {
+			lines = append(lines, "MemoryMax="+resourcelimits.Systemd(memory.Total), "MemorySwapMax="+resourcelimits.Systemd(memory.Swap), "Delegate=memory", "ReadWritePaths=/sys/fs/cgroup/system.slice/scriptboard-runner.service")
+		}
+	}
+	return strings.Join(lines, "\n")
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"scriptboard/internal/resourcelimits"
 	"strconv"
 	"strings"
 	"time"
@@ -157,10 +158,10 @@ func quickRunDuration(locale webLocale, duration time.Duration) string {
 func (a *App) loadQuickRun(id string) (quickRunRecord, error) {
 	var quick quickRunRecord
 	var groupID sql.NullString
-	err := a.db.QueryRow(`SELECT id, name, script_path, arguments_template, timeout_seconds,
+	err := a.db.QueryRow(`SELECT id, name, script_path, arguments_template, memory_limit, timeout_seconds,
 		source_run_id, sort_order, group_id, locked, require_confirmation, script_sha256, revision
 		FROM quick_runs WHERE id = ?`, id).Scan(
-		&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds,
+		&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.MemoryLimit, &quick.TimeoutSeconds,
 		&quick.SourceRunID, &quick.SortOrder, &groupID, &quick.Locked, &quick.RequireConfirmation, &quick.ScriptSHA256, &quick.Revision,
 	)
 	if groupID.Valid {
@@ -181,6 +182,9 @@ func (a *App) quickRunSourceSnapshot(quick quickRunRecord) string {
 }
 
 func (a *App) parseQuickRunEditableRequest(request *http.Request) (string, string, int, error) {
+	if _, err := resourcelimits.Task(request.FormValue("memory_limit")); err != nil {
+		return "", "", 0, err
+	}
 	name := strings.TrimSpace(request.FormValue("name"))
 	if name == "" || len([]byte(name)) > 256 {
 		return "", "", 0, errors.New("快捷执行名称无效")
@@ -650,15 +654,15 @@ func (a *App) editQuickRunTask(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	a.renderTaskPage(response, request, taskPageData{
-		Kind:                "quick-edit",
-		Title:               webText(resolveWebLocale(request), "task.quick_edit.title"),
-		Description:         webText(resolveWebLocale(request), "task.quick_edit.description"),
-		BackURL:             "/config/quick-runs",
-		Action:              "/config/quick-runs/" + quick.ID + "/update",
-		Path:                quick.ScriptPath,
-		Name:                quick.Name,
-		Arguments:           quick.ArgumentsTemplate,
-		TimeoutSeconds:      quick.TimeoutSeconds,
+		Kind:        "quick-edit",
+		Title:       webText(resolveWebLocale(request), "task.quick_edit.title"),
+		Description: webText(resolveWebLocale(request), "task.quick_edit.description"),
+		BackURL:     "/config/quick-runs",
+		Action:      "/config/quick-runs/" + quick.ID + "/update",
+		Path:        quick.ScriptPath,
+		Name:        quick.Name,
+		Arguments:   quick.ArgumentsTemplate,
+		MemoryLimit: quick.MemoryLimit, TimeoutSeconds: quick.TimeoutSeconds,
 		RequireConfirmation: quick.RequireConfirmation,
 	})
 }
@@ -697,15 +701,15 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 	defer transaction.Rollback()
 	requireConfirmation := request.FormValue("require_confirmation") == "1"
 	// Manual confirmation is a UI safety preference, so toggling it does not publish a new executable version.
-	publicationChanged := name != quick.Name || arguments != quick.ArgumentsTemplate || timeoutSeconds != quick.TimeoutSeconds || prepared.Digest != quick.ScriptSHA256
+	publicationChanged := request.FormValue("memory_limit") != quick.MemoryLimit || name != quick.Name || arguments != quick.ArgumentsTemplate || timeoutSeconds != quick.TimeoutSeconds || prepared.Digest != quick.ScriptSHA256
 	newRevision := quick.Revision
 	if publicationChanged {
 		newRevision++
 	}
 	result, err := transaction.ExecContext(request.Context(), `UPDATE quick_runs
-		SET name = ?, arguments_template = ?, timeout_seconds = ?, require_confirmation = ?, script_sha256 = ?, revision = ?, updated_at = ?
+		SET name = ?, arguments_template = ?, memory_limit = ?, timeout_seconds = ?, require_confirmation = ?, script_sha256 = ?, revision = ?, updated_at = ?
 		WHERE id = ? AND locked = 0 AND revision = ?`,
-		name, arguments, timeoutSeconds, requireConfirmation, prepared.Digest, newRevision, now.Unix(), id, quick.Revision)
+		name, arguments, request.FormValue("memory_limit"), timeoutSeconds, requireConfirmation, prepared.Digest, newRevision, now.Unix(), id, quick.Revision)
 	count := int64(0)
 	if err == nil {
 		count, _ = result.RowsAffected()
@@ -766,15 +770,15 @@ func (a *App) copyQuickRunTask(response http.ResponseWriter, request *http.Reque
 	}
 	locale := resolveWebLocale(request)
 	a.renderTaskPage(response, request, taskPageData{
-		Kind:                "quick-copy",
-		Title:               webText(locale, "task.quick_copy.title"),
-		Description:         webText(locale, "task.quick_copy.description"),
-		BackURL:             "/config/quick-runs",
-		Action:              "/config/quick-runs/" + quick.ID + "/copy",
-		Path:                quick.ScriptPath,
-		Name:                quickRunCopyName(quick.Name, locale),
-		Arguments:           quick.ArgumentsTemplate,
-		TimeoutSeconds:      quick.TimeoutSeconds,
+		Kind:        "quick-copy",
+		Title:       webText(locale, "task.quick_copy.title"),
+		Description: webText(locale, "task.quick_copy.description"),
+		BackURL:     "/config/quick-runs",
+		Action:      "/config/quick-runs/" + quick.ID + "/copy",
+		Path:        quick.ScriptPath,
+		Name:        quickRunCopyName(quick.Name, locale),
+		Arguments:   quick.ArgumentsTemplate,
+		MemoryLimit: quick.MemoryLimit, TimeoutSeconds: quick.TimeoutSeconds,
 		RequireConfirmation: quick.RequireConfirmation,
 		GroupID:             quick.GroupID,
 		Groups:              groups,
@@ -820,10 +824,10 @@ func (a *App) createQuickRunCopy(ctx context.Context, source quickRunRecord, scr
 		sourceRunID = source.SourceRunID.String
 	}
 	if _, err = transaction.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id,
+		(id, name, script_path, script_path_key, arguments_template, memory_limit, timeout_seconds, source_run_id,
 		sort_order, created_at, group_id, locked, require_confirmation, script_sha256, revision, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?)`,
-		id, name, scriptPath, hostfiles.ComparisonKey(scriptPath), arguments, timeoutSeconds, sourceRunID,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?)`,
+		id, name, scriptPath, hostfiles.ComparisonKey(scriptPath), arguments, source.MemoryLimit, timeoutSeconds, sourceRunID,
 		sortOrder, now, targetGroup, requireConfirmation, prepared.Digest, now); err != nil {
 		return "", err
 	}
@@ -862,6 +866,7 @@ func (a *App) copyQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
 		return
 	}
+	source.MemoryLimit = request.FormValue("memory_limit")
 	id, err := a.createQuickRunCopy(request.Context(), source, scriptPath, name, arguments, timeoutSeconds, groupID, request.FormValue("require_confirmation") == "1")
 	if err != nil {
 		http.Error(response, "无法复制快捷执行", http.StatusInternalServerError)

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"scriptboard/internal/resourcelimits"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ type CreateRequest struct {
 	ScriptPath        string
 	ArgumentsTemplate string
 	Expression        string
+	MemoryLimit       string
 	TimeoutSeconds    int
 	AllowOverlap      bool
 }
@@ -38,6 +40,7 @@ type Schedule struct {
 	ScriptPath        string
 	ArgumentsTemplate string
 	Expression        string
+	MemoryLimit       string
 	TimeoutSeconds    int
 	Enabled           bool
 	AllowOverlap      bool
@@ -176,6 +179,11 @@ func (m *Manager) aggregateOldTriggers() {
 }
 
 func (m *Manager) Update(id string, request CreateRequest) error {
+	memory, err := resourcelimits.Task(request.MemoryLimit)
+	if err != nil {
+		return err
+	}
+	request.MemoryLimit = memory
 	now := m.now()
 	preview, err := PreviewExpression(request.Expression, now)
 	if err != nil {
@@ -197,8 +205,8 @@ func (m *Manager) Update(id string, request CreateRequest) error {
 			return err
 		}
 	}
-	result, err := transaction.Exec(`UPDATE schedules SET name = ?, group_id = ?, group_name = ?, sort_order = ?, script_path = ?, script_path_key = ?, arguments_template = ?, expression = ?, timeout_seconds = ?, allow_overlap = ?, next_fire_at = ?, updated_at = ? WHERE id = ? AND deleted = 0`,
-		request.Name, groupID, request.GroupName, sortOrder, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds, request.AllowOverlap,
+	result, err := transaction.Exec(`UPDATE schedules SET name = ?, group_id = ?, group_name = ?, sort_order = ?, script_path = ?, script_path_key = ?, arguments_template = ?, expression = ?, memory_limit = ?, timeout_seconds = ?, allow_overlap = ?, next_fire_at = ?, updated_at = ? WHERE id = ? AND deleted = 0`,
+		request.Name, groupID, request.GroupName, sortOrder, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.MemoryLimit, request.TimeoutSeconds, request.AllowOverlap,
 		preview.NextFive[0].UnixNano(), now.UnixNano(), id)
 	if err != nil {
 		return err
@@ -286,6 +294,11 @@ func (m *Manager) reconcileMissed() {
 }
 
 func (m *Manager) Create(request CreateRequest) (string, error) {
+	memory, err := resourcelimits.Task(request.MemoryLimit)
+	if err != nil {
+		return "", err
+	}
+	request.MemoryLimit = memory
 	now := m.now()
 	preview, err := PreviewExpression(request.Expression, now)
 	if err != nil {
@@ -301,9 +314,9 @@ func (m *Manager) Create(request CreateRequest) (string, error) {
 		return "", err
 	}
 	_, err = m.db.Exec(`INSERT INTO schedules
-		(id, name, group_id, group_name, sort_order, script_path, script_path_key, arguments_template, expression, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-		id, request.Name, groupID, request.GroupName, sortOrder, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds,
+		(id, name, group_id, group_name, sort_order, script_path, script_path_key, arguments_template, expression, memory_limit, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+		id, request.Name, groupID, request.GroupName, sortOrder, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.MemoryLimit, request.TimeoutSeconds,
 		request.AllowOverlap, preview.NextFive[0].UnixNano(), now.UnixNano(), now.UnixNano(),
 	)
 	if err != nil {
@@ -329,9 +342,9 @@ func (m *Manager) RunNowAs(id, userID, username string) (string, error) {
 		return "", ErrPaused
 	}
 	var schedule Schedule
-	if err := m.db.QueryRow(`SELECT id, name, script_path, arguments_template, timeout_seconds, allow_overlap
+	if err := m.db.QueryRow(`SELECT id, name, script_path, arguments_template, memory_limit, timeout_seconds, allow_overlap
 		FROM schedules WHERE id = ? AND deleted = 0`, id).Scan(
-		&schedule.ID, &schedule.Name, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.TimeoutSeconds, &schedule.AllowOverlap,
+		&schedule.ID, &schedule.Name, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.MemoryLimit, &schedule.TimeoutSeconds, &schedule.AllowOverlap,
 	); err != nil {
 		return "", err
 	}
@@ -358,7 +371,7 @@ func (m *Manager) RunNowAs(id, userID, username string) (string, error) {
 	// Enforce schedule overlap inside the Run start lock, including concurrent manual triggers.
 	runID, err := m.runs.Start(runmanager.StartRequest{
 		DisallowOverlap: !schedule.AllowOverlap,
-		ScriptPath:      schedule.ScriptPath, ArgumentsTemplate: schedule.ArgumentsTemplate, TimeoutSeconds: schedule.TimeoutSeconds,
+		ScriptPath:      schedule.ScriptPath, ArgumentsTemplate: schedule.ArgumentsTemplate, MemoryLimit: schedule.MemoryLimit, TimeoutSeconds: schedule.TimeoutSeconds,
 		SourceType: "admin/schedule-now", SourceName: schedule.Name, SourceID: schedule.ID, Variables: variables,
 		InitiatorUserID: userID, InitiatorUsername: username,
 		PreparedScript: prepared, PreparedDirectory: preparedDirectory,
@@ -390,7 +403,7 @@ func (m *Manager) ListPage(limit, offset int) ([]Schedule, error) {
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := m.db.Query(`SELECT s.id, s.name, COALESCE(s.group_id, ''), COALESCE(g.name, ''), s.sort_order, s.script_path, s.arguments_template, s.expression, s.timeout_seconds,
+	rows, err := m.db.Query(`SELECT s.id, s.name, COALESCE(s.group_id, ''), COALESCE(g.name, ''), s.sort_order, s.script_path, s.arguments_template, s.expression, s.memory_limit, s.timeout_seconds,
 		s.enabled, s.allow_overlap, s.next_fire_at,
 		COALESCE((SELECT result FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), ''),
 		COALESCE((SELECT run_id FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), ''),
@@ -407,7 +420,7 @@ func (m *Manager) ListPage(limit, offset int) ([]Schedule, error) {
 		var schedule Schedule
 		var next int64
 		if err := rows.Scan(&schedule.ID, &schedule.Name, &schedule.GroupID, &schedule.GroupName, &schedule.SortOrder, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.Expression,
-			&schedule.TimeoutSeconds, &schedule.Enabled, &schedule.AllowOverlap, &next, &schedule.LastResult, &schedule.LastRunID, &schedule.LastError); err != nil {
+			&schedule.MemoryLimit, &schedule.TimeoutSeconds, &schedule.Enabled, &schedule.AllowOverlap, &next, &schedule.LastResult, &schedule.LastRunID, &schedule.LastError); err != nil {
 			return nil, err
 		}
 		schedule.NextFireAt = time.Unix(0, next).In(m.now().Location())
@@ -517,21 +530,21 @@ func (m *Manager) Paused() bool {
 
 func (m *Manager) fireDue() {
 	now := m.now()
-	rows, err := m.db.Query(`SELECT id, name, script_path, arguments_template, expression, timeout_seconds, allow_overlap, next_fire_at
+	rows, err := m.db.Query(`SELECT id, name, script_path, arguments_template, expression, memory_limit, timeout_seconds, allow_overlap, next_fire_at
 		FROM schedules WHERE enabled = 1 AND deleted = 0 AND next_fire_at <= ? ORDER BY next_fire_at`, now.UnixNano())
 	if err != nil {
 		return
 	}
 	type due struct {
-		id, name, scriptPath, arguments, expression string
-		timeout                                     int
-		allowOverlap                                bool
-		scheduledFor                                int64
+		id, name, scriptPath, arguments, expression, memory string
+		timeout                                             int
+		allowOverlap                                        bool
+		scheduledFor                                        int64
 	}
 	var dueSchedules []due
 	for rows.Next() {
 		var item due
-		if rows.Scan(&item.id, &item.name, &item.scriptPath, &item.arguments, &item.expression, &item.timeout, &item.allowOverlap, &item.scheduledFor) == nil {
+		if rows.Scan(&item.id, &item.name, &item.scriptPath, &item.arguments, &item.expression, &item.memory, &item.timeout, &item.allowOverlap, &item.scheduledFor) == nil {
 			dueSchedules = append(dueSchedules, item)
 		}
 	}
@@ -571,7 +584,7 @@ func (m *Manager) fireDue() {
 		// The atomic Run check also closes races with manual starts after the early skip check.
 		runID, startErr := m.runs.Start(runmanager.StartRequest{
 			DisallowOverlap: !item.allowOverlap,
-			ScriptPath:      item.scriptPath, ArgumentsTemplate: item.arguments, TimeoutSeconds: item.timeout,
+			ScriptPath:      item.scriptPath, ArgumentsTemplate: item.arguments, MemoryLimit: item.memory, TimeoutSeconds: item.timeout,
 			SourceType: "scheduler", SourceName: item.name, SourceID: item.id, Variables: variables,
 			PreparedScript: prepared, PreparedDirectory: preparedDirectory,
 		})

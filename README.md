@@ -75,6 +75,23 @@ sudo ./scriptboard-vX.Y.Z-linux-amd64.run
 
 编辑 Redis 连接时，密码留空会保留原密码；无密码实例修改地址、端口或 TLS 设置时，请明确勾选“使用空密码”。
 
+## 脚本内存限制
+
+任务表单的“任务内存上限”留空继承默认值，也可填写 `512MiB`、`8GiB` 或 `unlimited`。额度包含子进程；运行详情保留当次任务额度。
+
+在 `config.yaml` 中设置全局额度，例如：
+
+```yaml
+runner_memory_limit: 8GiB
+run_memory_limit: 2GiB
+```
+
+Windows 默认总额度 4 GiB、每次运行 4 GiB、单进程 2 GiB；单进程额度通过 `runner_process_memory_limit` 调整。Linux 默认 Runner 服务总额度 2 GiB，每次运行不另设上限；`runner_swap_limit` 默认为 `0`，也可设置容量或 `unlimited`。Linux 受管执行需要 cgroup v2；按任务设置内存不会自动改变 swap 策略。
+
+全局配置修改后，以管理员身份运行 `scriptboard service restart` 生效；Windows 便携运行重新启动进程。Linux 全局额度由受管服务实施，便携运行的任务限额需要置于委派了 memory 控制器的 systemd 服务中。Linux 请使用此命令同步服务额度，直接 `systemctl restart` 不会重写额度。Runner 启动日志显示已应用的配置。
+
+`unlimited` 只取消对应层的限制：任务仍受全局额度和 Windows 单进程额度约束。取消所有额度可能耗尽宿主内存；系统自身或上级服务的限制仍然有效。
+
 ## 远程访问
 
 默认情况下，ScriptBoard 仅允许本机访问。如需远程使用，建议通过可信 VPN、零信任网络或 HTTPS 反向代理接入，并限制可访问的用户和网络。

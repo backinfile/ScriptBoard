@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"scriptboard/internal/resourcelimits"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 )
 
 type Config struct {
+	resourcelimits.Memory              `yaml:",inline"`
 	FrameAncestors                     []string            `yaml:"frame_ancestors"`
 	StateRoot                          string              `yaml:"state_root"`
 	Listen                             string              `yaml:"listen"`
@@ -48,6 +50,7 @@ type Config struct {
 }
 
 type yamlConfig struct {
+	resourcelimits.Memory              `yaml:",inline"`
 	FrameAncestors                     []string            `yaml:"frame_ancestors"`
 	StateRoot                          string              `yaml:"state_root"`
 	Listen                             string              `yaml:"listen"`
@@ -131,6 +134,10 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&result.Listen, "listen", result.Listen, "HTTP 监听地址")
 	flags.StringVar(&result.TLSCert, "tls-cert", result.TLSCert, "TLS 证书路径")
 	flags.StringVar(&result.TLSKey, "tls-key", result.TLSKey, "TLS 私钥路径")
+	flags.StringVar(&result.Total, "runner-memory-limit", result.Total, "Runner 总内存额度，如 8GiB 或 unlimited")
+	flags.StringVar(&result.PerRun, "run-memory-limit", result.PerRun, "每次运行的默认内存额度")
+	flags.StringVar(&result.Process, "runner-process-memory-limit", result.Process, "Windows 单进程内存额度")
+	flags.StringVar(&result.Swap, "runner-swap-limit", result.Swap, "Linux swap 额度，0 表示禁用")
 	flags.StringVar(&result.RunnerIdentityMode, "runner-identity-mode", result.RunnerIdentityMode, "Runner 运行身份模式：privileged 或 isolated")
 	flags.DurationVar(&result.RunTimeoutGrace, "run-timeout-grace", result.RunTimeoutGrace, "自动超时强杀宽限")
 	flags.BoolVar(&result.UpdateCheck, "update-check", result.UpdateCheck, "定期检查正式版更新")
@@ -249,6 +256,10 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 			}
 		}
 	}
+	result.Memory = result.Memory.Resolved()
+	if err := result.Memory.Validate(); err != nil {
+		return Config{}, err
+	}
 	if err := finalizeHostSecurity(&result); err != nil {
 		return Config{}, err
 	}
@@ -306,6 +317,18 @@ func requestedConfigPath(arguments []string, fallback string) (string, bool) {
 }
 
 func applyYAML(result *Config, values yamlConfig) {
+	if values.Total != "" {
+		result.Total = values.Total
+	}
+	if values.PerRun != "" {
+		result.PerRun = values.PerRun
+	}
+	if values.Process != "" {
+		result.Process = values.Process
+	}
+	if values.Swap != "" {
+		result.Swap = values.Swap
+	}
 	if values.FrameAncestors != nil {
 		result.FrameAncestors = append([]string(nil), values.FrameAncestors...)
 	}
@@ -378,6 +401,11 @@ func applyYAML(result *Config, values yamlConfig) {
 }
 
 func applyEnvironment(result *Config, getenv func(string) string) {
+	for key, target := range map[string]*string{"SCRIPTBOARD_RUNNER_MEMORY_LIMIT": &result.Total, "SCRIPTBOARD_RUN_MEMORY_LIMIT": &result.PerRun, "SCRIPTBOARD_RUNNER_PROCESS_MEMORY_LIMIT": &result.Process, "SCRIPTBOARD_RUNNER_SWAP_LIMIT": &result.Swap} {
+		if value := getenv(key); value != "" {
+			*target = value
+		}
+	}
 	if value := getenv("SCRIPTBOARD_FRAME_ANCESTORS"); value != "" {
 		result.FrameAncestors = splitCommaList(value)
 	}

@@ -17,7 +17,7 @@
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <input type="hidden" name="script" value="{{.Script}}">
     <input type="hidden" name="arguments" value="{{.Arguments}}">
-    <input type="hidden" name="timeout_seconds" value="{{.Timeout}}">
+    <input type="hidden" name="memory_limit" value="{{.MemoryLimit}}"><input type="hidden" name="timeout_seconds" value="{{.Timeout}}">
     <button class="button button--primary" type="submit" name="confirm_overlap" value="yes">{{t .Locale "overlap.confirm"}}</button>
   </form>
 </main>

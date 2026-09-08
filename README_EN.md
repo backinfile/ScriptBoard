@@ -226,3 +226,20 @@ SSE notifies clients after saves, and reconnecting fetches the latest state. Vie
 On the embedded instance, set `frame_ancestors: ["https://parent.example"]` in `config.yaml` and restart. Alternatively, use comma-separated `SCRIPTBOARD_FRAME_ANCESTORS` or repeat `--frame-ancestor`. Only list trusted parent origins (scheme, host, optional port; no path). Embedding is disabled by default.
 
 On the parent, add the target URL as a custom tab, select the target login-state mode, and enable it. Sign in with the target instance account. Use distinct hostnames for the two instances to avoid cookie collisions. Same-site HTTP works; cross-site login requires target HTTPS and third-party cookies allowed by the browser. HTTPS parents cannot embed HTTP targets. Use “Open in new window” if blocked. Language selection is retained in the embedded interface. Accounts and Key login are not shared between instances.
+
+## Script memory limits
+
+Leave **Task memory limit** blank to inherit the default, or enter `512MiB`, `8GiB`, or `unlimited`. Limits include child processes. Run details retain the task limit used for that execution.
+
+Set global limits in `config.yaml`, for example:
+
+```yaml
+runner_memory_limit: 8GiB
+run_memory_limit: 2GiB
+```
+
+Windows defaults: 4 GiB total, 4 GiB per Run, 2 GiB per process. Use `runner_process_memory_limit` to change the process limit. Linux defaults: 2 GiB across the Runner service, no additional per-Run limit. Linux `runner_swap_limit` defaults to `0`; it also accepts a capacity or `unlimited`. Managed Linux execution requires cgroup v2. Task memory settings do not change the swap policy.
+
+Apply global changes with elevated `scriptboard service restart`, or restart the Windows portable process. Linux global quotas are enforced by the managed service; portable task limits require a systemd service with delegated memory control. On Linux, use this command to synchronize service limits; a direct `systemctl restart` does not rewrite them. The Runner startup log reports the applied configuration.
+
+`unlimited` removes only that layer's limit. Tasks remain subject to the total limit and Windows process limit. Removing every limit can exhaust host memory; operating-system and parent-service limits still apply.

@@ -84,7 +84,7 @@ func (a *App) scheduleTaskDataFromRequest(request *http.Request) taskPageData {
 		Name: request.FormValue("name"), ScheduleGroupID: strings.TrimSpace(request.FormValue("group_id")),
 		ScheduleGroups: groups, Script: request.FormValue("script"),
 		Arguments: request.FormValue("arguments"), Expression: request.FormValue("expression"),
-		TimeoutInput:    request.FormValue("timeout_seconds"),
+		MemoryLimit: request.FormValue("memory_limit"), TimeoutInput: request.FormValue("timeout_seconds"),
 		DisallowOverlap: request.FormValue("disallow_overlap") != "",
 	}
 }

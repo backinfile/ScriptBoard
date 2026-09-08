@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"scriptboard/internal/resourcelimits"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,7 @@ type exitFrame struct {
 }
 
 type ServerOptions struct {
+	Memory         resourcelimits.Memory
 	Listener       net.Listener
 	VerifyPeer     func(net.Conn) error
 	ExecutorChains map[string][]string
@@ -74,7 +76,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 		maximum = 16
 	}
 	return &Server{
-		listener: options.Listener, verifyPeer: verify, launcher: runmanager.NewLocalProcessLauncher(options.ExecutorChains),
+		listener: options.Listener, verifyPeer: verify, launcher: runmanager.NewLocalProcessLauncher(options.ExecutorChains, options.Memory),
 		maximum: maximum, active: make(map[string]runmanager.ManagedProcess), done: make(chan struct{}),
 	}, nil
 }

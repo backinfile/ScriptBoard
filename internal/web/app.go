@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"scriptboard/internal/identity"
+	"scriptboard/internal/resourcelimits"
 	"strconv"
 	"strings"
 	"sync"
@@ -382,6 +383,7 @@ const (
 )
 
 type Config struct {
+	Memory                          resourcelimits.Memory
 	FrameAncestors                  []string
 	StateRoot                       string
 	ConfigPath                      string
@@ -853,7 +855,11 @@ func Open(config Config) (*App, error) {
 	if timeoutGrace <= 0 {
 		timeoutGrace = 30 * time.Second
 	}
+	if config.RunnerProcessLauncher == nil {
+		config.RunnerProcessLauncher = runmanager.NewLocalProcessLauncher(config.ExecutorChains, config.Memory)
+	}
 	application.runs = runmanager.NewWithLauncher(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains, config.RunnerProcessLauncher, application.auditLog)
+	application.runs.SetDefaultMemory(config.Memory.Resolved().PerRun)
 	application.runControl = runcontrol.New(runcontrol.Options{DB: db, Runs: application.runs, PrepareScript: application.hostPrepareScript, PrepareDirectory: application.hostPrepareDirectory, LoadVariables: application.loadVariables})
 	application.mcpStore = mcpaccess.NewStore(db, time.Now)
 	application.mcpCommands = mcpcommand.NewLedger(db, time.Now)
@@ -2602,7 +2608,7 @@ func (a *App) scheduleRequest(request *http.Request) (scheduler.CreateRequest, e
 	return scheduler.CreateRequest{
 		Name: name, GroupID: groupID, GroupName: groupName,
 		ScriptPath: scriptPath, ArgumentsTemplate: request.FormValue("arguments"),
-		Expression: request.FormValue("expression"), TimeoutSeconds: timeoutSeconds,
+		Expression: request.FormValue("expression"), MemoryLimit: request.FormValue("memory_limit"), TimeoutSeconds: timeoutSeconds,
 		AllowOverlap: request.FormValue("disallow_overlap") == "",
 	}, nil
 }
@@ -2676,6 +2682,7 @@ type quickRunView struct {
 	ScriptPath          string
 	DirectoryURL        string
 	ArgumentsTemplate   string
+	MemoryLimit         string
 	TimeoutSeconds      int
 	GroupID             string
 	Valid               bool
@@ -2699,6 +2706,7 @@ type quickRunHistoryView struct {
 }
 
 type overlapView struct {
+	MemoryLimit                                   string
 	Action, Script, Arguments, Timeout, CSRFToken string
 	Locale                                        webLocale
 }
@@ -2707,6 +2715,7 @@ type quickRunCreateRequest struct {
 	Name                string
 	ScriptPath          string
 	ArgumentsTemplate   string
+	MemoryLimit         string
 	TimeoutSeconds      int
 	SourceRunID         *string
 	GroupID             *string
@@ -2714,6 +2723,11 @@ type quickRunCreateRequest struct {
 }
 
 func (a *App) createQuickRun(ctx context.Context, values quickRunCreateRequest) (string, error) {
+	memory, err := resourcelimits.Task(values.MemoryLimit)
+	if err != nil {
+		return "", err
+	}
+	values.MemoryLimit = memory
 	prepared, err := a.hostPrepareScript(ctx, values.ScriptPath)
 	if err != nil {
 		return "", err
@@ -2733,9 +2747,9 @@ func (a *App) createQuickRun(ctx context.Context, values quickRunCreateRequest) 
 	}
 	now := time.Now().UTC().Unix()
 	if _, err := transaction.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-		id, values.Name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), values.ArgumentsTemplate, values.TimeoutSeconds,
+		(id, name, script_path, script_path_key, arguments_template, memory_limit, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+		id, values.Name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), values.ArgumentsTemplate, values.MemoryLimit, values.TimeoutSeconds,
 		values.SourceRunID, sortOrder, now, values.GroupID, values.RequireConfirmation, prepared.Digest, now,
 	); err != nil {
 		return "", err
@@ -2772,7 +2786,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 	}
 	id, err := a.createQuickRun(request.Context(), quickRunCreateRequest{
 		Name: name, ScriptPath: source.ScriptPath, ArgumentsTemplate: source.ArgumentsTemplate,
-		TimeoutSeconds: source.TimeoutSeconds, SourceRunID: &source.ID, GroupID: groupID,
+		MemoryLimit: source.MemoryLimit, TimeoutSeconds: source.TimeoutSeconds, SourceRunID: &source.ID, GroupID: groupID,
 		RequireConfirmation: request.FormValue("require_confirmation") == "1",
 	})
 	if err != nil {
@@ -2788,6 +2802,10 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 }
 
 func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http.Request) {
+	if _, err := resourcelimits.Task(request.FormValue("memory_limit")); err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if !validSessionCSRF(request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
@@ -2833,7 +2851,7 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 	}
 	id, err := a.createQuickRun(request.Context(), quickRunCreateRequest{
 		Name: name, ScriptPath: scriptPath, ArgumentsTemplate: argumentsTemplate,
-		TimeoutSeconds: timeoutSeconds, SourceRunID: nil, GroupID: groupID,
+		MemoryLimit: request.FormValue("memory_limit"), TimeoutSeconds: timeoutSeconds, SourceRunID: nil, GroupID: groupID,
 		RequireConfirmation: request.FormValue("require_confirmation") == "1",
 	})
 	if err != nil {
@@ -2881,7 +2899,7 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "无法读取快捷执行分组", http.StatusInternalServerError)
 		return
 	}
-	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, timeout_seconds, group_id, locked, require_confirmation, script_sha256, revision
+	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, memory_limit, timeout_seconds, group_id, locked, require_confirmation, script_sha256, revision
 		FROM quick_runs ORDER BY sort_order, created_at`)
 	if err != nil {
 		http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
@@ -2891,7 +2909,7 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	for rows.Next() {
 		var quick quickRunView
 		var groupID sql.NullString
-		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds, &groupID, &quick.Locked, &quick.RequireConfirmation, &quick.ScriptSHA256, &quick.Revision); err != nil {
+		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.MemoryLimit, &quick.TimeoutSeconds, &groupID, &quick.Locked, &quick.RequireConfirmation, &quick.ScriptSHA256, &quick.Revision); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 			return
@@ -3466,7 +3484,7 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		response.WriteHeader(http.StatusConflict)
 		_ = overlapTemplate.Execute(response, overlapView{
-			Action: "/history/runs/start", Script: request.FormValue("script"), Arguments: request.FormValue("arguments"), Timeout: request.FormValue("timeout_seconds"), CSRFToken: current.csrfToken, Locale: resolveWebLocale(request),
+			Action: "/history/runs/start", Script: request.FormValue("script"), Arguments: request.FormValue("arguments"), MemoryLimit: request.FormValue("memory_limit"), Timeout: request.FormValue("timeout_seconds"), CSRFToken: current.csrfToken, Locale: resolveWebLocale(request),
 		})
 		return
 	}
@@ -3503,7 +3521,7 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		ArgumentsTemplate: request.FormValue("arguments"),
 		SourceType:        "admin/manual",
 		SourceName:        "manual",
-		TimeoutSeconds:    timeoutSeconds,
+		MemoryLimit:       request.FormValue("memory_limit"), TimeoutSeconds: timeoutSeconds,
 		Variables:         variables,
 		InitiatorUserID:   current.userID,
 		InitiatorUsername: current.username,
@@ -3703,6 +3721,7 @@ func writeRunDownloadMetadata(result *bytes.Buffer, run runmanager.Run) {
 	}
 	fmt.Fprintf(result, "Runtime identity: %s\n", run.RuntimeIdentity)
 	fmt.Fprintf(result, "Executor: %s\n", run.Executor)
+	fmt.Fprintf(result, "Memory limit: %s\n", run.MemoryLimit)
 	fmt.Fprintf(result, "Timeout: %ds\n", run.TimeoutSeconds)
 	if run.ExitCode != nil {
 		fmt.Fprintf(result, "Exit code: %d\n", *run.ExitCode)

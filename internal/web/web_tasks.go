@@ -28,6 +28,7 @@ type taskPageData struct {
 	Script              string
 	Arguments           string
 	Expression          string
+	MemoryLimit         string
 	TimeoutSeconds      int
 	IsPassword          bool
 	IsDirectory         bool
@@ -326,7 +327,7 @@ func (a *App) editScheduleTask(response http.ResponseWriter, request *http.Reque
 		BackURL:     "/config/schedules", Action: "/config/schedules/" + url.PathEscape(selected.ID) + "/update",
 		PreviewAction: "/config/schedules/" + url.PathEscape(selected.ID) + "/preview",
 		Name:          selected.Name, Script: selected.ScriptPath, Arguments: selected.ArgumentsTemplate,
-		Expression: selected.Expression, TimeoutSeconds: selected.TimeoutSeconds, DisallowOverlap: !selected.AllowOverlap,
+		Expression: selected.Expression, MemoryLimit: selected.MemoryLimit, TimeoutSeconds: selected.TimeoutSeconds, DisallowOverlap: !selected.AllowOverlap,
 		ScheduleGroupID: selected.GroupID, ScheduleGroups: groups,
 	})
 }

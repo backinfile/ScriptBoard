@@ -77,7 +77,7 @@ func (a *App) ListQuickRuns(ctx context.Context, cursor string, limit int) (mcps
 }
 
 func sanitizedRun(run runmanager.Run) map[string]any {
-	return map[string]any{"run_id": run.ID, "status": run.Status, "source_type": run.SourceType, "source_name": run.SourceName, "source_id": run.SourceID, "created_at": run.CreatedAt, "started_at": run.StartedAt, "finished_at": run.FinishedAt, "exit_code": run.ExitCode, "error": run.Error, "timeout_seconds": run.TimeoutSeconds, "initiator_user_id": run.InitiatorUserID, "initiator_username": run.InitiatorUsername, "log_expired": run.LogExpired, "log_truncated": run.LogTruncated}
+	return map[string]any{"run_id": run.ID, "status": run.Status, "source_type": run.SourceType, "source_name": run.SourceName, "source_id": run.SourceID, "created_at": run.CreatedAt, "started_at": run.StartedAt, "finished_at": run.FinishedAt, "exit_code": run.ExitCode, "error": run.Error, "memory_limit": run.MemoryLimit, "timeout_seconds": run.TimeoutSeconds, "initiator_user_id": run.InitiatorUserID, "initiator_username": run.InitiatorUsername, "log_expired": run.LogExpired, "log_truncated": run.LogTruncated}
 }
 func (a *App) GetRun(_ context.Context, id string) (any, error) {
 	run, err := a.runs.GetMetadata(strings.TrimSpace(id))

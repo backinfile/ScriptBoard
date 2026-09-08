@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"scriptboard/internal/resourcelimits"
 	"syscall"
 
 	"scriptboard/internal/processlaunch"
@@ -24,7 +25,7 @@ func configureProcess(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 }
 
-func attachProcess(_ *os.Process) (func(), error) { return func() {}, nil }
+func attachProcess(_ *os.Process, _ ...resourcelimits.Memory) (func(), error) { return func() {}, nil }
 
 func terminateProcess(process *os.Process, force bool) error {
 	signal := syscall.SIGTERM
