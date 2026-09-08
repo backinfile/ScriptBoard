@@ -1,4 +1,4 @@
-# ScriptBoard v2.10.0
+# ScriptBoard v2.10.1
 
 ## 新增功能
 
