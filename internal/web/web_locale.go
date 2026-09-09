@@ -1043,6 +1043,7 @@ var webMessages = map[string]localizedMessage{
 	"kubernetes.ready":                              {"就绪", "Ready"},
 	"kubernetes.pods":                               {"Pods", "Pods"},
 	"kubernetes.namespaces":                         {"命名空间", "Namespaces"},
+	"kubernetes.auto_refresh":                       {"自动刷新", "Auto refresh"},
 	"kubernetes.refresh_resources":                  {"刷新外部访问、工作负载与节点", "Refresh external access, workloads, and nodes"},
 	"kubernetes.refresh_failed":                     {"刷新失败，已保留原有数据。请重试。", "Refresh failed. Previous data is preserved. Try again."},
 	"kubernetes.refreshed":                          {"已更新", "Updated"},

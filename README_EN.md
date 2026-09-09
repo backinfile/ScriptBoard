@@ -20,7 +20,7 @@ ScriptBoard is built for personal servers, small-team utility hosts, and interna
 - **Inspiration space:** share notes, links, tasks, timers, and freehand canvases together, with server-side saving for all signed-in users.
 - **Run scripts:** execute PowerShell, Python, Shell, Batch, and CMD scripts with live output, duration, and results.
 - **Reuse tasks:** save scripts as Quick Runs with parameters, variables, timeouts, and five-field Cron schedules.
-- **Observe the host:** inspect CPU, memory, storage, applications, Docker, Kubernetes, websites, and run history. Kubernetes external access, workloads, and nodes start collapsed and support in-place refresh.
+- **Observe the host:** inspect CPU, memory, storage, applications, Docker, Kubernetes, websites, and run history. Kubernetes external access, workloads, and nodes start collapsed, with shared manual and automatic refresh controls above the tabs.
 - **Manage data connections:** back up and restore MySQL/MariaDB; inspect Redis health, key types, TTLs, and memory without mutation.
 - **Keep boundaries visible:** use fixed roles, audit records, host-security checks, bounded external triggers, and signed updates.
 
