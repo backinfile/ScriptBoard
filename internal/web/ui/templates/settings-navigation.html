@@ -5,6 +5,7 @@
   {{if .CanManageSystem}}
   <a href="/settings/name" {{if eq .Current "name"}}aria-current="page"{{end}}><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "instance_name.title"}}</a>
   <a href="/settings/nodes" {{if eq .Current "nodes"}}aria-current="page"{{end}}><span data-lucide="server-cog" aria-hidden="true"></span>{{t .Locale "fleet.settings_title"}}</a>
+  <a href="/settings/memory" {{if eq .Current "memory"}}aria-current="page"{{end}}><span data-lucide="memory-stick" aria-hidden="true"></span>{{t .Locale "memory_settings.title"}}</a>
   <a href="/settings/embedding" {{if eq .Current "embedding"}}aria-current="page"{{end}}><span data-lucide="app-window" aria-hidden="true"></span>{{t .Locale "embedding.title"}}</a>
   <a href="/settings/display" {{if eq .Current "display"}}aria-current="page"{{end}}><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "display.title"}}</a>
   <a href="/settings/notifications" {{if eq .Current "notifications"}}aria-current="page"{{end}}><span data-lucide="bell-ring" aria-hidden="true"></span>{{t .Locale "notifications.title"}}</a>

@@ -229,6 +229,8 @@ On the parent, add the target URL as a custom tab, select the target login-state
 
 ## Script memory limits
 
+Use **Settings → Memory limits** to set the total budget, default task limit and platform-specific limits. Restart the service after saving. Administrators and maintainers can edit these settings; environment variables and CLI arguments still take precedence.
+
 Leave **Task memory limit** blank to inherit the default, or enter `512MiB`, `8GiB`, or `unlimited`. Limits include child processes. Run details retain the task limit used for that execution.
 
 Set global limits in `config.yaml`, for example:

@@ -233,7 +233,7 @@ var (
 	actions          = map[Action]struct{}{
 		ActionInstallComponent: {}, ActionFail2BanUnban: {}, ActionFail2BanBan: {}, ActionUFWEnable: {}, ActionUFWApply: {},
 		ActionWindowsFirewallAdd: {}, ActionWindowsFirewallSet: {}, ActionWindowsFirewallDelete: {},
-		ActionApplicationOperate: {}, ActionKubernetesOperate: {},
+		ActionApplicationOperate: {}, ActionKubernetesOperate: {}, ActionMemorySettings: {},
 	}
 )
 

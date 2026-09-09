@@ -10,6 +10,10 @@
 
 手动、一次性、快捷和计划任务支持继承或指定额度。快捷项内存变更发布新 revision；复制、重跑、外部快捷触发与 MCP 快捷触发保留额度。Schema 69 为 quick_runs、schedules 与 runs 添加 memory_limit；旧任务默认继承，Run 创建时记录解析后的当次额度。
 
+## 设置页
+
+`/settings/memory` 由系统管理权限和最近认证保护，保存同一启动 YAML 的四个固定内存字段，不增加数据库配置副本。受管 Web 通过 Broker 的一次性 capability 保存，Broker 仅接受启动时绑定的配置路径；便携模式直接保存。保留无关 YAML 与配置文件访问权限，用内容 revision 拒绝过期表单；含顶层锚点或别名的配置仍由文件管理。页面区分已保存与 Web 启动时配置值，并说明命令行和环境变量的优先级。保存不触发自动重启。
+
 ## 执行边界
 
 Windows 以聚合 Job Object 约束并发总量，每 Run 保留独立 Job Object。进程先挂起创建，完成 Job 分配后恢复，避免脚本提前派生子进程。unlimited 只清除对应内存标志，保留任务数和退出清理机制。

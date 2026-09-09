@@ -515,6 +515,9 @@ func deletePasskeyWithContext(ctx context.Context, store PasskeyStore, userID, c
 }
 
 type App struct {
+	memoryConfigPath      string
+	activeMemory          resourcelimits.Memory
+	memoryBroker          *privilegebroker.Client
 	frameAncestors        []string
 	workbenchUpdates      workbench.Notifier
 	db                    *sql.DB
@@ -713,6 +716,7 @@ func Open(config Config) (*App, error) {
 		mcpEnabled = *config.MCPEnabled
 	}
 	application := &App{
+		memoryConfigPath: config.ConfigPath, activeMemory: config.Memory, memoryBroker: brokerClient,
 		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, stateBackups: config.StateBackups, approvalUploads: approvalUploads, instanceLock: instanceLock, mfa: mfaStore,
 		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(), loginChallenges: newLoginChallengeStore(),
 		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,

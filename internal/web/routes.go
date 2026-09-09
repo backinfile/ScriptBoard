@@ -263,6 +263,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/users/{id}/enable", a.requireStepUp(identity.PermissionManageUsers, http.HandlerFunc(a.enableUser)))
 	mux.Handle("POST /settings/users/{id}/update", a.requireStepUp(identity.PermissionManageUsers, http.HandlerFunc(a.updateUser)))
 	mux.Handle("POST /settings/users/{id}/reset-password", a.requireStepUp(identity.PermissionManageUsers, http.HandlerFunc(a.resetUserPassword)))
+	mux.Handle("GET /settings/memory", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.memorySettingsPage)))
+	mux.Handle("POST /settings/memory", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.updateMemorySettings)))
 	mux.Handle("GET /settings/embedding", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.embeddingSettingsPage)))
 	mux.Handle("POST /settings/embedding", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.updateEmbeddingSettings)))
 	mux.Handle("GET /settings/name", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.instanceNameSettingsPage)))

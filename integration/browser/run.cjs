@@ -1153,6 +1153,8 @@ const administratorSettingsHrefs = [
   "/settings/users",
   "/settings/name",
   "/settings/nodes",
+  "/settings/memory",
+  "/settings/embedding",
   "/settings/display",
   "/settings/notifications",
   "/settings/state-backups",

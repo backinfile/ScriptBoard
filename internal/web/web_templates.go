@@ -33,6 +33,7 @@ var (
 	deleteImpactTemplate              = mustWebTemplate("delete-impact")
 	displaySettingsTemplate           = mustWebTemplate("display-settings")
 	documentsTemplate                 = mustWebTemplate("documents")
+	memorySettingsTemplate            = mustWebTemplate("memory-settings")
 	embeddingSettingsTemplate         = mustWebTemplate("embedding-settings")
 	instanceNameSettingsTemplate      = mustWebTemplate("instance-name-settings")
 	fleetNodeSettingsTemplate         = mustWebTemplate("fleet-node-settings")
