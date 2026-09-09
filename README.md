@@ -21,7 +21,7 @@ ScriptBoard 适合个人服务器、小团队工具机和内部运维主机。�
 - 运行 PowerShell、Python、Shell、Batch 和 CMD 脚本
 - 保存常用任务，并按计划自动运行
 - 查看 CPU、内存、存储、应用和运行历史
-- 查看 Docker、Kubernetes（含 NodePort、LoadBalancer 与 Ingress 外部入口）和网站状态；Kubernetes 外部访问、工作负载与节点默认折叠，手动刷新、自动刷新开关与全部展开/收起按钮集中在同一行
+- 查看 Docker、Kubernetes（含 NodePort、LoadBalancer 与 Ingress 外部入口）和网站状态；Kubernetes 外部访问、工作负载与节点默认折叠，手动刷新、自动刷新开关与全部展开/收起按钮集中在同一行，筛选、搜索与排序仅更新工作负载区域
 - 在统一数据库工作台中备份和恢复 MySQL/MariaDB，并查看 Redis 数据
 - 在“资源 → 镜像仓库”切换 Registry 连接，查看版本，并按 namespace、名称前缀或 tag 规则预览和批量删除镜像
 - 管理用户、角色、审计记录和外部调用
