@@ -18,8 +18,10 @@ func TestEmbeddingLoginAndNestedCustomTab(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
 		enabled, secure bool
+		all             bool
 	}{
-		{"default-http", false, false}, {"default-https", false, true}, {"embedded-http", true, false}, {"embedded-https", true, true},
+		{"default-http", false, false, false}, {"default-https", false, true, false}, {"embedded-http", true, false, false}, {"embedded-https", true, true, false},
+		{"all-http", true, false, true}, {"all-https", true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -31,6 +33,9 @@ func TestEmbeddingLoginAndNestedCustomTab(t *testing.T) {
 			cfg := app.Config{StateRoot: filepath.Join(root, "state"), AdminPasswordFile: passwordFile}
 			if tc.enabled {
 				cfg.FrameAncestors = []string{"https://parent.example", "http://localhost:9000"}
+			}
+			if tc.all {
+				cfg.FrameAncestors = []string{"*"}
 			}
 			application, err := app.Open(cfg)
 			if err != nil {
@@ -54,6 +59,9 @@ func TestEmbeddingLoginAndNestedCustomTab(t *testing.T) {
 				if tc.enabled {
 					want = "frame-ancestors https://parent.example http://localhost:9000"
 					xframe = ""
+					if tc.all {
+						want = "frame-ancestors *"
+					}
 				}
 				if !strings.Contains(response.Header.Get("Content-Security-Policy"), want) || response.Header.Get("X-Frame-Options") != xframe {
 					t.Fatalf("invalid frame policy: %v", response.Header)

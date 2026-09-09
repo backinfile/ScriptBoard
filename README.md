@@ -148,6 +148,8 @@ scriptboard admin reset --config CONFIG_PATH
 
 ### 嵌入另一个 ScriptBoard
 
-在被嵌入实例的 `config.yaml` 设置 `frame_ancestors: ["https://父实例.example"]` 并重启；也可使用 `SCRIPTBOARD_FRAME_ANCESTORS`（逗号分隔）或重复传入 `--frame-ancestor`。填写完整来源（协议、主机及可选端口，不含路径），仅添加信任的父实例。默认禁止嵌入。
+在被嵌入实例的“设置 → 页面嵌入”中选择“指定地址”或“全部地址”，保存后立即生效并保留。指定地址每行填写一个完整来源（协议、主机及可选端口，不含路径或末尾斜杠）。选择“全部地址”允许任何网站嵌入本实例，可能被用于诱导点击或操作。
+
+默认禁止嵌入。首次在设置页保存前，沿用 `config.yaml` 的 `frame_ancestors`、环境变量 `SCRIPTBOARD_FRAME_ANCESTORS`（逗号分隔）或 `--frame-ancestor` 启动参数；支持 `"*"` 允许所有来源。设置页保存后优先于启动配置。
 
 在父实例“自定义页签”中填写目标实例 URL，选择“保留目标登录态”并启用，使用目标实例自己的账号登录。两个实例应使用不同主机名，避免同名 Cookie 冲突。同站 HTTP 可用；跨站登录需要目标 HTTPS 且浏览器允许第三方 Cookie，HTTPS 父页不能嵌入 HTTP 目标。浏览器拦截时使用“在新窗口打开”。嵌入后可切换并保留界面语言。这不会共享两个实例的账号或 Key 登录。

@@ -9067,3 +9067,5 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 .wb-notice[hidden]{display:none}.wb-scroll{padding-top:16px}
 .wb-colors{display:flex;flex-wrap:wrap;gap:2px;max-width:360px}.wb .wb-colors .wb-icon{width:28px;height:28px;min-width:28px;padding:5px}.wb-colors svg{fill:currentColor;stroke-width:1}.wb-colors [aria-pressed=true]{outline:2px solid var(--ink);outline-offset:-2px}.wb-text-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--rule)}.wb-text-actions[hidden]{display:none}.wb-text-actions small{flex:1;font-size:.7rem;color:var(--muted)}.wb .wb-text-actions button{font-size:.72rem;padding:5px 8px}.wb canvas[data-tool=text]{cursor:text}.wb canvas[data-tool=erase]{cursor:cell}.action-dialog__fields{display:grid;gap:16px}.action-dialog__fields textarea,.action-dialog__fields select{width:100%}.action-dialog__fields textarea{resize:vertical;min-height:100px;max-height:35vh}
 @media(max-height:600px){.wb-colors{flex-wrap:nowrap;flex-shrink:0}}
+
+[data-embedding-settings] textarea, [data-embedding-settings] select { width: 100%; max-width: none; min-width: 0; }

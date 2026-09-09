@@ -10,10 +10,11 @@ type embeddingContextKey struct{}
 
 func validateEmbeddingConfig(origins []string) error { return config.ValidateFrameAncestors(origins) }
 
-func (a *App) contentSecurityPolicy() string {
+func (a *App) contentSecurityPolicy(request *http.Request) string {
+	origins, _ := request.Context().Value(embeddingOriginsContextKey{}).([]string)
 	ancestors := "'none'"
-	if len(a.frameAncestors) > 0 {
-		ancestors = strings.Join(a.frameAncestors, " ")
+	if len(origins) > 0 {
+		ancestors = strings.Join(origins, " ")
 	}
 	// Use the configured parents on every page, including nested custom tabs.
 	return "default-src 'self'; object-src 'none'; frame-ancestors " + ancestors + "; base-uri 'none'; form-action 'self'"

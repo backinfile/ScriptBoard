@@ -9,12 +9,12 @@ import (
 )
 
 func TestFrameAncestorsValidationAndPrecedence(t *testing.T) {
-	for _, origin := range []string{"http://localhost:8787", "https://parent.example", "http://[::1]:8787"} {
+	for _, origin := range []string{"*", "http://localhost:8787", "https://parent.example", "http://[::1]:8787"} {
 		if err := config.ValidateFrameAncestors([]string{origin}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, origin := range []string{"*", "'self'", "https://*.example", "https://a.example/", "https://a.example/path", "https://a.example?", "https://a.example#", "https://u:p@a.example", "https://a.example; frame-src *", "javascript:alert(1)", "https://", "https://a.example\n"} {
+	for _, origin := range []string{"'self'", "https://*.example", "https://a.example/", "https://a.example/path", "https://a.example?", "https://a.example#", "https://u:p@a.example", "https://a.example; frame-src *", "javascript:alert(1)", "https://", "https://a.example\n"} {
 		if err := config.ValidateFrameAncestors([]string{origin}); err == nil {
 			t.Errorf("accepted %q", origin)
 		}
@@ -28,6 +28,8 @@ func TestFrameAncestorsValidationAndPrecedence(t *testing.T) {
 		flags, want []string
 	}{
 		{want: []string{"http://yaml.example"}},
+		{env: "*", want: []string{"*"}},
+		{flags: []string{"--frame-ancestor", "*"}, want: []string{"*"}},
 		{env: "https://env.example,http://localhost:9000", want: []string{"https://env.example", "http://localhost:9000"}},
 		{env: "https://env.example", flags: []string{"--frame-ancestor", "https://cli.example", "--frame-ancestor", "http://localhost:9001"}, want: []string{"https://cli.example", "http://localhost:9001"}},
 	} {
@@ -45,7 +47,7 @@ func TestFrameAncestorsValidationAndPrecedence(t *testing.T) {
 			t.Fatalf("got %v want %v", cfg.FrameAncestors, tc.want)
 		}
 	}
-	if _, err := config.Load([]string{"--config", path, "--frame-ancestor", "*"}, func(string) string { return "" }); err == nil {
+	if _, err := config.Load([]string{"--config", path, "--frame-ancestor", "https://*.example"}, func(string) string { return "" }); err == nil {
 		t.Fatal("invalid CLI origin accepted")
 	}
 }

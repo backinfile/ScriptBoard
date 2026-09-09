@@ -617,3 +617,8 @@ schema 65 增加 `documents`，持久化当前实例的文档收藏条目（每�
 ### Schema 69：任务内存额度
 
 `quick_runs.memory_limit` 与 `schedules.memory_limit` 为非空 TEXT，默认空字符串表示继承部署配置。`runs.memory_limit` 保存当次解析后的任务额度；历史记录默认空字符串。容量为带单位的正整数或 `unlimited`。快捷项额度变更递增发布 revision。
+
+
+## 页面嵌入设置
+
+Schema 70 的 `embedding_settings` 单例保存 `frame_ancestors` JSON 数组、更新时间和操作者。无记录时沿用启动配置；空数组表示禁止嵌入，`["*"]` 表示全部地址，其他值为精确 HTTP/HTTPS 来源。设置页保存后优先于启动配置，立即生效并随数据库备份和重启保留。每个请求使用同一份策略生成 CSP、X-Frame-Options 和 Cookie 属性。

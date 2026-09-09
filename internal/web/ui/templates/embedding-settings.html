@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "embedding.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace settings-workspace" data-embedding-settings>
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
+  {{template "settings-navigation" .SettingsNavigation}}
+  <section class="settings-content">
+    <header class="settings-section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "embedding.title"}}</h2><p>{{t .Locale "embedding.description"}}</p></div></header>
+    {{if .Saved}}<aside class="inline-notice" role="status"><span data-lucide="circle-check" aria-hidden="true"></span><p>{{t .Locale "embedding.saved"}}</p></aside>{{end}}
+    <section class="settings-block">
+      <form class="instance-name-form" method="post" action="/settings/embedding">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <label for="embedding-mode"><span>{{t .Locale "embedding.mode"}}</span>
+          <select id="embedding-mode" name="mode" aria-describedby="embedding-warning">
+            <option value="deny" {{if eq .Mode "deny"}}selected{{end}}>{{t .Locale "embedding.deny"}}</option>
+            <option value="specific" {{if eq .Mode "specific"}}selected{{end}}>{{t .Locale "embedding.specific"}}</option>
+            <option value="all" {{if eq .Mode "all"}}selected{{end}}>{{t .Locale "embedding.all"}}</option>
+          </select>
+        </label>
+        <p class="field-hint" id="embedding-warning">{{t .Locale "embedding.warning"}}</p>
+        <label for="embedding-origins"><span>{{t .Locale "embedding.origins"}}</span><textarea id="embedding-origins" name="origins" rows="5" maxlength="16384" placeholder="https://panel.example.com" spellcheck="false" aria-describedby="embedding-hint{{if .Error}} embedding-error{{end}}" {{if .Error}}aria-invalid="true"{{end}}>{{.Origins}}</textarea><small class="field-hint" id="embedding-hint">{{t .Locale "embedding.hint"}}</small></label>
+        {{if .Error}}<p class="field-error" id="embedding-error" role="alert">{{.Error}}</p>{{end}}
+        <p class="field-hint">{{t .Locale "embedding.login_hint"}}</p>
+        <div class="instance-name-form__actions"><button class="button button--primary" type="submit"><span data-lucide="check" aria-hidden="true"></span>{{t .Locale "embedding.save"}}</button></div>
+      </form>
+    </section>
+  </section>
+</main>
+</body>
+</html>

@@ -114,6 +114,7 @@ func stepUpReturnTarget(request *http.Request) string {
 	for _, candidate := range []struct{ prefix, target string }{
 		{"/settings/users", "/settings/users"},
 		{"/settings/name", "/settings/name"},
+		{"/settings/embedding", "/settings/embedding"},
 		{"/config/external-interfaces", "/config/external-interfaces"},
 		{"/monitor/security", "/monitor/security"},
 		{"/settings/updates", "/settings/updates"},

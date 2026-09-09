@@ -1,6 +1,12 @@
 package migrations
 
 var baseSchemaStatements = []string{
+	`CREATE TABLE IF NOT EXISTS embedding_settings (
+		singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+		frame_ancestors TEXT NOT NULL,
+		updated_at INTEGER NOT NULL,
+		updated_by_user_id TEXT NOT NULL DEFAULT ''
+	)`,
 	`CREATE TABLE IF NOT EXISTS administrator_setup (
 		singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
 		token_hash TEXT NOT NULL,
