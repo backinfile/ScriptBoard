@@ -8,7 +8,7 @@
   <title>{{t .Locale "kubernetes.title"}} · ScriptBoard</title>
 </head>
 <body>
-<main class="workspace kubernetes-page" data-kubernetes-page data-kubernetes-tab="{{.ActiveTab}}" data-refresh-unavailable="{{t .Locale "applications.refresh_unavailable"}}" data-csrf-token="{{.CSRFToken}}" data-kubernetes-can-manage="{{.CanManage}}" data-kubernetes-mode="{{.Connection.Mode}}" data-kubernetes-can-redeploy="{{.Connection.Capabilities.Redeploy}}" data-kubernetes-can-scale="{{.Connection.Capabilities.Scale}}" data-kubernetes-can-run-cron="{{.Connection.Capabilities.RunCron}}" data-kubernetes-can-logs="{{.Connection.Capabilities.Logs}}">
+<main class="workspace kubernetes-page" data-kubernetes-page data-kubernetes-tab="{{.ActiveTab}}" data-kubernetes-refresh-failed="{{t .Locale "kubernetes.refresh_failed"}}" data-kubernetes-refreshed="{{t .Locale "kubernetes.refreshed"}}" data-refresh-unavailable="{{t .Locale "applications.refresh_unavailable"}}" data-csrf-token="{{.CSRFToken}}" data-kubernetes-can-manage="{{.CanManage}}" data-kubernetes-mode="{{.Connection.Mode}}" data-kubernetes-can-redeploy="{{.Connection.Capabilities.Redeploy}}" data-kubernetes-can-scale="{{.Connection.Capabilities.Scale}}" data-kubernetes-can-run-cron="{{.Connection.Capabilities.RunCron}}" data-kubernetes-can-logs="{{.Connection.Capabilities.Logs}}">
   <header class="page-heading kubernetes-heading">
     <div>
       <p class="page-eyebrow">{{t .Locale "nav.monitor"}} / {{t .Locale "nav.kubernetes"}}</p>
@@ -131,8 +131,12 @@
   </dl>
   </div>
 
-  <section class="kubernetes-section kubernetes-external-access" aria-labelledby="kubernetes-external-access-heading" data-kubernetes-external-access>
-    <header class="section-heading kubernetes-section-heading"><div><p class="section-index">NETWORK</p><h2 id="kubernetes-external-access-heading">{{t .Locale "kubernetes.external_access"}}</h2><p>{{t .Locale "kubernetes.external_access_description"}}</p></div></header>
+  <div class="kubernetes-disclosure-tools"><button class="button button--quiet button--compact" type="button" data-kubernetes-expand-all>{{t .Locale "kubernetes.expand_all"}}</button><button class="button button--quiet button--compact" type="button" data-kubernetes-collapse-all>{{t .Locale "kubernetes.collapse_all"}}</button></div>
+  <details class="kubernetes-section kubernetes-collapsible" data-kubernetes-section="external" data-kubernetes-external-access aria-labelledby="kubernetes-external-access-heading">
+    <summary class="kubernetes-section-summary"><span data-lucide="network" aria-hidden="true"></span><span class="kubernetes-section-title" id="kubernetes-external-access-heading">{{t .Locale "kubernetes.external_access"}}</span><span class="kubernetes-section-facts" data-kubernetes-section-facts="external">{{len .Services}} Service · {{len .Ingresses}} Ingress{{if or (index .Errors "services") (index .Errors "ingresses")}} · {{t .Locale "kubernetes.needs_attention"}}{{end}}</span><span class="kubernetes-disclosure"><span class="kubernetes-when-closed">{{t .Locale "kubernetes.expand"}}</span><span class="kubernetes-when-open">{{t .Locale "kubernetes.collapse"}}</span><span data-lucide="chevron-right" aria-hidden="true"></span></span></summary>
+    <div class="kubernetes-section-body">
+    <div class="kubernetes-section-tools"><span data-kubernetes-refresh-status role="status" aria-live="polite"></span><button class="icon-button" type="button" data-kubernetes-refresh aria-label="{{t .Locale "kubernetes.refresh_resources"}}" title="{{t .Locale "kubernetes.refresh_resources"}}"><span data-lucide="refresh-cw" aria-hidden="true"></span></button></div>
+    <div data-kubernetes-external-body>
     <aside class="kubernetes-external-note"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "kubernetes.k3d_mapping_note"}}</p></aside>
     {{if or (index .Errors "services") (index .Errors "ingresses")}}<aside class="kubernetes-external-note kubernetes-external-note--warning"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>{{t .Locale "kubernetes.external_access_unavailable"}}</p></aside>{{end}}
     <div class="kubernetes-exposure-list">
@@ -150,10 +154,15 @@
       </article>{{end}}
       {{if and (not .Services) (not .Ingresses) (not (index .Errors "services")) (not (index .Errors "ingresses"))}}<div class="kubernetes-empty-inline"><p>{{t .Locale "kubernetes.no_external_access"}}</p></div>{{end}}
     </div>
-  </section>
+    </div>
+    </div>
+  </details>
 
-  <section class="kubernetes-section" aria-labelledby="kubernetes-workloads-heading">
-    <header class="section-heading kubernetes-section-heading"><div><p class="section-index">{{t .Locale "kubernetes.cluster_facts"}}</p><h2 id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</h2><p>{{t .Locale "kubernetes.status_filter"}}</p></div><div class="applications-refresh" data-monitor-refresh-control><span><strong>{{t .Locale "applications.live_off"}}</strong><time datetime="{{machineTime .CollectedAt}}" data-local-time data-monitor-refresh-time>{{localTime .Locale .CollectedAt}}</time><small>{{t .Locale "applications.last_snapshot"}}</small></span><button type="button" class="applications-switch" role="switch" aria-checked="false" aria-label="{{t .Locale "kubernetes.start_live"}}" data-monitor-refresh data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "kubernetes.pause_live"}}" data-start-label="{{t .Locale "kubernetes.start_live"}}"></button></div></header>
+  <details class="kubernetes-section kubernetes-collapsible" data-kubernetes-section="workloads" aria-labelledby="kubernetes-workloads-heading">
+    <summary class="kubernetes-section-summary"><span data-lucide="box" aria-hidden="true"></span><span class="kubernetes-section-title" id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</span><span class="kubernetes-section-facts" data-kubernetes-section-facts="workloads">{{.Total}} {{t .Locale "kubernetes.workloads"}} · {{.Ready}} {{t .Locale "kubernetes.ready"}} · {{.Degraded}} {{t .Locale "kubernetes.needs_attention"}}</span><span class="kubernetes-disclosure"><span class="kubernetes-when-closed">{{t .Locale "kubernetes.expand"}}</span><span class="kubernetes-when-open">{{t .Locale "kubernetes.collapse"}}</span><span data-lucide="chevron-right" aria-hidden="true"></span></span></summary>
+    <div class="kubernetes-section-body">
+    <div class="kubernetes-section-tools"><span data-kubernetes-refresh-status role="status" aria-live="polite"></span><button class="icon-button" type="button" data-kubernetes-refresh aria-label="{{t .Locale "kubernetes.refresh_resources"}}" title="{{t .Locale "kubernetes.refresh_resources"}}"><span data-lucide="refresh-cw" aria-hidden="true"></span></button></div>
+    <div class="applications-refresh" data-monitor-refresh-control><span><strong>{{t .Locale "applications.live_off"}}</strong><time datetime="{{machineTime .CollectedAt}}" data-local-time data-monitor-refresh-time>{{localTime .Locale .CollectedAt}}</time><small>{{t .Locale "applications.last_snapshot"}}</small></span><button type="button" class="applications-switch" role="switch" aria-checked="false" aria-label="{{t .Locale "kubernetes.start_live"}}" data-monitor-refresh data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "kubernetes.pause_live"}}" data-start-label="{{t .Locale "kubernetes.start_live"}}"></button></div>
     <div class="kubernetes-workload-controls">
       <nav class="monitor-status-switch kubernetes-status-tabs" aria-label="{{t .Locale "kubernetes.status_filter"}}">
         <a href="{{kubernetesStatusURL .Query "all"}}" {{if eq .Query.Status "all"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.all"}}</span><strong>{{.Total}}</strong></a>
@@ -195,12 +204,16 @@
         </tr>{{else}}<tr><td colspan="9" class="kubernetes-table-empty">{{t .Locale "kubernetes.no_matches"}}</td></tr>{{end}}</tbody>
       </table>
     </div>
-  </section>
+    </div>
+  </details>
 
-  <section class="kubernetes-section" aria-labelledby="kubernetes-nodes-heading">
-    <header class="section-heading kubernetes-section-heading"><div><p class="section-index">{{t .Locale "kubernetes.cluster_facts"}}</p><h2 id="kubernetes-nodes-heading">{{t .Locale "kubernetes.nodes"}}</h2></div></header>
+  <details class="kubernetes-section kubernetes-collapsible" data-kubernetes-section="nodes" aria-labelledby="kubernetes-nodes-heading">
+    <summary class="kubernetes-section-summary"><span data-lucide="server" aria-hidden="true"></span><span class="kubernetes-section-title" id="kubernetes-nodes-heading">{{t .Locale "kubernetes.nodes"}}</span><span class="kubernetes-section-facts" data-kubernetes-section-facts="nodes">{{len .Nodes}} {{t .Locale "kubernetes.nodes"}}{{if index .Errors "nodes"}} · {{t .Locale "kubernetes.needs_attention"}}{{end}}</span><span class="kubernetes-disclosure"><span class="kubernetes-when-closed">{{t .Locale "kubernetes.expand"}}</span><span class="kubernetes-when-open">{{t .Locale "kubernetes.collapse"}}</span><span data-lucide="chevron-right" aria-hidden="true"></span></span></summary>
+    <div class="kubernetes-section-body">
+    <div class="kubernetes-section-tools"><span data-kubernetes-refresh-status role="status" aria-live="polite"></span><button class="icon-button" type="button" data-kubernetes-refresh aria-label="{{t .Locale "kubernetes.refresh_resources"}}" title="{{t .Locale "kubernetes.refresh_resources"}}"><span data-lucide="refresh-cw" aria-hidden="true"></span></button></div>
     <div class="kubernetes-node-list" data-kubernetes-node-list>{{range .Nodes}}<article><span data-lucide="hard-drive" aria-hidden="true"></span><div><strong>{{.Name}}</strong><small>{{.Role}} · {{.Version}}</small></div><span class="kubernetes-state" data-state="{{if .Ready}}ready{{else}}degraded{{end}}"><i></i>{{if .Ready}}{{t $.Locale "kubernetes.ready"}}{{else}}{{t $.Locale "kubernetes.not_ready"}}{{end}}</span><dl><div><dt>CPU</dt><dd>{{percent .CPUPercent}}</dd></div><div><dt>{{t $.Locale "kubernetes.column.memory"}}</dt><dd>{{percent .MemoryPercent}}</dd></div></dl></article>{{else}}<div class="kubernetes-empty-inline"><p>{{t .Locale "kubernetes.nodes_unavailable"}}</p></div>{{end}}</div>
-  </section>
+    </div>
+  </details>
 
   <dialog class="kubernetes-drawer" data-kubernetes-drawer aria-labelledby="kubernetes-drawer-title">
     <header><div><p class="page-eyebrow">{{t .Locale "kubernetes.workload_detail"}}</p><h2 id="kubernetes-drawer-title" data-kubernetes-drawer-title>—</h2><p data-kubernetes-drawer-meta></p></div><button class="icon-button" type="button" data-kubernetes-drawer-close aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></button></header>
