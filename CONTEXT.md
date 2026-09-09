@@ -8,6 +8,10 @@ ScriptBoard 是面向单机、少量可信用户场景的主机文件与脚本�
 
 ## Language
 
+**镜像仓库连接（Image Registry Connection）**：
+镜像仓库页签中的独立 Registry V2 连接，凭据及操作记录由 Broker 加密保存。命名空间是镜像路径前缀，删除计划固定仓库与 digest，并明确列出受影响的全部 tag；远端垃圾回收不属于删除引用操作。
+_Avoid_: Docker 容器、本机镜像缓存、监控卡片
+
 **OAuth 客户端（OAuth Client）**：
 通过预注册、Client ID Metadata Document 或 Dynamic Client Registration 在当前实例登记的公开 Agent 客户端。客户端只有身份和严格的重定向 URI 元数据，不持有 ScriptBoard 客户端 Secret，也不自动获得 Scope。
 _Avoid_: API Key、服务账号、外部接口密钥

@@ -54,16 +54,20 @@ type preparedOperation struct {
 }
 
 type storedRecord struct {
+	Name     string                 `json:"name,omitempty"`
+	Managed  bool                   `json:"managed,omitempty"`
 	Revision string                 `json:"revision"`
 	Config   registrymonitor.Config `json:"config"`
 	Password string                 `json:"password,omitempty"`
 }
 
 type persistedState struct {
-	Active         map[string]storedRecord      `json:"active"`
-	Pending        map[string]preparedOperation `json:"pending"`
-	Completed      []string                     `json:"completed,omitempty"`
-	LegacyMigrated bool                         `json:"legacy_migrated,omitempty"`
+	Plans          map[string]registrymonitor.DeletePlan `json:"plans,omitempty"`
+	Events         []registrymonitor.ManagementEvent     `json:"events,omitempty"`
+	Active         map[string]storedRecord               `json:"active"`
+	Pending        map[string]preparedOperation          `json:"pending"`
+	Completed      []string                              `json:"completed,omitempty"`
+	LegacyMigrated bool                                  `json:"legacy_migrated,omitempty"`
 }
 
 type Service struct {
@@ -72,6 +76,7 @@ type Service struct {
 	inspector        *registrymonitor.Client
 	dockerConfigPath string
 	mu               sync.Mutex
+	managementMu     sync.Mutex
 }
 
 func New(options Options) (*Service, error) {
@@ -510,6 +515,10 @@ func (service *Service) write(state persistedState) error {
 	body, err := service.vault.Seal(storePurpose, plain)
 	if err != nil {
 		return fmt.Errorf("seal Registry connections: %w", err)
+	}
+	// Enforce the reader's limit on the sealed envelope as well as plaintext.
+	if len(body) > maxStoreBytes {
+		return errors.New("sealed Registry connection store is too large")
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(service.path), ".registry-monitor-connections-*.tmp")
 	if err != nil {

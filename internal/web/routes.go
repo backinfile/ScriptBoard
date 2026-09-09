@@ -11,6 +11,9 @@ import (
 
 func (a *App) routes() http.Handler {
 	mux := newDeclaredRouteMux()
+	mux.Handle("GET /resources/registries", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.registriesPage)))
+	mux.Handle("GET /resources/registries/task", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.registriesPage)))
+	mux.Handle("POST /resources/registries/{command}", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.registryMutation)))
 	mux.Handle("GET /resources/workbench", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchPage)))
 	mux.Handle("GET /resources/workbench/state", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchState)))
 	mux.Handle("GET /resources/workbench/events", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchEvents)))
