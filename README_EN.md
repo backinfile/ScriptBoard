@@ -243,3 +243,7 @@ Windows defaults: 4 GiB total, 4 GiB per Run, 2 GiB per process. Use `runner_pro
 Apply global changes with elevated `scriptboard service restart`, or restart the Windows portable process. Linux global quotas are enforced by the managed service; portable task limits require a systemd service with delegated memory control. On Linux, use this command to synchronize service limits; a direct `systemctl restart` does not rewrite them. The Runner startup log reports the applied configuration.
 
 `unlimited` removes only that layer's limit. Tasks remain subject to the total limit and Windows process limit. Removing every limit can exhaust host memory; operating-system and parent-service limits still apply.
+
+## Planned workflows
+
+See the [visual workflow proposal (Chinese; not yet implemented)](./docs/WORKFLOW_DESIGN.md).

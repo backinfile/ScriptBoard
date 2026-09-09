@@ -135,6 +135,7 @@ scriptboard admin reset --config CONFIG_PATH
 ## 更多信息
 
 - [项目文档](./docs/)
+- [可视化工作流方案（规划中）](./docs/WORKFLOW_DESIGN.md)
 - [发布说明](./docs/RELEASE_NOTES.md)
 - [安全问题报告](./SECURITY.md)
 
