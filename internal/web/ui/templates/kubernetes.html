@@ -17,13 +17,6 @@
     </div>
   </header>
 
-  {{if eq .ActiveTab "monitor"}}
-  <div class="kubernetes-refresh-toolbar">
-    <span data-kubernetes-refresh-status role="status" aria-live="polite"></span>
-    <button class="icon-button" type="button" data-kubernetes-refresh aria-label="{{t .Locale "kubernetes.refresh_resources"}}" title="{{t .Locale "kubernetes.refresh_resources"}}"><span data-lucide="refresh-cw" aria-hidden="true"></span></button>
-    <div class="kubernetes-auto-refresh" data-monitor-refresh-control><span>{{t .Locale "kubernetes.auto_refresh"}}</span><button type="button" class="applications-switch" role="switch" aria-checked="false" aria-label="{{t .Locale "kubernetes.start_live"}}" data-monitor-refresh data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "kubernetes.pause_live"}}" data-start-label="{{t .Locale "kubernetes.start_live"}}"></button></div>
-  </div>
-  {{end}}
 
   <nav class="kubernetes-page-tabs" aria-label="{{t .Locale "kubernetes.title"}}">
     {{if .SelectedConnection}}<a href="/monitor/kubernetes?cluster={{.SelectedConnection}}" {{if eq .ActiveTab "monitor"}}aria-current="page"{{end}}><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "kubernetes.tab.monitor"}}</a>{{else}}<span aria-disabled="true"><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "kubernetes.tab.monitor"}}</span>{{end}}
@@ -139,7 +132,11 @@
   </dl>
   </div>
 
-  <div class="kubernetes-disclosure-tools"><button class="button button--quiet button--compact" type="button" data-kubernetes-expand-all>{{t .Locale "kubernetes.expand_all"}}</button><button class="button button--quiet button--compact" type="button" data-kubernetes-collapse-all>{{t .Locale "kubernetes.collapse_all"}}</button></div>
+  <div class="kubernetes-disclosure-tools kubernetes-refresh-toolbar">
+    <span data-kubernetes-refresh-status role="status" aria-live="polite"></span>
+    <button class="icon-button" type="button" data-kubernetes-refresh aria-label="{{t .Locale "kubernetes.refresh_resources"}}" title="{{t .Locale "kubernetes.refresh_resources"}}"><span data-lucide="refresh-cw" aria-hidden="true"></span></button>
+    <div class="kubernetes-auto-refresh" data-monitor-refresh-control><span>{{t .Locale "kubernetes.auto_refresh"}}</span><button type="button" class="applications-switch" role="switch" aria-checked="false" aria-label="{{t .Locale "kubernetes.start_live"}}" data-monitor-refresh data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "kubernetes.pause_live"}}" data-start-label="{{t .Locale "kubernetes.start_live"}}"></button></div>
+<button class="button button--quiet button--compact" type="button" data-kubernetes-expand-all>{{t .Locale "kubernetes.expand_all"}}</button><button class="button button--quiet button--compact" type="button" data-kubernetes-collapse-all>{{t .Locale "kubernetes.collapse_all"}}</button></div>
   <details class="kubernetes-section kubernetes-collapsible" data-kubernetes-section="external" data-kubernetes-external-access aria-labelledby="kubernetes-external-access-heading">
     <summary class="kubernetes-section-summary"><span data-lucide="network" aria-hidden="true"></span><span class="kubernetes-section-title" id="kubernetes-external-access-heading">{{t .Locale "kubernetes.external_access"}}</span><span class="kubernetes-section-facts" data-kubernetes-section-facts="external">{{len .Services}} Service · {{len .Ingresses}} Ingress{{if or (index .Errors "services") (index .Errors "ingresses")}} · {{t .Locale "kubernetes.needs_attention"}}{{end}}</span><span class="kubernetes-disclosure"><span class="kubernetes-when-closed">{{t .Locale "kubernetes.expand"}}</span><span class="kubernetes-when-open">{{t .Locale "kubernetes.collapse"}}</span><span data-lucide="chevron-right" aria-hidden="true"></span></span></summary>
     <div class="kubernetes-section-body">

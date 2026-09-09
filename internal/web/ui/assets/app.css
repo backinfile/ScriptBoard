@@ -9088,10 +9088,13 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 .kubernetes-collapsible[open]>.kubernetes-section-summary .kubernetes-when-open{display:inline}
 .kubernetes-collapsible[open]>.kubernetes-section-summary .kubernetes-when-closed{display:none}
 .kubernetes-section-body{padding:0 24px 24px}
-.kubernetes-refresh-toolbar{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:16px;margin:0 0 16px}
+.kubernetes-refresh-toolbar{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:12px;margin:0 0 12px}
+.kubernetes-refresh-toolbar .kubernetes-auto-refresh{margin-right:auto}
+.kubernetes-refresh-toolbar>[data-kubernetes-refresh-status]{order:5;flex-basis:100%;text-align:right}
+.kubernetes-refresh-toolbar>[data-kubernetes-refresh-status]:empty{display:none}
 .kubernetes-auto-refresh{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.8rem}
 .kubernetes-auto-refresh .applications-switch{flex-shrink:0}
 [data-kubernetes-refresh-status]{color:var(--muted);font-size:.75rem}
 [data-kubernetes-refresh][aria-busy=true] svg{animation:spin 1s linear infinite}
-@media(max-width:600px){.kubernetes-section-summary{padding:18px 16px;gap:12px;flex-wrap:wrap}.kubernetes-section-facts{order:4;width:100%;margin-left:34px}.kubernetes-disclosure{margin-left:auto}.kubernetes-section-body{padding:0 14px 18px}.kubernetes-refresh-toolbar .icon-button{width:44px;height:44px;min-height:44px}}
+@media(max-width:600px){.kubernetes-section-summary{padding:18px 16px;gap:12px;flex-wrap:wrap}.kubernetes-section-facts{order:4;width:100%;margin-left:34px}.kubernetes-disclosure{margin-left:auto}.kubernetes-section-body{padding:0 14px 18px}.kubernetes-refresh-toolbar{gap:6px}.kubernetes-refresh-toolbar>.button{padding-inline:8px;white-space:nowrap}.kubernetes-refresh-toolbar .kubernetes-auto-refresh{gap:6px;font-size:.75rem}.kubernetes-refresh-toolbar .icon-button{width:44px;height:44px;min-height:44px}}
 @media(prefers-reduced-motion:reduce){.kubernetes-disclosure>svg{transition:none}[data-kubernetes-refresh][aria-busy=true] svg{animation:none}}
