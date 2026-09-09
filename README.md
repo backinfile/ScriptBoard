@@ -23,6 +23,7 @@ ScriptBoard 适合个人服务器、小团队工具机和内部运维主机。�
 - 查看 CPU、内存、存储、应用和运行历史
 - 查看 Docker、Kubernetes（含 NodePort、LoadBalancer 与 Ingress 外部入口）和网站状态；Kubernetes 外部访问、工作负载与节点默认折叠，手动刷新、自动刷新开关与全部展开/收起按钮集中在同一行
 - 在统一数据库工作台中备份和恢复 MySQL/MariaDB，并查看 Redis 数据
+- 在“资源 → 镜像仓库”切换 Registry 连接，查看版本，并按 namespace、名称前缀或 tag 规则预览和批量删除镜像
 - 管理用户、角色、审计记录和外部调用
 
 <p align="center">
@@ -76,6 +77,8 @@ sudo ./scriptboard-vX.Y.Z-linux-amd64.run
 已有账号直接登录。自动部署可配置 `--admin-password-file` 跳过首次设置；该配置会在每次启动时覆盖管理员密码。忘记密码时使用下方的本机恢复命令。
 
 编辑 Redis 连接时，密码留空会保留原密码；无密码实例修改地址、端口或 TLS 设置时，请明确勾选“使用空密码”。
+
+镜像仓库支持 Docker Registry V2 目录接口、HTTP、HTTPS 和显式跳过证书验证（存在中间人攻击风险）。删除前会在抽屉中列出同一 digest 关联的全部 tag；规则按镜像创建时间手动执行。Registry 需启用删除功能，释放磁盘空间还需服务端垃圾回收。目录或 tag 枚举超出限制时会拒绝生成清理计划，请缩小范围。
 
 ## 脚本内存限制
 

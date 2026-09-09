@@ -13,19 +13,21 @@ import (
 )
 
 type registryWireRequest struct {
-	OperationID string                 `json:"operation_id,omitempty"`
-	CardID      string                 `json:"card_id,omitempty"`
-	Config      registrymonitor.Config `json:"config,omitempty"`
-	Password    string                 `json:"password,omitempty"`
-	Preserve    bool                   `json:"preserve,omitempty"`
-	Endpoint    string                 `json:"endpoint,omitempty"`
+	Management  *registrymonitor.ManagementRequest `json:"management,omitempty"`
+	OperationID string                             `json:"operation_id,omitempty"`
+	CardID      string                             `json:"card_id,omitempty"`
+	Config      registrymonitor.Config             `json:"config,omitempty"`
+	Password    string                             `json:"password,omitempty"`
+	Preserve    bool                               `json:"preserve,omitempty"`
+	Endpoint    string                             `json:"endpoint,omitempty"`
 }
 
 type registryWireResponse struct {
-	Configured         bool                          `json:"configured,omitempty"`
-	Images             []registrymonitor.ImageResult `json:"images,omitempty"`
-	InsecureConfigured bool                          `json:"insecure_configured,omitempty"`
-	Changed            bool                          `json:"changed,omitempty"`
+	Management         *registrymonitor.ManagementResponse `json:"management,omitempty"`
+	Configured         bool                                `json:"configured,omitempty"`
+	Images             []registrymonitor.ImageResult       `json:"images,omitempty"`
+	InsecureConfigured bool                                `json:"insecure_configured,omitempty"`
+	Changed            bool                                `json:"changed,omitempty"`
 }
 
 // RegistryConnections is the Web-side adapter for the Broker-owned Registry
@@ -34,6 +36,14 @@ type RegistryConnections struct{ client *Client }
 
 func NewRegistryConnections(client *Client) *RegistryConnections {
 	return &RegistryConnections{client: client}
+}
+
+func (connections *RegistryConnections) Manage(ctx context.Context, payload registrymonitor.ManagementRequest) (registrymonitor.ManagementResponse, error) {
+	response, err := connections.callAuthorized(ctx, operationRegistryManage, registryWireRequest{Management: &payload})
+	if response.Management == nil {
+		return registrymonitor.ManagementResponse{}, err
+	}
+	return *response.Management, err
 }
 
 func (connections *RegistryConnections) Prepare(ctx context.Context, operationID, cardID string, config registrymonitor.Config, password string, preserve bool) error {
@@ -135,9 +145,18 @@ func (server *Server) registryOperation(request wireRequest) wireResponse {
 	if payload == nil {
 		return wireResponse{Status: statusError, ErrorCode: "request_invalid", Message: "Registry request is missing"}
 	}
-	if request.Operation == operationRegistryPrepare || request.Operation == operationRegistryPrepareDelete || request.Operation == operationRegistryTest || request.Operation == operationRegistryRegisterInsecure {
+	if request.Operation == operationRegistryManage || request.Operation == operationRegistryPrepare || request.Operation == operationRegistryPrepareDelete || request.Operation == operationRegistryTest || request.Operation == operationRegistryRegisterInsecure {
 		action := ActionRegistryStore
 		resource := payload.CardID
+		if request.Operation == operationRegistryManage && payload.Management != nil {
+			resource = payload.Management.ID
+			if resource == "" {
+				resource = "registry-management"
+			}
+			if payload.Management.Command == "execute" || payload.Management.Command == "remove" {
+				action = ActionRegistryDelete
+			}
+		}
 		if request.Operation == operationRegistryPrepareDelete {
 			action = ActionRegistryDelete
 		}
@@ -172,11 +191,23 @@ func (server *Server) registryOperation(request wireRequest) wireResponse {
 }
 
 func (server *Server) executeRegistryOperation(request wireRequest, payload registryWireRequest) wireResponse {
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	duration := 25 * time.Second
+	if request.Operation == operationRegistryManage {
+		duration = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
 	response := wireResponse{Status: statusOK, Registry: &registryWireResponse{}}
 	var err error
 	switch request.Operation {
+	case operationRegistryManage:
+		backend, ok := server.registry.(registrymonitor.ManagementBackend)
+		if !ok || payload.Management == nil {
+			err = errors.New("Registry management is unavailable")
+			break
+		}
+		result, manageErr := backend.Manage(ctx, *payload.Management)
+		response.Registry.Management, err = &result, manageErr
 	case operationRegistryPrepare:
 		err = server.registry.Prepare(ctx, payload.OperationID, payload.CardID, payload.Config, payload.Password, payload.Preserve)
 	case operationRegistryPrepareDelete:
@@ -210,6 +241,19 @@ func validateRegistryRequest(request wireRequest) error {
 		return errors.New("Registry request is invalid")
 	}
 	payload := request.Registry
+	if request.Operation == operationRegistryManage {
+		if payload.Management == nil || !validCredentialSessionToken(request.SessionToken) || payload.CardID != "" || payload.OperationID != "" || payload.Password != "" || payload.Endpoint != "" || payload.Config.Endpoint != "" || payload.Preserve {
+			return errors.New("invalid Registry management request")
+		}
+		body, err := json.Marshal(payload.Management)
+		if err != nil || len(body) > 64<<10 {
+			return errors.New("Registry management request too large")
+		}
+		return nil
+	}
+	if payload.Management != nil {
+		return errors.New("unrelated Registry management fields")
+	}
 	if len(payload.OperationID) > 160 || len(payload.CardID) > 160 || len(payload.Endpoint) > 512 || strings.ContainsAny(payload.OperationID+payload.CardID+payload.Password+payload.Endpoint, "\r\n\x00") || len(payload.Password) > 8<<10 {
 		return errors.New("Registry request contains invalid fields")
 	}

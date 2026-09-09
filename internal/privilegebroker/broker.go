@@ -135,6 +135,7 @@ const (
 	operationStateBackupList            = "state_backup_list"
 	operationStateBackupDiscard         = "state_backup_discard"
 	operationRegistryPrepare            = "registry_prepare"
+	operationRegistryManage             = "registry_manage"
 	operationRegistryPrepareDelete      = "registry_prepare_delete"
 	operationRegistryCommit             = "registry_commit"
 	operationRegistryAcknowledge        = "registry_acknowledge"
@@ -662,8 +663,11 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.hostFilesScheduleOperation(request)
 	case operationStateBackupCreate, operationStateBackupInspect, operationStateBackupStage, operationStateBackupList, operationStateBackupDiscard:
 		response = server.stateBackupOperation(request)
-	case operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort,
+	case operationRegistryManage, operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort,
 		operationRegistryConfigured, operationRegistryInspect, operationRegistryTest, operationRegistryInsecureConfigured, operationRegistryRegisterInsecure:
+		if request.Operation == operationRegistryManage {
+			_ = connection.SetDeadline(server.now().Add(6 * time.Minute))
+		}
 		response = server.registryOperation(request)
 	case operationApplicationSnapshot, operationApplicationDetail, operationApplicationOperate,
 		operationApplicationLogOpen, operationApplicationLogHistory, operationApplicationLogFollow,
@@ -1242,6 +1246,9 @@ func (client *Client) call(ctx context.Context, request wireRequest) (wireRespon
 		}
 	}()
 	deadline := time.Now().Add(defaultCallDeadline)
+	if request.Operation == operationRegistryManage {
+		deadline = time.Now().Add(6 * time.Minute)
+	}
 	if isMySQLOperation(request.Operation) || isStateBackupOperation(request.Operation) {
 		deadline = time.Now().Add(2 * time.Hour)
 	}
@@ -1547,7 +1554,7 @@ func isStateBackupOperation(operation string) bool {
 
 func isRegistryOperation(operation string) bool {
 	switch operation {
-	case operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort,
+	case operationRegistryManage, operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort,
 		operationRegistryConfigured, operationRegistryInspect, operationRegistryTest, operationRegistryInsecureConfigured, operationRegistryRegisterInsecure:
 		return true
 	default:

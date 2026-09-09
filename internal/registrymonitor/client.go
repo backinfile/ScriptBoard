@@ -2,6 +2,7 @@ package registrymonitor
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,11 +32,12 @@ var imagePattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._-][a-z0-9]+)|(?:/[a-z0
 var digestPattern = regexp.MustCompile(`^[a-z0-9]+(?:[+._-][a-z0-9]+)*:[a-fA-F0-9]{32,}$`)
 
 type Config struct {
-	Endpoint string   `json:"endpoint"`
-	Images   []string `json:"images"`
-	AuthMode string   `json:"authMode,omitempty"`
-	Username string   `json:"username,omitempty"`
-	Password string   `json:"-"`
+	SkipTLSVerify bool     `json:"skipTLSVerify,omitempty"`
+	Endpoint      string   `json:"endpoint"`
+	Images        []string `json:"images"`
+	AuthMode      string   `json:"authMode,omitempty"`
+	Username      string   `json:"username,omitempty"`
+	Password      string   `json:"-"`
 }
 
 type ImageResult struct {
@@ -456,7 +458,33 @@ func (client *Client) doAuthenticated(ctx context.Context, endpoint string, conf
 }
 
 func (client *Client) doAuthenticatedAccept(ctx context.Context, endpoint string, config Config, accept string) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	return client.doAuthenticatedMethod(ctx, http.MethodGet, endpoint, config, accept)
+}
+
+func (client *Client) doAuthenticatedMethod(ctx context.Context, method, endpoint string, config Config, accept string) (*http.Response, error) {
+	if config.SkipTLSVerify {
+		copyClient := *client.client
+		transport, ok := copyClient.Transport.(*http.Transport)
+		if copyClient.Transport == nil {
+			transport, ok = http.DefaultTransport.(*http.Transport)
+		}
+		if !ok {
+			return nil, errors.New("transport does not support explicit TLS configuration")
+		}
+		transport = transport.Clone()
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{}
+		} else {
+			transport.TLSClientConfig = transport.TLSClientConfig.Clone()
+		}
+		transport.TLSClientConfig.InsecureSkipVerify = true // Explicit per-connection choice; never change the shared transport.
+		copyClient.Transport = transport
+		copyInspector := *client
+		copyInspector.client = &copyClient
+		client = &copyInspector
+		defer transport.CloseIdleConnections()
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}

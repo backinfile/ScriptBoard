@@ -20,6 +20,7 @@ func newSettingsNavigation(current session, locale webLocale, active string) set
 // Inline-free template declarations keep page markup in ui/templates while
 // preserving the single-binary deployment provided by go:embed.
 var (
+	registriesTemplate                = mustWebTemplate("registries")
 	accountTemplate                   = mustWebTemplate("account")
 	applicationErrorTemplate          = mustWebTemplate("application-error")
 	applicationShellTemplate          = mustWebTemplate("application-shell")
