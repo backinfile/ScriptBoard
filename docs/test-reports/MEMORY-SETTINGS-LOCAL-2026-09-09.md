@@ -25,3 +25,7 @@
 - 保存配置后需要重启服务；环境变量和命令行参数仍优先。为保留测试部署，此次保留任务 worktree。
 
 完整浏览器门禁 `npm test --prefix integration/browser` 最终通过。更新了设置导航的预期入口；文件跳转用例首次超时，未改动该功能，复跑通过。
+
+## 同步 dev 后的复核
+
+同步本地 dev 的 Kubernetes 折叠与局部刷新改动后，内存设置、角色与 Kubernetes Go 测试通过，保留实例重新构建并通过设置页重启检查。完整浏览器门禁两次在已有 `file-jump.cjs:50` 的隐藏文件跳转等待超时，因此合并后的完整门禁未全绿；本功能同步前的完整门禁曾通过。未修改文件跳转实现或放宽其断言。相关日志为 `.scratch/memory-settings-browser-synchronized.log` 和 `memory-settings-browser-synchronized-retry.log`。

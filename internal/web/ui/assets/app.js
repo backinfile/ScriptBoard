@@ -7719,16 +7719,22 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     const replaceSnapshot = async (destination, options = {}) => {
       const scrollX = window.scrollX, scrollY = window.scrollY;
       snapshotController?.abort(); snapshotController = new AbortController();
+      const controller = snapshotController;
+      const refreshButtons = root.querySelectorAll("[data-kubernetes-refresh]");
+      refreshButtons.forEach(button => { button.disabled = true; button.setAttribute("aria-busy", "true"); });
+      root.querySelectorAll("[data-kubernetes-refresh-status]").forEach(status => { status.textContent = ""; });
       root.setAttribute("aria-busy", "true");
       try {
         const { response, document: page } = await fetchDocument(destination, { cache: "no-store", signal: snapshotController.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const incoming = page?.querySelector("[data-kubernetes-page]");
         if (!incoming) throw new Error("Kubernetes snapshot was not present in the response.");
-        for (const selector of [".kubernetes-monitor-summary", "[data-kubernetes-alert-slot]", "[data-kubernetes-external-access]", ".kubernetes-workload-controls", ".kubernetes-table-shell", "[data-kubernetes-node-list]"]) {
-          const current = root.querySelector(selector), next = incoming.querySelector(selector);
-          if (current && next) current.replaceWith(next);
-        }
+        // Preserve disclosure elements and their controls while replacing only snapshot content.
+        const selectors = ["[data-kubernetes-external-body]", ".kubernetes-workload-controls", ".kubernetes-table-shell", "[data-kubernetes-node-list]", ...["external", "workloads", "nodes"].map(id => `[data-kubernetes-section-facts="${id}"]`)];
+        if (!options.resourcesOnly) selectors.unshift(".kubernetes-monitor-summary", "[data-kubernetes-alert-slot]");
+        const replacements = selectors.map(selector => [root.querySelector(selector), incoming.querySelector(selector)]);
+        if (options.resourcesOnly && replacements.some(([current, next]) => !current || !next)) throw new Error("Incomplete Kubernetes snapshot.");
+        replacements.forEach(([current, next]) => { if (current && next) current.replaceWith(next); });
         const sourceTime = incoming.querySelector("[data-monitor-refresh-time]");
         const currentTime = root.querySelector("[data-monitor-refresh-time]");
         if (sourceTime && currentTime) {
@@ -7743,14 +7749,23 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
         root.dataset.kubernetesCanLogs = incoming.dataset.kubernetesCanLogs || root.dataset.kubernetesCanLogs || "";
         if (options.pushHistory !== false) history.pushState({ kubernetesMonitor: true }, "", destination);
         renderIcons(root); localizeTimes(root); window.requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
+        root.querySelectorAll("[data-kubernetes-refresh-status]").forEach(status => { status.textContent = root.dataset.kubernetesRefreshed; });
       } catch (error) {
-        if (error?.name !== "AbortError") console.error(error);
+        if (error?.name !== "AbortError") {
+          root.querySelectorAll("[data-kubernetes-refresh-status]").forEach(status => { status.textContent = root.dataset.kubernetesRefreshFailed; });
+          console.error(error);
+        }
         throw error;
       } finally {
-        root.removeAttribute("aria-busy");
+        // An older aborted request must not unlock controls owned by its successor.
+        if (snapshotController === controller) {
+          root.removeAttribute("aria-busy");
+          refreshButtons.forEach(button => { button.disabled = false; button.removeAttribute("aria-busy"); });
+        }
       }
     };
     setupMonitorRefresh(root, () => {
+      if (root.getAttribute("aria-busy") === "true") return Promise.resolve();
       const destination = new URL(location.href);
       destination.searchParams.set("refresh", "1");
       return replaceSnapshot(destination.toString(), { pushHistory: false });
@@ -7847,6 +7862,19 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       }
     };
     const onClick = event => {
+      if (event.target.closest("[data-kubernetes-refresh]")) {
+        event.preventDefault();
+        if (root.getAttribute("aria-busy") === "true") return;
+        const destination = new URL(location.href);
+        destination.searchParams.set("refresh", "1");
+        replaceSnapshot(destination.toString(), { pushHistory: false, resourcesOnly: true }).catch(() => {});
+        return;
+      }
+      const expand = event.target.closest("[data-kubernetes-expand-all]");
+      if (expand || event.target.closest("[data-kubernetes-collapse-all]")) {
+        root.querySelectorAll("[data-kubernetes-section]").forEach(section => { section.open = !!expand; });
+        return;
+      }
       const connectionLink = event.target.closest("[data-kubernetes-connection-open]");
       if (connectionLink && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
         event.preventDefault();
