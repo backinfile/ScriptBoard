@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"scriptboard/internal/config"
+	"scriptboard/internal/store/memorysettings"
 	app "scriptboard/internal/web"
 	"strings"
 	"testing"
@@ -15,13 +15,14 @@ import (
 
 func TestMemorySettingsFormSaveValidationAndConflict(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join(root, "config.yaml")
-	os.WriteFile(path, []byte("listen: 127.0.0.1:7777\n"), 0600)
-	initial, err := config.ReadMemorySettings(path)
+	path := filepath.Join(root, "state")
+	os.MkdirAll(path, 0700)
+
+	initial, err := memorysettings.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, base := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(root, "state"), ConfigPath: path, Memory: initial.Memory})
+	client, base := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(root, "state"), Memory: initial.Memory})
 	page := getBody(t, client, base+"/settings/memory", 200)
 	if !strings.Contains(string(page), "data-memory-settings") {
 		t.Fatal("page missing")
@@ -55,7 +56,7 @@ func TestMemorySettingsFormSaveValidationAndConflict(t *testing.T) {
 	post(422)
 	values.Set("runner_memory_limit", "8GiB")
 	post(303)
-	saved, err := config.ReadMemorySettings(path)
+	saved, err := memorysettings.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +78,8 @@ func TestMemorySettingsFormSaveValidationAndConflict(t *testing.T) {
 	if response.StatusCode != 403 {
 		t.Fatal("cross-origin accepted")
 	}
-	// An expired confirmation must challenge before changing the configuration.
-	beforeChallenge, err := config.ReadMemorySettings(path)
+	// An expired confirmation must challenge before changing stored settings.
+	beforeChallenge, err := memorysettings.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestMemorySettingsFormSaveValidationAndConflict(t *testing.T) {
 	if challengeResponse.StatusCode != http.StatusPreconditionRequired {
 		t.Fatalf("challenge status=%d", challengeResponse.StatusCode)
 	}
-	afterChallenge, err := config.ReadMemorySettings(path)
+	afterChallenge, err := memorysettings.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -224,7 +224,7 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 	applications := appstatus.NewSystemProbe()
 	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
 		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
-		Authorizer: databaseSecurity, Executor: &privilegebroker.MemorySettingsExecutor{ConfigPath: *configPath, Next: executor}, Auditor: databaseSecurity,
+		Authorizer: databaseSecurity, Executor: &privilegebroker.MemorySettingsExecutor{StateRoot: absolute, Next: executor}, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
 		MFA: mfaStore, Passkeys: passkeyStore,
 		MySQL: mysqlService, Redis: redisService, HostFiles: hostFilesService,

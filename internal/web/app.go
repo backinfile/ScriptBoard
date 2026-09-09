@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"scriptboard/internal/identity"
 	"scriptboard/internal/resourcelimits"
+	"scriptboard/internal/store/memorysettings"
 	"strconv"
 	"strings"
 	"sync"
@@ -515,93 +516,93 @@ func deletePasskeyWithContext(ctx context.Context, store PasskeyStore, userID, c
 }
 
 type App struct {
-	memoryConfigPath      string
-	activeMemory          resourcelimits.Memory
-	memoryBroker          *privilegebroker.Client
-	frameAncestors        []string
-	workbenchUpdates      workbench.Notifier
-	db                    *sql.DB
-	stateRoot             string
-	files                 *hostfiles.Manager
-	hostFilesBackend      *privilegebroker.HostFilesBackend
-	auditLog              *auditlog.Store
-	auditCheckpoint       AuditCheckpoint
-	securityEvents        *securityevents.Manager
-	auditCheckpointStop   context.CancelFunc
-	auditCheckpointWG     sync.WaitGroup
-	approvalUploads       *externalapproval.Store
-	fileOperations        *sqliteFileOperationStore
-	fileMoves             *hostfiles.MoveEngine
-	fileOperationCtx      context.Context
-	fileOperationStop     context.CancelFunc
-	fileOperationWG       sync.WaitGroup
-	runs                  *runmanager.Manager
-	runControl            *runcontrol.Controller
-	scheduler             *scheduler.Manager
-	hostStatus            *hoststatus.Monitor
-	fleetStatus           *fleetstatus.Manager
-	hostSecurity          hostsecurity.Service
-	securityHistory       *securitybaseline.HistoryStore
-	serviceLogs           servicelogs.Reader
-	securityDraftMu       sync.Mutex
-	securityDrafts        map[string]securityFirewallDraft
-	applicationStatus     *appstatus.Monitor
-	kubernetesStatus      *clusterstatus.Manager
-	kubeconfigs           kubeconfigmanager.Manager
-	logStreamSlots        chan struct{}
-	logHistorySlots       chan struct{}
-	shellStatusCache      *shellStatusCache
-	websiteMonitor        *websitemonitor.Manager
-	customDashboards      *customdashboard.Manager
-	customTabs            *customtab.Manager
-	customTabChallengeMu  sync.Mutex
-	customTabChallenges   map[string]customTabChallenge
-	registryConnections   customdashboard.RegistryConnections
-	externalTriggers      *externaltrigger.Manager
-	externalReconcileStop context.CancelFunc
-	externalReconcileWG   sync.WaitGroup
-	stateBackups          StateBackupService
-	externalAuthLimit     *externaltrigger.Limiter
-	externalLimit         *externaltrigger.Limiter
-	mysql                 *mysqlmanager.Manager
-	redis                 *redismanager.Manager
-	mfa                   MFAStore
-	passkeys              PasskeyStore
-	passkeyCeremonies     *passkeyCeremonyStore
-	loginChallenges       *loginChallengeStore
-	mysqlContext          context.Context
-	mysqlCancel           context.CancelFunc
-	mysqlWG               sync.WaitGroup
-	instanceLock          *instancelock.Lock
-	handler               http.Handler
-	routeSpecs            []RouteSpec
-	loginMu               sync.Mutex
-	loginSlots            chan struct{}
-	loginFailures         map[string]loginFailure
-	loginLastPrune        time.Time
-	loginRateSalt         [32]byte
-	activeRequestsMu      sync.Mutex
-	activeRequests        map[string]map[uint64]context.CancelFunc
-	activeRequestID       uint64
-	credentialOverride    bool
-	trustedProxies        []*net.IPNet
-	allowedHosts          map[string]struct{}
-	canonicalExternalURL  string
-	mcpEnabled            bool
-	mcpHTTP               *mcpaccess.HTTPBoundary
-	mcpStore              *mcpaccess.Store
-	mcpOAuth              *mcpaccess.OAuthHTTP
-	mcpProtocol           http.Handler
-	mcpCommands           *mcpcommand.Ledger
-	updates               *updatepkg.Manager
-	requestRestart        func() error
-	instanceID            string
-	restartRequested      atomic.Bool
-	updateCancel          context.CancelFunc
-	updateContext         context.Context
-	updateResultsWake     chan struct{}
-	validation            atomic.Bool
-	validationID          string
+	memorySettingsMu          sync.Mutex
+	activeMemory              resourcelimits.Memory
+	memoryBroker              *privilegebroker.Client
+	frameAncestors            []string
+	workbenchUpdates          workbench.Notifier
+	db                        *sql.DB
+	stateRoot                 string
+	files                     *hostfiles.Manager
+	hostFilesBackend          *privilegebroker.HostFilesBackend
+	auditLog                  *auditlog.Store
+	auditCheckpoint           AuditCheckpoint
+	securityEvents            *securityevents.Manager
+	auditCheckpointStop       context.CancelFunc
+	auditCheckpointWG         sync.WaitGroup
+	approvalUploads           *externalapproval.Store
+	fileOperations            *sqliteFileOperationStore
+	fileMoves                 *hostfiles.MoveEngine
+	fileOperationCtx          context.Context
+	fileOperationStop         context.CancelFunc
+	fileOperationWG           sync.WaitGroup
+	runs                      *runmanager.Manager
+	runControl                *runcontrol.Controller
+	scheduler                 *scheduler.Manager
+	hostStatus                *hoststatus.Monitor
+	fleetStatus               *fleetstatus.Manager
+	hostSecurity              hostsecurity.Service
+	securityHistory           *securitybaseline.HistoryStore
+	serviceLogs               servicelogs.Reader
+	securityDraftMu           sync.Mutex
+	securityDrafts            map[string]securityFirewallDraft
+	applicationStatus         *appstatus.Monitor
+	kubernetesStatus          *clusterstatus.Manager
+	kubeconfigs               kubeconfigmanager.Manager
+	logStreamSlots            chan struct{}
+	logHistorySlots           chan struct{}
+	shellStatusCache          *shellStatusCache
+	websiteMonitor            *websitemonitor.Manager
+	customDashboards          *customdashboard.Manager
+	customTabs                *customtab.Manager
+	customTabChallengeMu      sync.Mutex
+	customTabChallenges       map[string]customTabChallenge
+	registryConnections       customdashboard.RegistryConnections
+	externalTriggers          *externaltrigger.Manager
+	externalReconcileStop     context.CancelFunc
+	externalReconcileWG       sync.WaitGroup
+	stateBackups              StateBackupService
+	externalAuthLimit         *externaltrigger.Limiter
+	externalLimit             *externaltrigger.Limiter
+	mysql                     *mysqlmanager.Manager
+	redis                     *redismanager.Manager
+	mfa                       MFAStore
+	passkeys                  PasskeyStore
+	passkeyCeremonies         *passkeyCeremonyStore
+	loginChallenges           *loginChallengeStore
+	mysqlContext              context.Context
+	mysqlCancel               context.CancelFunc
+	mysqlWG                   sync.WaitGroup
+	instanceLock              *instancelock.Lock
+	handler                   http.Handler
+	routeSpecs                []RouteSpec
+	loginMu                   sync.Mutex
+	loginSlots                chan struct{}
+	loginFailures             map[string]loginFailure
+	loginLastPrune            time.Time
+	loginRateSalt             [32]byte
+	activeRequestsMu          sync.Mutex
+	activeRequests            map[string]map[uint64]context.CancelFunc
+	activeRequestID           uint64
+	startupCredentialsApplied bool
+	trustedProxies            []*net.IPNet
+	allowedHosts              map[string]struct{}
+	canonicalExternalURL      string
+	mcpEnabled                bool
+	mcpHTTP                   *mcpaccess.HTTPBoundary
+	mcpStore                  *mcpaccess.Store
+	mcpOAuth                  *mcpaccess.OAuthHTTP
+	mcpProtocol               http.Handler
+	mcpCommands               *mcpcommand.Ledger
+	updates                   *updatepkg.Manager
+	requestRestart            func() error
+	instanceID                string
+	restartRequested          atomic.Bool
+	updateCancel              context.CancelFunc
+	updateContext             context.Context
+	updateResultsWake         chan struct{}
+	validation                atomic.Bool
+	validationID              string
 }
 
 type loginFailure struct {
@@ -621,6 +622,12 @@ func Open(config Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Persist the policy separately from deployment configuration and reload it on every start.
+	memorySnapshot, err := memorysettings.Ensure(stateRoot, config.Memory)
+	if err != nil {
+		return nil, err
+	}
+	config.Memory = memorySnapshot.Memory
 	credentialStore, err := secretstore.New(stateRoot)
 	if err != nil {
 		return nil, err
@@ -716,7 +723,7 @@ func Open(config Config) (*App, error) {
 		mcpEnabled = *config.MCPEnabled
 	}
 	application := &App{
-		memoryConfigPath: config.ConfigPath, activeMemory: config.Memory, memoryBroker: brokerClient,
+		activeMemory: config.Memory, memoryBroker: brokerClient,
 		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, stateBackups: config.StateBackups, approvalUploads: approvalUploads, instanceLock: instanceLock, mfa: mfaStore,
 		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(), loginChallenges: newLoginChallengeStore(),
 		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
@@ -841,7 +848,7 @@ func Open(config Config) (*App, error) {
 			_ = db.Close()
 			return nil, err
 		}
-		if err := application.applyCredentialOverride(config.AdminUsername, config.AdminPasswordFile); err != nil {
+		if err := application.applyStartupCredentials(config.AdminUsername, config.AdminPasswordFile); err != nil {
 			_ = db.Close()
 			return nil, err
 		}
@@ -1483,7 +1490,7 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 	return password, nil
 }
 
-func (a *App) applyCredentialOverride(username, passwordFile string) error {
+func (a *App) applyStartupCredentials(username, passwordFile string) error {
 	password := ""
 	if passwordFile != "" {
 		if !filepath.IsAbs(passwordFile) {
@@ -1550,7 +1557,7 @@ func (a *App) applyCredentialOverride(username, passwordFile string) error {
 			newHash = hash
 		}
 	}
-	a.credentialOverride = true
+	a.startupCredentialsApplied = true
 	if !changed {
 		return nil
 	}
@@ -5825,16 +5832,16 @@ func (a *App) recordAuditWithActor(action, target, result, source, actorUserID, 
 }
 
 type loginPageData struct {
-	SetupToken         string
-	Setup              bool
-	CredentialOverride bool
-	CSRFToken          string
-	Username           string
-	Error              string
-	Locale             webLocale
-	SecondFactor       bool
-	MFAEnabled         bool
-	PasskeyEnabled     bool
+	SetupToken                string
+	Setup                     bool
+	StartupCredentialsApplied bool
+	CSRFToken                 string
+	Username                  string
+	Error                     string
+	Locale                    webLocale
+	SecondFactor              bool
+	MFAEnabled                bool
+	PasskeyEnabled            bool
 }
 
 func renderLoginPage(response http.ResponseWriter, request *http.Request, status int, username, errorMessage string) {

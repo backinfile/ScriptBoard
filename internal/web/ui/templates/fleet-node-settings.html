@@ -3,10 +3,10 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "fleet.settings_title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace settings-workspace" data-node-settings>
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
+  {{template "settings-heading" .}}
   {{template "settings-navigation" .Navigation}}
-  <section class="settings-section fleet-token-settings">
-    <header class="settings-section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "fleet.access_tokens"}}</h2><p>{{t .Locale "fleet.access_tokens_description"}}</p></div><a class="button button--primary" href="/settings/nodes/access-tokens/new" data-task-link><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "fleet.create_token"}}</a></header>
+  <section class="settings-content fleet-token-settings">
+    <header class="settings-section-heading"><div><h2>{{t .Locale "settings.node_tokens"}}</h2><p>{{t .Locale "fleet.access_tokens_description"}}</p></div><a class="button button--primary" href="/settings/nodes/access-tokens/new" data-task-link><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "fleet.create_token"}}</a></header>
     <div class="table-shell"><table class="records-table"><thead><tr><th>{{t .Locale "fleet.token_label"}}</th><th>{{t .Locale "fleet.token_hint"}}</th><th>{{t .Locale "fleet.created_at"}}</th><th>{{t .Locale "fleet.last_used"}}</th><th></th></tr></thead><tbody>
       {{range .Tokens}}<tr><td><strong>{{.Label}}</strong></td><td><code>••••••{{.Hint}}</code></td><td><time datetime="{{machineTime .CreatedAt}}" data-local-time>{{localTime $.Locale .CreatedAt}}</time></td><td>{{if .LastUsedAt.IsZero}}—{{else}}<time datetime="{{machineTime .LastUsedAt}}" data-local-time>{{localTime $.Locale .LastUsedAt}}</time>{{end}}</td><td class="record-actions"><form method="post" action="/settings/nodes/access-tokens/{{.ID}}/delete" data-confirm="{{t $.Locale "fleet.revoke_confirm"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--compact button--danger" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "fleet.revoke"}}</button></form></td></tr>{{else}}<tr class="records-table__empty"><td colspan="5">{{t .Locale "fleet.no_tokens"}}</td></tr>{{end}}
     </tbody></table></div>

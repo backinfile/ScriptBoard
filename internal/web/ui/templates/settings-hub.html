@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="{{.Locale}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale .Title}} · ScriptBoard</title></head>
+<body><main class="workspace settings-workspace">
+{{template "settings-heading" .}}
+{{template "settings-navigation" .SettingsNavigation}}
+<section class="settings-content"><header class="settings-section-heading"><h2>{{t .Locale .Title}}</h2></header>
+<div class="account-action-list settings-entry-list">{{range .Entries}}<a href="{{.URL}}" {{if .Drawer}}data-task-link{{end}}><span data-lucide="{{.Icon}}" aria-hidden="true"></span><span><strong>{{t $.Locale .Title}}</strong><small>{{t $.Locale .Description}}</small></span><span data-lucide="chevron-right" aria-hidden="true"></span></a>{{end}}</div>
+</section></main></body></html>

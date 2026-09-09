@@ -2,11 +2,11 @@
 <html lang="{{.Locale}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "embedding.title"}} · ScriptBoard</title></head>
 <body>
-<main class="workspace settings-workspace" data-embedding-settings>
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
+<main class="workspace settings-workspace settings-editor" data-task-page data-task-kind="settings-embedding" data-task-close-label="{{t .Locale "common.close"}}" data-embedding-settings>
+  <a class="task-back" href="/settings/integrations"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a><header class="page-heading"><div><h1>{{t .Locale "embedding.title"}}</h1></div></header>
   {{template "settings-navigation" .SettingsNavigation}}
   <section class="settings-content">
-    <header class="settings-section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "embedding.title"}}</h2><p>{{t .Locale "embedding.description"}}</p></div></header>
+    <header class="settings-section-heading"><div><h2>{{t .Locale "embedding.title"}}</h2><p>{{t .Locale "embedding.description"}}</p></div></header>
     {{if .Saved}}<aside class="inline-notice" role="status"><span data-lucide="circle-check" aria-hidden="true"></span><p>{{t .Locale "embedding.saved"}}</p></aside>{{end}}
     <section class="settings-block">
       <form class="instance-name-form" method="post" action="/settings/embedding">

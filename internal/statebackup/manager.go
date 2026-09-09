@@ -17,6 +17,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"scriptboard/internal/store/memorysettings"
 	"sort"
 	"strings"
 	"time"
@@ -194,6 +195,17 @@ func (manager *Manager) Create(ctx context.Context, request CreateRequest) (arti
 	budget := archiveBudget{}
 	if err := appendArchiveFile(archive, snapshot, "app.db", &manifest, &budget); err != nil {
 		return Artifact{}, err
+	}
+	memorySnapshot := filepath.Join(manager.stateRoot, ".memory-backup-"+id+".db")
+	defer os.Remove(memorySnapshot)
+	included, err := memorysettings.Backup(ctx, manager.stateRoot, memorySnapshot)
+	if err != nil {
+		return Artifact{}, err
+	}
+	if included {
+		if err := appendArchiveFile(archive, memorySnapshot, "runner-memory.db", &manifest, &budget); err != nil {
+			return Artifact{}, err
+		}
 	}
 	for _, directory := range privateStateDirectories {
 		if err := appendPrivateDirectory(archive, manager.stateRoot, directory, &manifest, &budget); err != nil {
@@ -391,6 +403,9 @@ func restore(ctx context.Context, request RestoreRequest, acquireInstanceLock bo
 	if err := verifyRestoredDatabase(databasePath, manifest.SchemaVersion); err != nil {
 		return RestoreResult{}, err
 	}
+	if _, err := memorysettings.Read(stageRoot); err != nil {
+		return RestoreResult{}, err
+	}
 	if err := revokeRestoredSessions(databasePath); err != nil {
 		return RestoreResult{}, err
 	}
@@ -582,7 +597,7 @@ func verifyDatabaseAfterSessionRevocation(databasePath string) error {
 }
 
 func replacePrivateState(stateRoot, stageRoot, preservedRoot string) (func() error, error) {
-	names := append([]string{"app.db", "app.db-wal", "app.db-shm", "app.db-journal"}, privateStateDirectories...)
+	names := append([]string{"app.db", "app.db-wal", "app.db-shm", "app.db-journal", "runner-memory.db", "runner-memory.db-journal"}, privateStateDirectories...)
 	movedCurrent := make([]string, 0, len(names))
 	movedStaged := make([]string, 0, len(names))
 	rollback := func() error {
@@ -764,7 +779,7 @@ func validateArchivePath(name string) (string, error) {
 	if name == "" || strings.Contains(name, "\\") || path.IsAbs(name) || path.Clean(name) != name || name == "." || strings.HasPrefix(name, "../") {
 		return "", fmt.Errorf("state backup contains unsafe path %q", name)
 	}
-	if name == "app.db" {
+	if name == "app.db" || name == "runner-memory.db" {
 		return name, nil
 	}
 	for _, directory := range privateStateDirectories {

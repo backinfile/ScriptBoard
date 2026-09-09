@@ -184,13 +184,15 @@ func main() {
 		panic(err)
 	}
 
+	// Keep OAuth discovery and audience validation on the same local fixture origin.
 	applicationConfig := app.Config{
-		StateRoot:         stateRoot,
-		FileTopology:      fixtureTopology{root: hostRoot},
-		AdminUsername:     fixtureUsername,
-		AdminPasswordFile: passwordFile,
-		ApplicationProbe:  &applicationProbe{},
-		RequestRestart:    func() error { return nil },
+		CanonicalExternalURL: "http://" + fixtureListenAddress(),
+		StateRoot:            stateRoot,
+		FileTopology:         fixtureTopology{root: hostRoot},
+		AdminUsername:        fixtureUsername,
+		AdminPasswordFile:    passwordFile,
+		ApplicationProbe:     &applicationProbe{},
+		RequestRestart:       func() error { return nil },
 	}
 	if strings.TrimSpace(os.Getenv("SCRIPTBOARD_FIXTURE_REMOTE_HOSTS")) == "1" {
 		brokerEndpoint, endpointErr := privilegebroker.DefaultEndpoint(stateRoot)

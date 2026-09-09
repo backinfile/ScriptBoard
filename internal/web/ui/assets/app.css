@@ -9098,3 +9098,16 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 [data-kubernetes-refresh][aria-busy=true] svg{animation:spin 1s linear infinite}
 @media(max-width:600px){.kubernetes-section-summary{padding:18px 16px;gap:12px;flex-wrap:wrap}.kubernetes-section-facts{order:4;width:100%;margin-left:34px}.kubernetes-disclosure{margin-left:auto}.kubernetes-section-body{padding:0 14px 18px}.kubernetes-refresh-toolbar{gap:6px}.kubernetes-refresh-toolbar>.button{padding-inline:8px;white-space:nowrap}.kubernetes-refresh-toolbar .kubernetes-auto-refresh{gap:6px;font-size:.75rem}.kubernetes-refresh-toolbar .icon-button{width:44px;height:44px;min-height:44px}}
 @media(prefers-reduced-motion:reduce){.kubernetes-disclosure>svg{transition:none}[data-kubernetes-refresh][aria-busy=true] svg{animation:none}}
+
+/* Settings categories stay visible; editor tasks share the existing accessible drawer. */
+.settings-workspace .settings-nav { flex-wrap: wrap; overflow: visible; }
+.settings-workspace .settings-nav a { min-height: 44px; }
+.settings-entry-list { max-width: 880px; }
+.settings-entry-list a { min-height: 88px; padding: 18px 12px; }
+.settings-entry-list small { font-size: .82rem; line-height: 1.5; }
+.task-panel .settings-editor .settings-nav { display: none; }
+.task-panel .settings-editor > .page-heading { padding-right: 32px; }
+.task-panel .settings-editor .settings-section-heading { border: 0; margin-bottom: 12px; padding-bottom: 0; }
+.task-panel .settings-editor .settings-section-heading h2 { display: none; }
+.settings-editor .section-index { display: none; }
+@media (max-width: 760px) { .settings-workspace .page-heading, .settings-workspace .settings-section-heading { align-items: flex-start; } .settings-workspace .settings-nav { gap: 2px; } .settings-workspace .settings-nav a { padding: 9px 10px; } .settings-entry-list a { padding: 16px 4px; } }

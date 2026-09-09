@@ -12,7 +12,7 @@ func TestEmbeddingSettingsApplyImmediatelyAndValidate(t *testing.T) {
 	root := t.TempDir()
 	client, base := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
 	page := getBody(t, client, base+"/settings/embedding", http.StatusOK)
-	for _, text := range []string{`action="/settings/embedding"`, `value="all"`, `href="/settings/embedding" aria-current="page"`} {
+	for _, text := range []string{`action="/settings/embedding"`, `value="all"`, `href="/settings/integrations" aria-current="page"`} {
 		if !strings.Contains(string(page), text) {
 			t.Fatalf("missing %s", text)
 		}

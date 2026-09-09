@@ -5,18 +5,19 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"scriptboard/internal/config"
+	"scriptboard/internal/store/memorysettings"
 	"testing"
 )
 
-func TestMemorySettingsBrokerBindsFileRevisionAndParameters(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	os.WriteFile(path, []byte("listen: 127.0.0.1:7777\n"), 0600)
-	before, err := config.ReadMemorySettings(path)
+func TestMemorySettingsBrokerBindsStateRevisionAndParameters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state")
+	os.MkdirAll(path, 0700)
+
+	before, err := memorysettings.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	executor := &MemorySettingsExecutor{ConfigPath: path, Next: &fixtureExecutor{}}
+	executor := &MemorySettingsExecutor{StateRoot: path, Next: &fixtureExecutor{}}
 	server, client := brokerFixture(t, &fixtureAuthorizer{actor: Actor{UserID: "user-1", Username: "admin", Role: "administrator"}}, executor)
 	defer server.Close()
 	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: "session-token-fixture-0123456789", RequestID: "memory-settings-test"})
@@ -33,7 +34,7 @@ func TestMemorySettingsBrokerBindsFileRevisionAndParameters(t *testing.T) {
 	if err := client.Invoke(ctx, ActionMemorySettings, "runner-memory", before.Revision, payload); err != nil {
 		t.Fatal(err)
 	}
-	after, err := config.ReadMemorySettings(path)
+	after, err := memorysettings.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}

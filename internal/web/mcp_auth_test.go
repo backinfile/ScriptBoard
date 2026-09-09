@@ -131,3 +131,48 @@ func TestOAuthAuthorizationResumesAfterLogin(t *testing.T) {
 		t.Fatalf("login did not resume OAuth: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 }
+
+func TestOAuthConsentAllowsOnlyValidatedCallbackNavigation(t *testing.T) {
+	client, base := authenticatedClientWithConfig(t, app.Config{StateRoot: t.TempDir(), CanonicalExternalURL: "https://panel.example"})
+	page := getBody(t, client, base+"/settings/mcp", http.StatusOK)
+	response, err := client.PostForm(base+"/settings/mcp/clients", url.Values{"csrf_token": {formToken(t, page)}, "client_id": {"browser-test"}, "name": {"Browser callback test"}, "redirect_uris": {"http://127.0.0.1:18880/callback"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("register status=%d", response.StatusCode)
+	}
+	query := url.Values{"response_type": {"code"}, "client_id": {"browser-test"}, "redirect_uri": {"http://127.0.0.1:18880/callback"}, "scope": {"scriptboard.observe"}, "state": {"test-state"}, "code_challenge": {strings.Repeat("A", 43)}, "code_challenge_method": {"S256"}, "resource": {"https://panel.example/mcp"}}
+	response, err = client.Get(base + "/oauth/authorize?" + query.Encode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != 200 || !strings.Contains(response.Header.Get("Content-Security-Policy"), "form-action 'self' http://127.0.0.1:18880") {
+		t.Fatalf("consent status=%d policy=%s", response.StatusCode, response.Header.Get("Content-Security-Policy"))
+	}
+	if !strings.Contains(string(body), "data-native") || !strings.Contains(string(body), "/assets/app.css") {
+		t.Fatal("consent needs native callback navigation and page styling")
+	}
+	query.Set("csrf_token", formToken(t, body))
+	query.Set("decision", "deny")
+	response, err = client.PostForm(base+"/oauth/authorize", query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 303 || !strings.HasPrefix(response.Header.Get("Location"), "http://127.0.0.1:18880/callback?") {
+		t.Fatal("denial must return to the validated callback")
+	}
+	query.Set("redirect_uri", "https://unregistered.example/callback")
+	response, err = client.Get(base + "/oauth/authorize?" + query.Encode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 400 || strings.Contains(response.Header.Get("Content-Security-Policy"), "unregistered.example") {
+		t.Fatal("unregistered callback must remain blocked")
+	}
+}

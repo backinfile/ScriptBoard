@@ -94,7 +94,7 @@ func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) renderSetup(w http.ResponseWriter, r *http.Request, status int, username, message string) {
-	renderAuthenticationPage(w, r, status, loginPageData{Setup: true, SetupToken: r.FormValue("token"), CredentialOverride: a.credentialOverride, Username: username, Error: message})
+	renderAuthenticationPage(w, r, status, loginPageData{Setup: true, SetupToken: r.FormValue("token"), StartupCredentialsApplied: a.startupCredentialsApplied, Username: username, Error: message})
 }
 
 func (a *App) completeSetup(w http.ResponseWriter, r *http.Request) {

@@ -1,5 +1,7 @@
 # ScriptBoard
 
+Settings are grouped into My account, Users, Instance, Connections and notifications, and Maintenance. Editors open in drawers; display preferences apply only to the current browser.
+
 [简体中文](./README.md) | English
 
 **Manage one Windows or Linux host—files, scripts, and runtime status—from a browser.**
@@ -101,7 +103,7 @@ mkdir -p state
 3. Choose a username and password, then save to enter the application. Tokens last 24 hours; restart an unfinished installation to generate a new token.
 4. Open Resources → Host Files, select an existing script, or upload files and create a Quick Run.
 
-Existing accounts sign in normally. Automated deployments can provide `--admin-password-file` to skip setup; this configuration overrides the administrator password on every startup. Local account recovery remains available with `scriptboard admin reset`.
+Existing accounts sign in normally. Automated deployments can provide `--admin-password-file` to skip setup; the supplied credentials are written to the account database once during startup. Subsequent account edits take effect immediately. Local account recovery remains available with `scriptboard admin reset`.
 
 For multi-file uploads, ScriptBoard validates the whole batch before committing it, so a failed batch does not leave partial results. Files and directories can both be pinned to instance-wide Quick access. A pinned file opens its containing directory and focuses the file; display names and ordering can be edited in place.
 
@@ -158,6 +160,8 @@ For remote access, prefer a trusted VPN, zero-trust network, or HTTPS reverse pr
 ## MCP agent access
 
 ScriptBoard serves Streamable HTTP MCP at `POST /mcp` on the main listener by default. Authentication uses browser OAuth with PKCE; static tokens are neither required nor accepted. Point a remote-OAuth-capable agent at:
+
+Register clients under **Settings → Integrations and notifications → MCP clients and access**. After browser authorization, MCP can query status and run published Quick Runs. Content writes are performed by the Quick Run script.
 
 ```text
 http://127.0.0.1:8787/mcp
@@ -232,18 +236,11 @@ On the parent, add the target URL as a custom tab, select the target login-state
 
 ## Script memory limits
 
-Use **Settings → Memory limits** to set the total budget, default task limit and platform-specific limits. Restart the service after saving. Administrators and maintainers can edit these settings; environment variables and CLI arguments still take precedence.
+Use **Settings → Instance → Memory limits** to edit limits in a drawer. Administrators and maintainers can save limits to the instance state database. The default task limit applies to new tasks immediately after saving; active tasks retain their limits. Runner total and platform limits require a restart.
 
-Leave **Task memory limit** blank to inherit the default, or enter `512MiB`, `8GiB`, or `unlimited`. Limits include child processes. Run details retain the task limit used for that execution.
+Leave **Task memory limit** blank in tasks or Quick Runs to inherit the latest default, or enter `512MiB`, `8GiB`, or `unlimited`. Limits include child processes. Run details retain the task limit used for that execution.
 
-Set global limits in `config.yaml`, for example:
-
-```yaml
-runner_memory_limit: 8GiB
-run_memory_limit: 2GiB
-```
-
-Windows defaults: 4 GiB total, 4 GiB per Run, 2 GiB per process. Use `runner_process_memory_limit` to change the process limit. Linux defaults: 2 GiB across the Runner service, no additional per-Run limit. Linux `runner_swap_limit` defaults to `0`; it also accepts a capacity or `unlimited`. Managed Linux execution requires cgroup v2. Task memory settings do not change the swap policy.
+Windows defaults: 4 GiB total, 4 GiB per Run, 2 GiB per process. Edit the process limit in the Memory limits drawer. Linux defaults: 2 GiB across the Runner service, no additional per-Run limit. Linux swap defaults to `0`; it also accepts a capacity or `unlimited`. Managed Linux execution requires cgroup v2. Task memory settings do not change the swap policy.
 
 Apply global changes with elevated `scriptboard service restart`, or restart the Windows portable process. Linux global quotas are enforced by the managed service; portable task limits require a systemd service with delegated memory control. On Linux, use this command to synchronize service limits; a direct `systemctl restart` does not rewrite them. The Runner startup log reports the applied configuration.
 

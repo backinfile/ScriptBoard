@@ -3,20 +3,21 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "account.title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace settings-workspace">
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
+  {{template "settings-heading" .}}
   {{template "settings-navigation" .SettingsNavigation}}
   <section class="settings-content">
-      <header class="settings-section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "account.title"}}</h2><p>{{t .Locale "account.description"}}</p></div><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="log-out" aria-hidden="true"></span>{{t .Locale "shell.sign_out"}}</button></form></header>
+      <header class="settings-section-heading"><div><h2>{{t .Locale "account.title"}}</h2><p>{{t .Locale "account.description"}}</p></div><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="log-out" aria-hidden="true"></span>{{t .Locale "shell.sign_out"}}</button></form></header>
       <dl class="settings-summary"><div><dt>{{t .Locale "account.current_username"}}</dt><dd>{{.Username}}</dd></div></dl>
-      {{if .CredentialOverride}}<aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "account.override_notice"}}</p></aside>{{end}}
-      <section class="settings-block"><header class="section-heading"><div><p class="section-index">02</p><h3>{{t .Locale "account.security"}}</h3><p>{{t .Locale "account.security_description"}}</p></div></header><div class="account-action-list">
+      {{if .StartupCredentialsApplied}}<aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "account.override_notice"}}</p></aside>{{end}}
+      <section class="settings-block"><header class="section-heading"><div><h3>{{t .Locale "account.security"}}</h3><p>{{t .Locale "account.security_description"}}</p></div></header><div class="account-action-list">
         {{if .CanRename}}<a href="/settings/account/username" data-task-link><span data-lucide="signature" aria-hidden="true"></span><span><strong>{{t .Locale "account.change_username"}}</strong><small>{{t .Locale "account.change_username_hint"}}</small></span><span data-lucide="chevron-right" aria-hidden="true"></span></a>{{end}}
         <a href="/settings/account/password" data-task-link><span data-lucide="key-round" aria-hidden="true"></span><span><strong>{{t .Locale "account.change_password"}}</strong><small>{{t .Locale "account.change_password_hint"}}</small></span><span data-lucide="chevron-right" aria-hidden="true"></span></a>
 		<a href="/settings/account/mfa" data-task-link><span data-lucide="shield-check" aria-hidden="true"></span><span><strong>{{t .Locale "mfa.title"}}</strong><small>{{if .MFAEnabled}}{{t .Locale "mfa.enabled_hint"}}{{else}}{{t .Locale "mfa.disabled_hint"}}{{end}}</small></span><span data-lucide="chevron-right" aria-hidden="true"></span></a>
       </div></section>
-      <section class="settings-block"><header class="section-heading"><div><p class="section-index">03</p><h3>Agent connections</h3><p>OAuth clients currently authorized to act as this account.</p></div></header>
-        {{if .AgentAuthorizations}}<div class="account-action-list">{{range .AgentAuthorizations}}<div><span data-lucide="bot" aria-hidden="true"></span><span><strong>{{.ClientName}}</strong><small>{{.Scopes}} · {{.ClientID}}</small></span><form method="post" action="/settings/account/agents/{{.ID}}/revoke"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="unlink" aria-hidden="true"></span>Revoke</button></form></div>{{end}}</div>{{else}}<p>No agent connections are authorized.</p>{{end}}
-      </section>
+      <section class="settings-block"><div class="account-action-list"><a href="/settings/display" data-task-link><span data-lucide="palette" aria-hidden="true"></span><span><strong>{{t .Locale "display.title"}}</strong><small>{{t .Locale "display.browser_preference"}}</small></span><span data-lucide="chevron-right" aria-hidden="true"></span></a></div></section>
+{{if not .SettingsNavigation.CanManageExecution}}<section class="settings-block"><header class="section-heading"><div><h3>{{t .Locale "settings.agent_connections"}}</h3><p>{{t .Locale "settings.agent_hint"}}</p></div></header>
+        {{if .AgentAuthorizations}}<div class="account-action-list">{{range .AgentAuthorizations}}<div><span data-lucide="bot" aria-hidden="true"></span><span><strong>{{.ClientName}}</strong><small>{{.Scopes}} · {{.ClientID}}</small></span><form method="post" action="/settings/account/agents/{{.ID}}/revoke"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="unlink" aria-hidden="true"></span>{{t $.Locale "settings.revoke"}}</button></form></div>{{end}}</div>{{else}}<p>{{t .Locale "settings.agent_empty"}}</p>{{end}}
+      </section>{{end}}
   </section>
 </main>
 </body>

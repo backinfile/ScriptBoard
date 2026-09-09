@@ -1516,6 +1516,8 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
   }
 
   function initTaskPanelMain(main, cleanups) {
+    initDisplaySettings(cleanups, main);
+    initEmbeddingSettings(main, cleanups);
     renderIcons(main);
     localizeTimes(main);
     initDirectoryPickers(main, cleanups);
@@ -2598,6 +2600,18 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
           return;
         }
         if (submittingTaskState) {
+          // Refresh the instance name after saving in place so the shell reflects the saved value.
+          if (form.closest('[data-instance-name-settings]')) {
+            let nextBrand = result.document?.querySelector('.brand-name');
+            if (!nextBrand) {
+              try {
+                const shellResponse = await fetch(submittingTaskState.returnURL, { credentials: 'same-origin', headers: { Accept: 'text/html' } });
+                if (shellResponse.ok) nextBrand = new DOMParser().parseFromString(await shellResponse.text(), 'text/html').querySelector('.brand-name');
+              } catch { /* The saved name is still available on the next full navigation. */ }
+            }
+            const brand = document.querySelector('.brand-name');
+            if (brand && nextBrand) { brand.textContent = nextBrand.textContent; brand.className = nextBrand.className; }
+          }
           const returnURL = submittingTaskState.returnURL;
           const nextTask = result.document?.querySelector("main[data-task-page]");
           if (nextTask) {
@@ -6237,8 +6251,19 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     };
   }
 
-  function initDisplaySettings(cleanups) {
-    const root = document.querySelector("[data-display-settings]");
+  function initEmbeddingSettings(scope, cleanups) {
+    const mode = scope.querySelector('#embedding-mode');
+    const origins = scope.querySelector('#embedding-origins')?.closest('label');
+    if (!mode || !origins) return;
+    const update = () => { origins.hidden = mode.value !== 'specific'; };
+    mode.addEventListener('change', update);
+    update();
+    cleanups.push(() => mode.removeEventListener('change', update));
+  }
+
+  function initDisplaySettings(cleanups, scope = document) {
+    // Initialize browser preferences within the active drawer, without touching background controls.
+    const root = scope.matches?.('[data-display-settings]') ? scope : scope.querySelector('[data-display-settings]');
     if (!root) return;
     const options = Array.from(root.querySelectorAll('input[name="website_fault_color"]'));
     const selected = readWebsiteFaultColor();
@@ -8255,6 +8280,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     initExternalEntryForm(document, cleanups);
 	initVariableForm(document, cleanups);
     initDisplaySettings(cleanups);
+    initEmbeddingSettings(document, cleanups);
 	initSecurityDialogs(cleanups);
 	initMySQLDrawers(cleanups);
     initExternalKeyManagers(cleanups);
@@ -8318,7 +8344,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       const returnURL = taskPanelState.returnURL;
       if (destination.href === returnURL) {
         closeTaskPanel(true);
-      } else if (link.matches("[data-task-link]") && matchMedia("(min-width: 761px)").matches) {
+      } else if (link.matches("[data-task-link]") && (destination.pathname.startsWith("/settings/") || matchMedia("(min-width: 761px)").matches)) {
         openTask(destination.href, false, link);
       } else {
         closeTaskPanel(false);
@@ -8327,7 +8353,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       }
       return;
     }
-    if (link.matches("[data-task-link]") && matchMedia("(min-width: 761px)").matches) {
+    if (link.matches("[data-task-link]") && (destination.pathname.startsWith("/settings/") || matchMedia("(min-width: 761px)").matches)) {
       openTask(destination.href, true, link);
     } else {
       const mainNavigation = link.matches(".sidebar-nav a");
@@ -8477,7 +8503,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     } else if (form.hasAttribute("data-service-restart")) {
       event.preventDefault();
       submitServiceRestart(form, submitter);
-    } else if (form.hasAttribute("data-async")) {
+    } else if (form.hasAttribute("data-async") || form.closest(".task-panel .settings-editor")) {
       event.preventDefault();
       submitAsync(form, submitter);
 	} else if (form.closest("[data-custom-tabs-page]")) {

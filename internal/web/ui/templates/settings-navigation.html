@@ -1,16 +1,11 @@
 {{define "settings-navigation"}}
 <nav class="settings-nav" aria-label="{{t .Locale "settings.sections"}}">
-  <a href="/settings/account" {{if eq .Current "account"}}aria-current="page"{{end}}><span data-lucide="user-round" aria-hidden="true"></span>{{t .Locale "settings.account"}}</a>
-  {{if .CanManageUsers}}<a href="/settings/users" {{if eq .Current "users"}}aria-current="page"{{end}}><span data-lucide="users" aria-hidden="true"></span>{{t .Locale "users.title"}}</a>{{end}}
-  {{if .CanManageSystem}}
-  <a href="/settings/name" {{if eq .Current "name"}}aria-current="page"{{end}}><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "instance_name.title"}}</a>
-  <a href="/settings/nodes" {{if eq .Current "nodes"}}aria-current="page"{{end}}><span data-lucide="server-cog" aria-hidden="true"></span>{{t .Locale "fleet.settings_title"}}</a>
-  <a href="/settings/memory" {{if eq .Current "memory"}}aria-current="page"{{end}}><span data-lucide="memory-stick" aria-hidden="true"></span>{{t .Locale "memory_settings.title"}}</a>
-  <a href="/settings/embedding" {{if eq .Current "embedding"}}aria-current="page"{{end}}><span data-lucide="app-window" aria-hidden="true"></span>{{t .Locale "embedding.title"}}</a>
-  <a href="/settings/display" {{if eq .Current "display"}}aria-current="page"{{end}}><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "display.title"}}</a>
-  <a href="/settings/notifications" {{if eq .Current "notifications"}}aria-current="page"{{end}}><span data-lucide="bell-ring" aria-hidden="true"></span>{{t .Locale "notifications.title"}}</a>
-  <a href="/settings/state-backups" {{if eq .Current "state-backups"}}aria-current="page"{{end}}><span data-lucide="archive-restore" aria-hidden="true"></span>{{t .Locale "state_backups.title"}}</a>
-  <a href="/settings/updates" {{if eq .Current "updates"}}aria-current="page"{{end}}><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "updates.title"}}</a>
-  {{end}}
+<a href="/settings/account" {{if eq .Current "account"}}aria-current="page"{{end}}><span data-lucide="user-round" aria-hidden="true"></span>{{t .Locale "settings.personal"}}</a>
+{{if .CanManageUsers}}<a href="/settings/users" {{if eq .Current "users"}}aria-current="page"{{end}}><span data-lucide="users" aria-hidden="true"></span>{{t .Locale "users.title"}}</a>{{end}}
+{{if .CanManageSystem}}<a href="/settings/instance" {{if eq .Current "instance"}}aria-current="page"{{end}}><span data-lucide="sliders-horizontal" aria-hidden="true"></span>{{t .Locale "settings.instance"}}</a>{{end}}
+{{if or .CanManageSystem .CanManageExecution}}<a href="/settings/integrations" {{if eq .Current "integrations"}}aria-current="page"{{end}}><span data-lucide="plug" aria-hidden="true"></span>{{t .Locale "settings.integrations"}}</a>{{end}}
+{{if .CanManageSystem}}<a href="/settings/maintenance" {{if eq .Current "maintenance"}}aria-current="page"{{end}}><span data-lucide="wrench" aria-hidden="true"></span>{{t .Locale "settings.maintenance"}}</a>{{end}}
 </nav>
 {{end}}
+
+{{define "settings-heading"}}<header class="page-heading"><div><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.organized_hint"}}</p></div></header>{{end}}

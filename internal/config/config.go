@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"scriptboard/internal/resourcelimits"
+	"scriptboard/internal/store/memorysettings"
 	"strconv"
 	"strings"
 	"time"
@@ -142,8 +143,8 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.DurationVar(&result.RunTimeoutGrace, "run-timeout-grace", result.RunTimeoutGrace, "自动超时强杀宽限")
 	flags.BoolVar(&result.UpdateCheck, "update-check", result.UpdateCheck, "定期检查正式版更新")
 	flags.DurationVar(&result.UpdateInterval, "update-check-interval", result.UpdateInterval, "更新检查间隔")
-	flags.StringVar(&result.AdminUsername, "admin-username", result.AdminUsername, "权威管理员用户名覆盖")
-	flags.StringVar(&result.AdminPasswordFile, "admin-password-file", result.AdminPasswordFile, "权威管理员密码文件")
+	flags.StringVar(&result.AdminUsername, "admin-username", result.AdminUsername, "启动时写入管理员用户名")
+	flags.StringVar(&result.AdminPasswordFile, "admin-password-file", result.AdminPasswordFile, "启动时读取并写入管理员密码")
 	frameAncestorFlagSeen := false
 	flags.Func("frame-ancestor", "允许嵌入本实例的 HTTP/HTTPS Origin（可重复）", func(value string) error {
 		if !frameAncestorFlagSeen {
@@ -255,6 +256,14 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 				return Config{}, fmt.Errorf("可信代理 %q 无效", trusted)
 			}
 		}
+	}
+	// Stored settings take precedence after the initial startup migration.
+	storedMemory, err := memorysettings.Read(result.StateRoot)
+	if err != nil {
+		return Config{}, err
+	}
+	if storedMemory.Revision != "0" {
+		result.Memory = storedMemory.Memory
 	}
 	result.Memory = result.Memory.Resolved()
 	if err := result.Memory.Validate(); err != nil {
