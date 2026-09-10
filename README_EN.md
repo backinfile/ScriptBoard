@@ -1,6 +1,6 @@
 # ScriptBoard
 
-Settings are grouped into My account, Users, Instance, Connections and notifications, and Maintenance. Editors open in drawers; display preferences apply only to the current browser.
+v2.11 adds image registry cleanup and instance memory settings. Settings are grouped into My account, Users, Instance, Connections and notifications, and Maintenance. Editors open in drawers; display preferences apply only to the current browser.
 
 [简体中文](./README.md) | English
 
