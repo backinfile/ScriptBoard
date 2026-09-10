@@ -1074,7 +1074,9 @@ async function assertStatusDisplaySettings(page, baseURL) {
 
 async function assertUserManagement(page, baseURL) {
   await page.goto(`${baseURL}/settings/users`);
-  assert.equal((await page.locator("main h1").textContent()).trim(), "Users");
+  // Grouped settings retain a stable page heading above the users section.
+  assert.equal((await page.locator("main h1").textContent()).trim(), "Settings");
+  assert.equal(await page.locator('.settings-nav a[href="/settings/users"]').getAttribute("aria-current"), "page");
   const createLink = page.locator('a[href="/settings/users/create"][data-task-link]');
   assert.equal(await createLink.count(), 1);
   assert.equal(await page.locator('form[action="/settings/users"]').count(), 0);
@@ -1223,7 +1225,11 @@ async function assertAccountSettings(page, baseURL) {
   await page.reload();
   await assertNoHorizontalOverflow(page, "Account settings mobile");
   assert.equal(await page.locator('.settings-nav a[href="/settings/users"]').isVisible(), true);
-  assert.equal(await page.locator(".settings-nav").evaluate(element => getComputedStyle(element).overflowX), "auto");
+  // Category links wrap on mobile so every entry remains within the viewport.
+  assert.equal(await page.locator(".settings-nav").evaluate(element => getComputedStyle(element).flexWrap), "wrap");
+  const settingsLinksFit = await page.locator(".settings-nav a").evaluateAll(links =>
+    links.every(link => { const bounds = link.getBoundingClientRect(); return bounds.left >= 0 && bounds.right <= innerWidth; }));
+  assert.ok(settingsLinksFit, "mobile settings category links extend outside the viewport");
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
 
@@ -2572,7 +2578,8 @@ async function assertExternalInterfaces(page, fixture) {
       chinesePage.locator('[data-login-form] button[type="submit"]').click(),
     ]);
     await chinesePage.goto(`${fixture.baseURL}/settings/users`);
-    assert.equal((await chinesePage.locator("main h1").textContent()).trim(), "用户");
+    assert.equal((await chinesePage.locator("main h1").textContent()).trim(), "设置");
+    assert.equal(await chinesePage.locator('.settings-nav a[href="/settings/users"]').getAttribute("aria-current"), "page");
     const createUserTask = chinesePage.locator('a[href="/settings/users/create"][data-task-link]');
     assert.equal(await createUserTask.count(), 1);
     await createUserTask.click();
