@@ -1048,7 +1048,7 @@ async function assertStatusDisplaySettings(page, baseURL) {
   const settings = page.locator(".task-panel [data-display-settings]");
   await settings.waitFor();
   assert.equal(
-    await page.locator('.settings-nav a[href="/settings/account"]').getAttribute("aria-current"),
+    await page.locator('.settings-nav a[href="/settings/account"]:visible').getAttribute("aria-current"),
     "page",
   );
   const magenta = settings.locator('input[name="website_fault_color"][value="magenta"]');
