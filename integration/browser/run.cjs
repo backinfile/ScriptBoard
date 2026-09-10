@@ -1042,11 +1042,13 @@ async function assertWebsiteMonitoring(page, baseURL) {
 }
 
 async function assertStatusDisplaySettings(page, baseURL) {
-  await page.goto(`${baseURL}/settings/display`);
-  const settings = page.locator("[data-display-settings]");
+  // Exercise display preferences through the grouped account drawer entry.
+  await page.goto(`${baseURL}/settings/account`);
+  await page.locator('main a[href="/settings/display"][data-task-link]').click();
+  const settings = page.locator(".task-panel [data-display-settings]");
   await settings.waitFor();
   assert.equal(
-    await page.locator('.settings-nav a[href="/settings/display"]').getAttribute("aria-current"),
+    await page.locator('.settings-nav a[href="/settings/account"]').getAttribute("aria-current"),
     "page",
   );
   const magenta = settings.locator('input[name="website_fault_color"][value="magenta"]');
@@ -1151,14 +1153,10 @@ async function assertViewerCannotManageMySQL(browser, baseURL, password) {
 const administratorSettingsHrefs = [
   "/settings/account",
   "/settings/users",
-  "/settings/name",
-  "/settings/nodes",
-  "/settings/memory",
-  "/settings/embedding",
-  "/settings/display",
-  "/settings/notifications",
-  "/settings/state-backups",
-  "/settings/updates",
+  // Keep navigation coverage aligned with the five settings categories.
+  "/settings/instance",
+  "/settings/integrations",
+  "/settings/maintenance",
 ];
 
 async function assertAdministratorSettingsNavigation(page) {
