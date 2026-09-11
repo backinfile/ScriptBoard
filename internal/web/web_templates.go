@@ -3,23 +3,38 @@ package web
 import "scriptboard/internal/identity"
 
 type settingsNavigationData struct {
-	Locale          webLocale
-	Current         string
-	CanManageUsers  bool
-	CanManageSystem bool
+	Locale             webLocale
+	Current            string
+	CanManageUsers     bool
+	CanManageSystem    bool
+	CanManageExecution bool
 }
 
 func newSettingsNavigation(current session, locale webLocale, active string) settingsNavigationData {
+	// Group settings by intent while retaining each destination's permission boundary.
+	switch active {
+	case "name", "memory":
+		active = "instance"
+	case "nodes", "embedding", "notifications", "mcp":
+		active = "integrations"
+	case "state-backups", "updates":
+		active = "maintenance"
+	case "display":
+		active = "account"
+	}
 	return settingsNavigationData{
 		Locale: locale, Current: active,
-		CanManageUsers:  identity.Allows(current.role, identity.PermissionManageUsers),
-		CanManageSystem: identity.Allows(current.role, identity.PermissionManageSystem),
+		CanManageExecution: identity.Allows(current.role, identity.PermissionManageExecution),
+		CanManageUsers:     identity.Allows(current.role, identity.PermissionManageUsers),
+		CanManageSystem:    identity.Allows(current.role, identity.PermissionManageSystem),
 	}
 }
 
 // Inline-free template declarations keep page markup in ui/templates while
 // preserving the single-binary deployment provided by go:embed.
 var (
+	registriesTemplate                = mustWebTemplate("registries")
+	settingsHubTemplate               = mustWebTemplate("settings-hub")
 	accountTemplate                   = mustWebTemplate("account")
 	applicationErrorTemplate          = mustWebTemplate("application-error")
 	applicationShellTemplate          = mustWebTemplate("application-shell")
@@ -33,6 +48,7 @@ var (
 	deleteImpactTemplate              = mustWebTemplate("delete-impact")
 	displaySettingsTemplate           = mustWebTemplate("display-settings")
 	documentsTemplate                 = mustWebTemplate("documents")
+	memorySettingsTemplate            = mustWebTemplate("memory-settings")
 	embeddingSettingsTemplate         = mustWebTemplate("embedding-settings")
 	instanceNameSettingsTemplate      = mustWebTemplate("instance-name-settings")
 	fleetNodeSettingsTemplate         = mustWebTemplate("fleet-node-settings")

@@ -162,6 +162,7 @@ func (r *activeRun) signalChanged() {
 }
 
 type Manager struct {
+	defaultMemoryMu     sync.RWMutex
 	defaultMemory       string
 	db                  *sql.DB
 	auditLog            *auditlog.Store
@@ -423,10 +424,7 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 
 func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	if prepared.memoryLimit == "" {
-		prepared.memoryLimit = m.defaultMemory
-		if prepared.memoryLimit == "" {
-			prepared.memoryLimit = resourcelimits.Defaults().PerRun
-		}
+		prepared.memoryLimit = m.DefaultMemory()
 	}
 	id := prepared.id
 	leaseID := "run:" + id
@@ -1610,5 +1608,18 @@ func ParseArguments(input string) ([]string, error) {
 	return arguments, nil
 }
 
-// SetDefaultMemory is configured before the manager starts accepting requests.
-func (m *Manager) SetDefaultMemory(value string) { m.defaultMemory = value }
+// SetDefaultMemory updates the default for future starts without changing active runs.
+func (m *Manager) SetDefaultMemory(value string) {
+	m.defaultMemoryMu.Lock()
+	defer m.defaultMemoryMu.Unlock()
+	m.defaultMemory = value
+}
+
+func (m *Manager) DefaultMemory() string {
+	m.defaultMemoryMu.RLock()
+	defer m.defaultMemoryMu.RUnlock()
+	if m.defaultMemory == "" {
+		return resourcelimits.Defaults().PerRun
+	}
+	return m.defaultMemory
+}

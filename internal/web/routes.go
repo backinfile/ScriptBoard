@@ -41,6 +41,9 @@ func (a *App) routes() http.Handler {
 	mux.Public("GET /assets/workflow.css", func(w http.ResponseWriter, r *http.Request) {
 		serveWebAsset(w, r, "text/css; charset=utf-8", mustWebAsset("ui/assets/workflow.css"))
 	})
+	mux.Handle("GET /resources/registries", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.registriesPage)))
+	mux.Handle("GET /resources/registries/task", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.registriesPage)))
+	mux.Handle("POST /resources/registries/{command}", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.registryMutation)))
 	mux.Handle("GET /resources/workbench", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchPage)))
 	mux.Handle("GET /resources/workbench/state", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchState)))
 	mux.Handle("GET /resources/workbench/events", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchEvents)))
@@ -234,6 +237,9 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/websites/{id}/resume", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.resumeWebsiteMonitor)))
 	mux.Handle("POST /monitor/websites/{id}/move", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.moveWebsiteMonitor)))
 	mux.Handle("POST /monitor/websites/{id}/delete", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitor)))
+	mux.Handle("GET /settings/instance", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.settingsHubPage)))
+	mux.Handle("GET /settings/integrations", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.settingsHubPage)))
+	mux.Handle("GET /settings/maintenance", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.settingsHubPage)))
 	mux.Handle("GET /settings/account", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		mfaStatus, err := a.mfa.Status(current.userID)
@@ -253,17 +259,17 @@ func (a *App) routes() http.Handler {
 		}
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = accountTemplate.Execute(response, struct {
-			Username, CSRFToken string
-			CredentialOverride  bool
-			CanRename           bool
-			MFAEnabled          bool
-			Locale              webLocale
-			SettingsNavigation  settingsNavigationData
-			AgentAuthorizations []mcpaccess.AuthorizationView
+			Username, CSRFToken       string
+			StartupCredentialsApplied bool
+			CanRename                 bool
+			MFAEnabled                bool
+			Locale                    webLocale
+			SettingsNavigation        settingsNavigationData
+			AgentAuthorizations       []mcpaccess.AuthorizationView
 		}{
 			Username: current.username, CSRFToken: current.csrfToken,
-			CredentialOverride: a.credentialOverride && current.role == identity.RoleAdministrator,
-			CanRename:          current.role == identity.RoleAdministrator, MFAEnabled: mfaStatus.Enabled || len(passkeyUser.Credentials) > 0, Locale: resolveWebLocale(request),
+			StartupCredentialsApplied: a.startupCredentialsApplied && current.role == identity.RoleAdministrator,
+			CanRename:                 current.role == identity.RoleAdministrator, MFAEnabled: mfaStatus.Enabled || len(passkeyUser.Credentials) > 0, Locale: resolveWebLocale(request),
 			SettingsNavigation:  newSettingsNavigation(current, resolveWebLocale(request), "account"),
 			AgentAuthorizations: agentAuthorizations,
 		})
@@ -293,6 +299,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/users/{id}/enable", a.requireStepUp(identity.PermissionManageUsers, http.HandlerFunc(a.enableUser)))
 	mux.Handle("POST /settings/users/{id}/update", a.requireStepUp(identity.PermissionManageUsers, http.HandlerFunc(a.updateUser)))
 	mux.Handle("POST /settings/users/{id}/reset-password", a.requireStepUp(identity.PermissionManageUsers, http.HandlerFunc(a.resetUserPassword)))
+	mux.Handle("GET /settings/memory", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.memorySettingsPage)))
+	mux.Handle("POST /settings/memory", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.updateMemorySettings)))
 	mux.Handle("GET /settings/embedding", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.embeddingSettingsPage)))
 	mux.Handle("POST /settings/embedding", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.updateEmbeddingSettings)))
 	mux.Handle("GET /settings/name", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.instanceNameSettingsPage)))
@@ -301,7 +309,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /settings/nodes/access-tokens/new", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.newFleetAccessTokenTask)))
 	mux.Handle("POST /settings/nodes/access-tokens", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.createFleetAccessToken)))
 	mux.Handle("POST /settings/nodes/access-tokens/{id}/delete", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.revokeFleetAccessToken)))
-	mux.Handle("GET /settings/display", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Handle("GET /settings/display", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		locale := resolveWebLocale(request)
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")

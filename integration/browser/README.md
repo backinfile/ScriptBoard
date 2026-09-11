@@ -68,3 +68,7 @@ Every successful or failed run may rewrite tracked screenshots. Review image dif
 - Add a focused mobile check when a workflow changes shape at narrow widths.
 - Treat console errors as failures.
 - Keep dependencies inside this directory so the production Go build stays self-contained.
+
+### 设置抽屉本地回归
+
+启动本地 browser fixture 后，运行 `node settings-drawers-local.cjs`。默认访问 `http://127.0.0.1:18879`，可通过 `SCRIPTBOARD_TEST_URL` 指定地址；使用 fixture 管理员账号。`SCRIPTBOARD_TEST_OUTPUT` 指定报告和截图目录。覆盖五类设置、编辑抽屉、保存与校验、焦点恢复、中英文窄屏和无 JavaScript 访问。测试数据保留。

@@ -148,3 +148,11 @@ test-workflow-custom-actions.cjs 通过：卡片仅保留右下角更多按钮�
 - 外部 Chrome 自动化通过：五页签 URL/刷新、前进后退实例保留、无效参数、说明页入口检查、指南与示例下载、导入导出一致性、导入示例执行、非法图不写入、移动端布局及无整页导航。
 - 测试脚本：scripts/test-workflow-transfer.cjs；测试工作流 e47c74696ed302629fb9b31e48bd7937 保留。
 - Entry 操作回归通过（test-workflow-editor-actions.cjs）；旧浏览器测试统一按文档导航请求统计整页刷新，兼容 History API 地址更新。
+
+## 2026-09-11 合并 dev 验证
+
+- 同步 dev 9b32b89，保留镜像管理、内存设置及 Kubernetes 历史导航；整合工作流初始化、路由和导航。英文 README 更新为已实现功能说明。
+- go vet -p 1 ./... 与应用构建通过；本地部署已更新并保留。
+- go test -p 1 ./... -count=1：Web 包通过（250.425 秒），工作流包通过（2.636 秒），其余包通过，hostfiles 包有 5 项 Windows ACL 测试因 Access is denied 失败。全部 5 项在未合并的 dev 上复现，属于当前执行环境限制。
+- 外部 Chrome：导入导出/AI 指南/URL 历史、Entry 配置和跳转、真实脚本重试与分次日志、等待取消通过。保留测试数据及部署。
+- 主目录未跟踪的 docs/previews/registry-management.html 保持原内容。

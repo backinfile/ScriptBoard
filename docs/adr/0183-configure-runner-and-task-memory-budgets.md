@@ -4,11 +4,17 @@
 
 ## 配置与记录
 
-新增 `runner_memory_limit`（并发总额度）、`run_memory_limit`（任务默认额度）、`runner_process_memory_limit`（Windows 单进程）与 `runner_swap_limit`（Linux 服务 swap）。支持 YAML、同名大写 SCRIPTBOARD_ 环境变量及连字符 CLI 选项；沿用 CLI > 环境变量 > YAML > 默认值的优先级。
+Runner 总额度、任务默认额度、Windows 单进程额度与 Linux swap 额度保存在 State Root 的 runner-memory.db。首次启动将已有启动额度写入状态库；以后 Web、Runner 和服务重启流程读取持久值。
 
 内存容量使用正整数及 B/KiB/MiB/GiB/TiB；unlimited 是明确的不限额选择。swap 额外接受 0。负数、溢出和不支持的平台选项必须报错。默认值保持原有 Windows 4 GiB 总量、4 GiB Run、2 GiB 单进程，以及 Linux 2 GiB 总量、swap 0。
 
 手动、一次性、快捷和计划任务支持继承或指定额度。快捷项内存变更发布新 revision；复制、重跑、外部快捷触发与 MCP 快捷触发保留额度。Schema 69 为 quick_runs、schedules 与 runs 添加 memory_limit；旧任务默认继承，Run 创建时记录解析后的当次额度。
+
+## 设置页
+
+`/settings/memory` 由系统管理权限和最近认证保护，抽屉保存固定内存字段到独立 SQLite 状态库。受管 Web 通过 Broker 的一次性 capability 写入启动时绑定的 State Root；便携模式直接写入。数据库 revision 拒绝过期表单。页面区分已保存额度与生效额度，保存不触发自动重启。
+
+Runner 只获得此非秘密策略数据库的读取权；无需读取账户数据库。SQLite 使用 DELETE 日志模式，读取不需要目录写权限。私有状态备份以一致性快照包含内存策略并随恢复替换。
 
 ## 执行边界
 
@@ -20,6 +26,6 @@ Linux 在受管 cgroup v2 服务上委派 memory 控制器。Runner 位于 super
 
 ## 生效与诊断
 
-全局配置在 Runner 重启时生效。Linux 服务启动、应用级重启及版本切换同步受管 unit 的资源字段，不覆盖其他属性；Runner 再核验实际 memory.max 与 memory.swap.max，不一致或委派不可用时明确失败。doctor 列出配置，Runner 启动日志报告应用结果。按任务修改只影响后续运行。
+默认任务额度在数据库保存成功后发布到运行管理器，通过读写锁保证并发安全；保存与发布串行执行，保存失败不改变默认值。新任务在启动时解析并固定额度，快捷执行显式额度优先，留空继承最新默认值。Runner 总额度和平台专属额度在 Runner 重启时生效。Linux 服务启动、应用级重启及版本切换同步受管 unit 的资源字段，不覆盖其他属性；Runner 再核验实际 memory.max 与 memory.swap.max，不一致或委派不可用时明确失败。doctor 列出配置，Runner 启动日志报告应用结果。按任务修改只影响后续运行。
 
 Windows 额度约束提交内存，Linux memory.max 约束 cgroup 内存记账，二者不是完全相同的物理内存指标。任务指定更高额度不会突破总额度；unlimited 不突破系统或上级约束，也不隐式修改 swap。

@@ -1,5 +1,7 @@
 # ScriptBoard
 
+v2.11 新增镜像仓库清理与实例内存设置。设置按“我的账户、用户、实例设置、接入与通知、系统维护”组织，编辑在抽屉中完成；显示偏好仅保存在当前浏览器。
+
 简体中文 | [English](./README_EN.md)
 
 **在浏览器中管理 Windows 或 Linux 主机上的文件、脚本和运行状态。**
@@ -21,8 +23,9 @@ ScriptBoard 适合个人服务器、小团队工具机和内部运维主机。�
 - 运行 PowerShell、Python、Shell、Batch 和 CMD 脚本
 - 保存常用任务，并按计划自动运行
 - 查看 CPU、内存、存储、应用和运行历史
-- 查看 Docker、Kubernetes（含 NodePort、LoadBalancer 与 Ingress 外部入口）和网站状态；Kubernetes 外部访问、工作负载与节点默认折叠，支持局部刷新
+- 查看 Docker、Kubernetes（含 NodePort、LoadBalancer 与 Ingress 外部入口）和网站状态；Kubernetes 外部访问、工作负载与节点默认折叠，手动刷新、自动刷新开关与全部展开/收起按钮集中在同一行，筛选、搜索与排序仅更新工作负载区域
 - 在统一数据库工作台中备份和恢复 MySQL/MariaDB，并查看 Redis 数据
+- 在“资源 → 镜像仓库”切换 Registry 连接，查看版本，并按 namespace、名称前缀或 tag 规则预览和批量删除镜像
 - 管理用户、角色、审计记录和外部调用
 
 <p align="center">
@@ -73,22 +76,19 @@ sudo ./scriptboard-vX.Y.Z-linux-amd64.run
 3. 设置用户名和密码，保存后自动进入应用。令牌有效期为 24 小时；未完成设置时重启服务会生成新令牌。
 4. 前往“资源 → 文件”，选择已有脚本或上传文件，然后开始运行。
 
-已有账号直接登录。自动部署可配置 `--admin-password-file` 跳过首次设置；该配置会在每次启动时覆盖管理员密码。忘记密码时使用下方的本机恢复命令。
+已有账号直接登录。自动部署可配置 `--admin-password-file` 跳过首次设置；每次启动时会将指定凭据写入数据库一次，运行期间以账户设置为准。忘记密码时使用下方的本机恢复命令。
 
 编辑 Redis 连接时，密码留空会保留原密码；无密码实例修改地址、端口或 TLS 设置时，请明确勾选“使用空密码”。
 
+镜像仓库支持 Docker Registry V2 目录接口、HTTP、HTTPS 和显式跳过证书验证（存在中间人攻击风险）。删除前会在抽屉中列出同一 digest 关联的全部 tag；规则按镜像创建时间手动执行。Registry 需启用删除功能，释放磁盘空间还需服务端垃圾回收。目录或 tag 枚举超出限制时会拒绝生成清理计划，请缩小范围。
+
 ## 脚本内存限制
 
-任务表单的“任务内存上限”留空继承默认值，也可填写 `512MiB`、`8GiB` 或 `unlimited`。额度包含子进程；运行详情保留当次任务额度。
+在“设置 → 实例设置 → 内存限制”抽屉中调整总额度、默认任务额度及平台专属额度。管理员和维护者可修改；额度保存在实例状态库中。默认任务额度保存后立即用于新任务，运行中任务不变；Runner 总额度和平台专属额度重启后生效。
 
-在 `config.yaml` 中设置全局额度，例如：
+任务或快捷执行的“任务内存上限”留空继承最新默认值，也可填写 `512MiB`、`8GiB` 或 `unlimited`。额度包含子进程；运行详情保留当次任务额度。
 
-```yaml
-runner_memory_limit: 8GiB
-run_memory_limit: 2GiB
-```
-
-Windows 默认总额度 4 GiB、每次运行 4 GiB、单进程 2 GiB；单进程额度通过 `runner_process_memory_limit` 调整。Linux 默认 Runner 服务总额度 2 GiB，每次运行不另设上限；`runner_swap_limit` 默认为 `0`，也可设置容量或 `unlimited`。Linux 受管执行需要 cgroup v2；按任务设置内存不会自动改变 swap 策略。
+Windows 默认总额度 4 GiB、每次运行 4 GiB、单进程 2 GiB；单进程额度在内存限制抽屉中调整。Linux 默认 Runner 服务总额度 2 GiB，每次运行不另设上限；swap 额度默认为 `0`，也可设置容量或 `unlimited`。Linux 受管执行需要 cgroup v2；按任务设置内存不会自动改变 swap 策略。
 
 全局配置修改后，以管理员身份运行 `scriptboard service restart` 生效；Windows 便携运行重新启动进程。Linux 全局额度由受管服务实施，便携运行的任务限额需要置于委派了 memory 控制器的 systemd 服务中。Linux 请使用此命令同步服务额度，直接 `systemctl restart` 不会重写额度。Runner 启动日志显示已应用的配置。
 
@@ -101,6 +101,8 @@ Windows 默认总额度 4 GiB、每次运行 4 GiB、单进程 2 GiB；单进程
 ## MCP Agent 接入
 
 ScriptBoard 默认在主服务的 `POST /mcp` 提供 Streamable HTTP MCP，并使用浏览器 OAuth + PKCE 登录，不需要也不接受静态 Token。将支持远程 MCP OAuth 的 Agent 指向：
+
+在“设置 → 接入与通知 → MCP 客户端与授权”注册客户端。浏览器授权后，可通过 MCP 查询状态及运行已发布的快捷执行；内容写入由快捷执行脚本完成。
 
 ```text
 http://127.0.0.1:8787/mcp

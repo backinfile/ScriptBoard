@@ -3,10 +3,10 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "updates.title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace settings-workspace" data-updates-page data-update-installing-title="{{t .Locale "updates.installing_title"}}" data-update-installing-description="{{t .Locale "updates.installing_description"}}" data-update-start-error="{{t .Locale "updates.start_error"}}" data-restart-title="{{t .Locale "updates.restarting_title"}}" data-restart-description="{{t .Locale "updates.restarting_description"}}" data-restart-error="{{t .Locale "updates.restart_failed"}}">
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
+  {{template "settings-heading" .}}
   {{template "settings-navigation" .SettingsNavigation}}
   <section class="settings-content">
-      <header class="settings-section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "updates.title"}}</h2><p>{{t .Locale "updates.description"}}</p></div>
+      <header class="settings-section-heading"><div><h2>{{t .Locale "updates.title"}}</h2><p>{{t .Locale "updates.description"}}</p></div>
         <div class="settings-section-heading__actions">
           <span class="status-chip" data-state="{{if .Snapshot.UpdateAvailable}}attention{{else}}enabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Snapshot.UpdateAvailable}}{{t .Locale "updates.available"}}{{else if .Snapshot.LocalNewer}}{{t .Locale "updates.local_newer"}}{{else}}{{t .Locale "updates.current"}}{{end}}</span>
           <div class="settings-section-heading__buttons">
@@ -16,6 +16,8 @@
         </div>
       </header>
       {{if .RestartRequested}}<aside class="update-reconnect" role="status"><span data-lucide="loader-circle" aria-hidden="true"></span><div><strong>{{t .Locale "updates.restarting_title"}}</strong><p>{{t .Locale "updates.restart_manual_description"}}</p></div></aside>{{end}}
+      <dl class="settings-summary"><div><dt>{{t .Locale "updates.installed"}}</dt><dd><code>{{.Snapshot.Build.Version}}</code></dd></div></dl>
+      <details class="settings-block"><summary>{{t .Locale "settings.details"}}</summary>
       <dl class="settings-summary">
         <div><dt>{{t .Locale "updates.installed"}}</dt><dd><code>{{.Snapshot.Build.Version}}</code><small>{{.Snapshot.Build.Commit}}</small></dd></div>
         <div><dt>{{t .Locale "updates.built_at"}}</dt><dd>{{if .BuiltAt.IsZero}}—{{else}}<time datetime="{{machineTime .BuiltAt}}" data-local-time>{{displayTime .BuiltAt}}</time>{{end}}</dd></div>
@@ -26,12 +28,12 @@
         <div><dt>{{t .Locale "updates.last_checked"}}</dt><dd>{{if .Snapshot.CheckedAt.IsZero}}—{{else}}<time datetime="{{machineTime .Snapshot.CheckedAt}}" data-local-time>{{displayTime .Snapshot.CheckedAt}}</time>{{end}}</dd></div>
         <div><dt>{{t .Locale "updates.next_check"}}</dt><dd>{{if .Snapshot.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Snapshot.NextCheckAt}}" data-local-time>{{displayTime .Snapshot.NextCheckAt}}</time>{{end}}</dd></div>
         <div><dt>{{t .Locale "updates.active_runs"}}</dt><dd>{{.ActiveRuns}}</dd></div>
-      </dl>
+      </dl></details>
       {{if .Capability}}<aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{.Capability}}</p></aside>{{end}}
       {{if .Snapshot.LastError}}<aside class="inline-notice inline-notice--danger"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>{{.Snapshot.LastError}}</p></aside>{{end}}
       {{if .Snapshot.Latest}}
       <section class="settings-block">
-        <header class="section-heading"><div><p class="section-index">02</p><h3>{{t .Locale "updates.latest"}} <code>{{.Snapshot.Latest.Version}}</code></h3><p>{{if .LatestPublished.IsZero}}{{.Snapshot.Latest.PublishedAt}}{{else}}{{displayTime .LatestPublished}}{{end}}</p></div>{{if .Snapshot.ReleaseURL}}<a class="button button--compact" href="{{.Snapshot.ReleaseURL}}" target="_blank" rel="noreferrer">{{t .Locale "updates.release_page"}}</a>{{end}}</header>
+        <header class="section-heading"><div><h3>{{t .Locale "updates.latest"}} <code>{{.Snapshot.Latest.Version}}</code></h3><p>{{if .LatestPublished.IsZero}}{{.Snapshot.Latest.PublishedAt}}{{else}}{{displayTime .LatestPublished}}{{end}}</p></div>{{if .Snapshot.ReleaseURL}}<a class="button button--compact" href="{{.Snapshot.ReleaseURL}}" target="_blank" rel="noreferrer">{{t .Locale "updates.release_page"}}</a>{{end}}</header>
         {{if .LatestAsset}}<p><code>{{.LatestAsset}}</code> · {{.LatestSize}}</p>{{end}}
         {{if .Snapshot.ReleaseNotes}}<pre class="update-release-notes">{{.Snapshot.ReleaseNotes}}</pre>{{end}}
         {{if and .Snapshot.UpdateAvailable .Snapshot.CanApply}}
@@ -46,7 +48,7 @@
         {{end}}
       </section>
       {{end}}
-      {{if .Snapshot.Operation}}<section class="settings-block"><header class="section-heading"><div><p class="section-index">03</p><h3>{{t .Locale "updates.operation"}}</h3></div></header><dl class="settings-summary"><div><dt>ID</dt><dd><code>{{.Snapshot.Operation.ID}}</code></dd></div><div><dt>{{t .Locale "common.status"}}</dt><dd><code>{{.Snapshot.Operation.Phase}}</code></dd></div><div><dt>{{t .Locale "updates.target"}}</dt><dd><code>{{.Snapshot.Operation.TargetVersion}}</code></dd></div><div><dt>{{t .Locale "updates.operation_started"}}</dt><dd><time datetime="{{.Snapshot.Operation.CreatedAt}}" data-local-time>{{.Snapshot.Operation.CreatedAt}}</time></dd></div></dl>{{if .Snapshot.Operation.Error}}<p class="field-error">{{.Snapshot.Operation.Error}}</p>{{end}}</section>{{end}}
+      {{if .Snapshot.Operation}}<section class="settings-block"><header class="section-heading"><div><h3>{{t .Locale "updates.operation"}}</h3></div></header><dl class="settings-summary"><div><dt>ID</dt><dd><code>{{.Snapshot.Operation.ID}}</code></dd></div><div><dt>{{t .Locale "common.status"}}</dt><dd><code>{{.Snapshot.Operation.Phase}}</code></dd></div><div><dt>{{t .Locale "updates.target"}}</dt><dd><code>{{.Snapshot.Operation.TargetVersion}}</code></dd></div><div><dt>{{t .Locale "updates.operation_started"}}</dt><dd><time datetime="{{.Snapshot.Operation.CreatedAt}}" data-local-time>{{.Snapshot.Operation.CreatedAt}}</time></dd></div></dl>{{if .Snapshot.Operation.Error}}<p class="field-error">{{.Snapshot.Operation.Error}}</p>{{end}}</section>{{end}}
   </section>
 
   <div class="update-source-drawer-host{{if .ShowSourceDrawer}} is-open{{end}}" data-update-source-drawer aria-hidden="{{if .ShowSourceDrawer}}false{{else}}true{{end}}">

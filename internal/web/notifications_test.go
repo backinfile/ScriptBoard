@@ -14,7 +14,7 @@ func TestNotificationsPageIsReadOnlyAndStatesImplementedCoverage(t *testing.T) {
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state")})
 	page := getSecurityPage(t, client, serverURL+"/settings/notifications")
 	for _, expected := range [][]byte{
-		[]byte("Notifications and alerts"),
+		[]byte("Notification status"),
 		[]byte("Every committed audit event"),
 		[]byte("No alert records yet"),
 		[]byte("Broker email fixed templates"),

@@ -208,10 +208,38 @@ func registryTestConnections(t *testing.T, authorizer Authorizer, service Regist
 }
 
 type fixtureRegistryService struct {
+	managementCalls               int
 	operationID, cardID, password string
 	prepares, commits, tests      int
 	deletes                       int
 	insecureRegistrations         int
+}
+
+func (service *fixtureRegistryService) Manage(_ context.Context, request registrymonitor.ManagementRequest) (registrymonitor.ManagementResponse, error) {
+	service.managementCalls++
+	return registrymonitor.ManagementResponse{ID: request.ID}, nil
+}
+
+func TestRegistryManagementRequiresPrivilegedSessionAcrossBroker(t *testing.T) {
+	for _, role := range []string{"maintainer", "viewer"} {
+		t.Run(role, func(t *testing.T) {
+			service := &fixtureRegistryService{}
+			connections := registryTestConnections(t, &fixtureAuthorizer{actor: Actor{UserID: role, Role: role}}, service)
+			ctx := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "registry-manage-role"})
+			for _, command := range []string{"list", "save", "preview", "execute"} {
+				_, err := connections.Manage(ctx, registrymonitor.ManagementRequest{Command: command, ID: "managed-test"})
+				if (err == nil) != (role == "maintainer") {
+					t.Fatalf("%s: %v", command, err)
+				}
+			}
+			if role == "viewer" && service.managementCalls != 0 {
+				t.Fatal("viewer reached registry management")
+			}
+			if _, err := connections.Manage(context.Background(), registrymonitor.ManagementRequest{Command: "list"}); err == nil {
+				t.Fatal("accepted missing session")
+			}
+		})
+	}
 }
 
 func (service *fixtureRegistryService) Prepare(_ context.Context, operationID, cardID string, _ registrymonitor.Config, password string, _ bool) error {

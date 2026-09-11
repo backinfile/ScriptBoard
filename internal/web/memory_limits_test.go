@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"scriptboard/internal/store/memorysettings"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,52 @@ func TestTaskMemoryLimitPersistence(t *testing.T) {
 	post("/config/schedules/"+scheduleID+"/run", url.Values{}, http.StatusSeeOther)
 	if err := db.QueryRow("SELECT memory_limit FROM runs WHERE source_id=? ORDER BY created_at DESC LIMIT 1", scheduleID).Scan(&memory); err != nil || memory != "128MiB" {
 		t.Fatalf("scheduled run=%s %v", memory, err)
+	}
+
+	// Saving a default affects subsequent inherited runs while each existing run retains its snapshot.
+	post("/config/quick-runs", url.Values{"name": {"Inherited memory"}, "script": {path}}, http.StatusSeeOther)
+	var inheritedID string
+	if err := db.QueryRow("SELECT id FROM quick_runs WHERE name='Inherited memory'").Scan(&inheritedID); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := memorysettings.Read(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveDefault := func(revision, value string, status int) {
+		t.Helper()
+		values := url.Values{"revision": {revision}, "runner_memory_limit": {snapshot.Memory.Total}, "run_memory_limit": {value}, "runner_process_memory_limit": {snapshot.Memory.Process}, "runner_swap_limit": {snapshot.Memory.Swap}}
+		post("/settings/memory", values, status)
+	}
+	startInherited := func(want string) string {
+		t.Helper()
+		post("/config/quick-runs/"+inheritedID+"/start", url.Values{"confirm_overlap": {"yes"}}, http.StatusSeeOther)
+		var runID, quota string
+		if err := db.QueryRow("SELECT id,memory_limit FROM runs WHERE source_id=? ORDER BY rowid DESC LIMIT 1", inheritedID).Scan(&runID, &quota); err != nil || quota != want {
+			t.Fatalf("inherited limit=%s want=%s err=%v", quota, want, err)
+		}
+		return runID
+	}
+	originalRun := startInherited(snapshot.Memory.PerRun)
+	saveDefault(snapshot.Revision, "768MiB", http.StatusSeeOther)
+	startInherited("768MiB")
+	saveDefault(snapshot.Revision, "1GiB", http.StatusConflict)
+	startInherited("768MiB")
+	saveDefault(snapshot.Revision, "0", http.StatusUnprocessableEntity)
+	startInherited("768MiB")
+	if err := db.QueryRow("SELECT memory_limit FROM runs WHERE id=?", originalRun).Scan(&memory); err != nil || memory != snapshot.Memory.PerRun {
+		t.Fatalf("existing run changed: %s, %v", memory, err)
+	}
+	post("/config/quick-runs/"+id+"/start", url.Values{"confirm_overlap": {"yes"}}, http.StatusSeeOther)
+	if err := db.QueryRow("SELECT memory_limit FROM runs WHERE source_id=? ORDER BY rowid DESC LIMIT 1", id).Scan(&memory); err != nil || memory != "unlimited" {
+		t.Fatalf("explicit quick limit changed: %s, %v", memory, err)
+	}
+	page := getBody(t, client, base+"/settings/memory", http.StatusOK)
+	if !strings.Contains(string(page), "768MiB</small>") && !strings.Contains(string(page), "768MiB ·") {
+		t.Fatal("active default not updated")
+	}
+	if strings.Contains(string(page), "有待重启生效的修改") || strings.Contains(string(page), "changes pending restart") {
+		t.Fatal("default-only change must not require restart")
 	}
 	waitForRuns := func() {
 		t.Helper()

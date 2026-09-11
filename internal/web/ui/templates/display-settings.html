@@ -2,13 +2,13 @@
 <html lang="{{.Locale}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "display.title"}} · ScriptBoard</title></head>
 <body>
-<main class="workspace settings-workspace" data-display-settings>
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
+<main class="workspace settings-workspace settings-editor" data-task-page data-task-kind="settings-display" data-task-close-label="{{t .Locale "common.close"}}" data-display-settings>
+  <a class="task-back" href="/settings/account"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a><header class="page-heading"><div><h1>{{t .Locale "display.title"}}</h1></div></header>
   {{template "settings-navigation" .SettingsNavigation}}
   <section class="settings-content">
-      <header class="settings-section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "display.title"}}</h2><p>{{t .Locale "display.description"}}</p></div></header>
+      <header class="settings-section-heading"><div><h2>{{t .Locale "display.title"}}</h2><p>{{t .Locale "display.description"}}</p></div></header>
       <section class="settings-block status-display-settings">
-        <header class="section-heading"><div><p class="section-index">02</p><h3>{{t .Locale "display.website_status_color"}}</h3><p>{{t .Locale "display.website_status_color_description"}}</p></div></header>
+        <header class="section-heading"><div><h3>{{t .Locale "display.website_status_color"}}</h3><p>{{t .Locale "display.website_status_color_description"}}</p></div></header>
         <fieldset class="status-display-options">
           <legend class="sr-only">{{t .Locale "display.website_status_color"}}</legend>
           <label class="status-display-option">

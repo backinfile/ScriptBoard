@@ -12,13 +12,18 @@ import (
 	"testing"
 	"time"
 
+	"scriptboard/internal/resourcelimits"
 	"scriptboard/internal/statebackup"
+	"scriptboard/internal/store/memorysettings"
 
 	_ "modernc.org/sqlite"
 )
 
 func TestCreateProducesInspectableEncryptedPrivateStateBackup(t *testing.T) {
 	stateRoot := t.TempDir()
+	if _, err := memorysettings.Ensure(stateRoot, resourcelimits.Defaults()); err != nil {
+		t.Fatal(err)
+	}
 	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -77,13 +82,18 @@ func TestCreateProducesInspectableEncryptedPrivateStateBackup(t *testing.T) {
 	if manifest.ID != artifact.Manifest.ID || manifest.SchemaVersion != 43 {
 		t.Fatalf("inspected manifest = %#v, artifact = %#v", manifest, artifact.Manifest)
 	}
-	if !manifestHasFile(manifest, "app.db") || !manifestHasFile(manifest, "secrets/provider.enc") {
+	if !manifestHasFile(manifest, "runner-memory.db") || !manifestHasFile(manifest, "app.db") || !manifestHasFile(manifest, "secrets/provider.enc") {
 		t.Fatalf("manifest files = %#v", manifest.Files)
 	}
 }
 
 func TestRestoreReplacesPrivateStatePreservesCurrentStateAndRevokesSessions(t *testing.T) {
 	sourceRoot := t.TempDir()
+	memory := resourcelimits.Defaults()
+	memory.Total = "7GiB"
+	if _, err := memorysettings.Ensure(sourceRoot, memory); err != nil {
+		t.Fatal(err)
+	}
 	sourceDatabase := createStateDatabase(t, sourceRoot, "restored")
 	if _, err := sourceDatabase.Exec(`CREATE TABLE sessions (token_hash TEXT PRIMARY KEY); INSERT INTO sessions(token_hash) VALUES ('restored-session')`); err != nil {
 		t.Fatal(err)
@@ -137,6 +147,9 @@ func TestRestoreReplacesPrivateStatePreservesCurrentStateAndRevokesSessions(t *t
 	}
 	if result.Manifest.ID != artifact.Manifest.ID || result.PreservedStatePath == "" {
 		t.Fatalf("restore result = %#v", result)
+	}
+	if restored, err := memorysettings.Read(targetRoot); err != nil || restored.Memory != memory {
+		t.Fatalf("memory restore=%+v %v", restored, err)
 	}
 	if value := readStateValue(t, filepath.Join(targetRoot, "app.db")); value != "restored" {
 		t.Fatalf("restored database value = %q", value)

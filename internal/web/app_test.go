@@ -1005,7 +1005,7 @@ func TestInstanceNameSettingsUpdateTheApplicationShell(t *testing.T) {
 		t.Fatalf("read site name settings: %v", err)
 	}
 	for _, expected := range []string{
-		`href="/settings/name" aria-current="page"`,
+		`href="/settings/instance" aria-current="page"`,
 		`action="/settings/name"`,
 		`name="display_name" value="ScriptBoard"`,
 		`maxlength="32"`,
@@ -1156,10 +1156,10 @@ func TestUpdateSourcesRenderInRightmostSettingsDrawer(t *testing.T) {
 			t.Fatalf("update source drawer does not contain %q: %s", expected, html)
 		}
 	}
-	displayIndex := strings.Index(html, `href="/settings/display"`)
-	updateIndex := strings.Index(html, `href="/settings/updates"`)
+	displayIndex := strings.Index(html, `href="/settings/integrations"`)
+	updateIndex := strings.Index(html, `href="/settings/maintenance"`)
 	if displayIndex < 0 || updateIndex < displayIndex {
-		t.Fatalf("updates tab is not after display settings: display=%d updates=%d", displayIndex, updateIndex)
+		t.Fatalf("maintenance category is not after integrations: integrations=%d maintenance=%d", displayIndex, updateIndex)
 	}
 }
 

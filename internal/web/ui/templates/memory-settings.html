@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "memory_settings.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace settings-workspace settings-editor" data-task-page data-task-kind="settings-memory" data-task-close-label="{{t .Locale "common.close"}}" data-memory-settings>
+  <a class="task-back" href="/settings/instance"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a><header class="page-heading"><div><h1>{{t .Locale "memory_settings.title"}}</h1></div></header>
+  {{template "settings-navigation" .SettingsNavigation}}
+  <section class="settings-content">
+    <header class="settings-section-heading"><div><h2>{{t .Locale "memory_settings.title"}}</h2><p>{{t .Locale "memory_settings.description"}}</p></div></header>
+    {{if .Saved}}<aside class="inline-notice" role="status"><span data-lucide="circle-check" aria-hidden="true"></span><p>{{t .Locale "memory_settings.saved"}}</p></aside>{{end}}
+    {{if .Pending}}<p class="field-hint">{{t .Locale "memory_settings.pending"}}</p>{{end}}
+    <section class="settings-block">
+      <form class="instance-name-form" method="post" action="/settings/memory">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="revision" value="{{.Revision}}">
+        {{range .Fields}}<label for="{{.Name}}"><span>{{t $.Locale .Label}}</span><input id="{{.Name}}" name="{{.Name}}" value="{{.Value}}" required maxlength="32" autocomplete="off" spellcheck="false" aria-describedby="memory-format {{.Name}}-active" {{if not $.Available}}disabled{{end}}><small class="field-hint" id="{{.Name}}-active">{{t $.Locale "memory_settings.active"}}: {{.Active}} · {{t $.Locale .Timing}}</small></label>{{end}}
+        <p class="field-hint" id="memory-format">{{if .Windows}}{{t .Locale "memory_settings.format_windows"}}{{else}}{{t .Locale "memory_settings.format"}}{{end}}</p>
+        <p class="field-hint">{{t .Locale "memory_settings.scope"}}</p>
+        {{if .Error}}<p class="field-error" role="alert">{{.Error}}</p>{{end}}
+        <div class="instance-name-form__actions"><button class="button button--primary" type="submit" {{if not .Available}}disabled{{end}}><span data-lucide="check" aria-hidden="true"></span>{{t .Locale "memory_settings.save"}}</button></div>
+      </form>
+    </section>
+    <section class="settings-block"><h3>{{t .Locale "memory_settings.apply"}}</h3><p>{{if .Windows}}{{t .Locale "memory_settings.restart_windows"}}{{else}}{{t .Locale "memory_settings.restart"}}{{end}}</p><p><a href="/settings/updates">{{t .Locale "settings.restart_link"}}</a></p><details><summary>{{t .Locale "settings.command_line"}}</summary><code>scriptboard service restart</code></details><p class="field-hint">{{t .Locale "memory_settings.precedence"}}</p></section>
+  </section>
+</main>
+</body>
+</html>

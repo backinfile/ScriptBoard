@@ -12,7 +12,7 @@ import (
 	"scriptboard/internal/mcpaccess"
 )
 
-var oauthConsentTemplate = template.Must(template.New("oauth-consent").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Authorize agent · ScriptBoard</title></head><body><main><h1>Authorize agent</h1><p><strong>{{.ClientName}}</strong> requests: {{.Scope}}</p><p>Only approve clients and redirect addresses you recognize.</p><form method="post" action="/oauth/authorize">{{range $k,$v := .Fields}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}<input type="hidden" name="csrf_token" value="{{.CSRF}}"><button name="decision" value="approve" type="submit">Authorize</button><button name="decision" value="deny" type="submit">Deny</button></form></main></body></html>`))
+var oauthConsentTemplate = template.Must(template.New("oauth-consent").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/assets/app.css"><script defer src="/assets/app-v2.js"></script><title>Authorize agent · ScriptBoard</title></head><body><main class="workspace settings-workspace"><h1>Authorize agent</h1><p><strong>{{.ClientName}}</strong> requests: {{.Scope}}</p><p>Only approve clients and redirect addresses you recognize.</p><form method="post" action="/oauth/authorize" data-native>{{range $k,$v := .Fields}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}<input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="button button--primary" name="decision" value="approve" type="submit">Authorize</button><button class="button button--quiet" name="decision" value="deny" type="submit">Deny</button></form></main></body></html>`))
 
 func (a *App) oauthResource() string { return strings.TrimRight(a.canonicalExternalURL, "/") + "/mcp" }
 
@@ -37,6 +37,7 @@ func (a *App) oauthAuthorizeGet(response http.ResponseWriter, request *http.Requ
 		http.Error(response, "invalid OAuth authorization request", http.StatusBadRequest)
 		return
 	}
+	a.allowOAuthCallback(response, request, redirect)
 	normalized, err := mcpaccess.NormalizeScopes(string(current.role), scopes)
 	if err != nil {
 		http.Error(response, "requested scope is not permitted", http.StatusForbidden)
@@ -119,4 +120,13 @@ func (a *App) revokeOwnAgentAuthorization(response http.ResponseWriter, request 
 	}
 	a.recordAuditForRequest(request, "mcp_oauth_revoke", request.PathValue("id"), "succeeded")
 	http.Redirect(response, request, "/settings/account", http.StatusSeeOther)
+}
+
+// Browser form navigation must reach the registered, validated OAuth callback.
+func (a *App) allowOAuthCallback(w http.ResponseWriter, r *http.Request, redirect string) {
+	target, err := url.Parse(redirect)
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") {
+		return
+	}
+	w.Header().Set("Content-Security-Policy", a.contentSecurityPolicy(r)+" "+target.Scheme+"://"+target.Host)
 }

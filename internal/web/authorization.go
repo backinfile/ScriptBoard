@@ -115,6 +115,7 @@ func stepUpReturnTarget(request *http.Request) string {
 		{"/settings/users", "/settings/users"},
 		{"/settings/name", "/settings/name"},
 		{"/settings/embedding", "/settings/embedding"},
+		{"/settings/memory", "/settings/memory"},
 		{"/config/external-interfaces", "/config/external-interfaces"},
 		{"/monitor/security", "/monitor/security"},
 		{"/settings/updates", "/settings/updates"},

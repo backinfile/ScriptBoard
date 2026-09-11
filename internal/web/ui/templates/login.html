@@ -24,7 +24,7 @@
       <label>{{t .Locale "login.username"}} <input name="username" value="{{.Username}}" autocomplete="username" spellcheck="false" required maxlength="64"></label>
       <label>{{t .Locale "setup.password"}} <input name="password" type="password" autocomplete="new-password" required maxlength="256"><small>{{t .Locale "setup.password_policy"}}</small></label>
       <label>{{t .Locale "setup.confirm"}} <input name="confirm_password" type="password" autocomplete="new-password" required maxlength="256"></label>
-      {{if .CredentialOverride}}<p>{{t .Locale "setup.override"}}</p>{{end}}
+      {{if .StartupCredentialsApplied}}<p>{{t .Locale "setup.override"}}</p>{{end}}
       <button class="button button--primary" type="submit">{{t .Locale "setup.submit"}}<span data-lucide="arrow-right" aria-hidden="true"></span></button>
       {{else if .SecondFactor}}
       {{if .PasskeyEnabled}}<input type="hidden" name="passkey_ceremony"><input type="hidden" name="passkey_response">{{end}}

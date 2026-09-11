@@ -1516,6 +1516,8 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
   }
 
   function initTaskPanelMain(main, cleanups) {
+    initDisplaySettings(cleanups, main);
+    initEmbeddingSettings(main, cleanups);
     renderIcons(main);
     localizeTimes(main);
     initDirectoryPickers(main, cleanups);
@@ -2598,6 +2600,18 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
           return;
         }
         if (submittingTaskState) {
+          // Refresh the instance name after saving in place so the shell reflects the saved value.
+          if (form.closest('[data-instance-name-settings]')) {
+            let nextBrand = result.document?.querySelector('.brand-name');
+            if (!nextBrand) {
+              try {
+                const shellResponse = await fetch(submittingTaskState.returnURL, { credentials: 'same-origin', headers: { Accept: 'text/html' } });
+                if (shellResponse.ok) nextBrand = new DOMParser().parseFromString(await shellResponse.text(), 'text/html').querySelector('.brand-name');
+              } catch { /* The saved name is still available on the next full navigation. */ }
+            }
+            const brand = document.querySelector('.brand-name');
+            if (brand && nextBrand) { brand.textContent = nextBrand.textContent; brand.className = nextBrand.className; }
+          }
           const returnURL = submittingTaskState.returnURL;
           const nextTask = result.document?.querySelector("main[data-task-page]");
           if (nextTask) {
@@ -6237,8 +6251,19 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     };
   }
 
-  function initDisplaySettings(cleanups) {
-    const root = document.querySelector("[data-display-settings]");
+  function initEmbeddingSettings(scope, cleanups) {
+    const mode = scope.querySelector('#embedding-mode');
+    const origins = scope.querySelector('#embedding-origins')?.closest('label');
+    if (!mode || !origins) return;
+    const update = () => { origins.hidden = mode.value !== 'specific'; };
+    mode.addEventListener('change', update);
+    update();
+    cleanups.push(() => mode.removeEventListener('change', update));
+  }
+
+  function initDisplaySettings(cleanups, scope = document) {
+    // Initialize browser preferences within the active drawer, without touching background controls.
+    const root = scope.matches?.('[data-display-settings]') ? scope : scope.querySelector('[data-display-settings]');
     if (!root) return;
     const options = Array.from(root.querySelectorAll('input[name="website_fault_color"]'));
     const selected = readWebsiteFaultColor();
@@ -6981,11 +7006,27 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", String(drawer.open));
       drawer.addEventListener("toggle", onToggle);
     });
+    const onSubmit = event => {
+      const form = event.target.closest("[data-mysql-batch-backup-form]");
+      if (!form || form.querySelector('input[name="databases"]:checked')) return;
+      event.preventDefault();
+      form.querySelector("[data-async-submit-error]")?.remove();
+      const message = document.createElement("p");
+      message.className = "async-submit-error";
+      message.dataset.asyncSubmitError = "";
+      message.setAttribute("role", "alert");
+      message.tabIndex = -1;
+      message.textContent = form.dataset.selectionRequired || words().submitFailed;
+      form.querySelector(".mysql-drawer-body")?.prepend(message);
+      message.focus();
+    };
+    root.addEventListener("submit", onSubmit);
     root.addEventListener("click", onClick);
     document.addEventListener("keydown", onKeydown);
     cleanups.push(() => {
 	  sqlForm?.removeEventListener("change", onSQLModeChange);
       drawers.forEach(drawer => drawer.removeEventListener("toggle", onToggle));
+      root.removeEventListener("submit", onSubmit);
       root.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKeydown);
       document.body.style.overflow = "";
@@ -7714,6 +7755,8 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     const connectionDrawerBody = connectionDrawer?.querySelector("[data-kubernetes-connection-drawer-body]");
     const connectionDrawerTitle = connectionDrawer?.querySelector("[data-kubernetes-connection-drawer-title]");
     let snapshotController = null;
+    let snapshotURL = location.href;
+    let operationPending = false;
     let connectionController = null;
     const connectionCleanups = [];
     const replaceSnapshot = async (destination, options = {}) => {
@@ -7725,15 +7768,17 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       root.querySelectorAll("[data-kubernetes-refresh-status]").forEach(status => { status.textContent = ""; });
       root.setAttribute("aria-busy", "true");
       try {
-        const { response, document: page } = await fetchDocument(destination, { cache: "no-store", signal: snapshotController.signal });
+        const { response, document: page } = await fetchDocument(destination, { cache: "no-store", ...options.request, signal: controller.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const incoming = page?.querySelector("[data-kubernetes-page]");
         if (!incoming) throw new Error("Kubernetes snapshot was not present in the response.");
-        // Preserve disclosure elements and their controls while replacing only snapshot content.
-        const selectors = ["[data-kubernetes-external-body]", ".kubernetes-workload-controls", ".kubernetes-table-shell", "[data-kubernetes-node-list]", ...["external", "workloads", "nodes"].map(id => `[data-kubernetes-section-facts="${id}"]`)];
-        if (!options.resourcesOnly) selectors.unshift(".kubernetes-monitor-summary", "[data-kubernetes-alert-slot]");
+        // Workload filters replace their own records, keeping other regions and disclosures stable.
+        const selectors = options.workloadsOnly
+          ? [".kubernetes-workload-controls", ".kubernetes-table-shell", '[data-kubernetes-section-facts="workloads"]']
+          : ["[data-kubernetes-external-body]", ".kubernetes-workload-controls", ".kubernetes-table-shell", "[data-kubernetes-node-list]", ...["external", "workloads", "nodes"].map(id => `[data-kubernetes-section-facts="${id}"]`)];
+        if (!options.resourcesOnly && !options.workloadsOnly) selectors.unshift(".kubernetes-monitor-summary", "[data-kubernetes-alert-slot]");
         const replacements = selectors.map(selector => [root.querySelector(selector), incoming.querySelector(selector)]);
-        if (options.resourcesOnly && replacements.some(([current, next]) => !current || !next)) throw new Error("Incomplete Kubernetes snapshot.");
+        if ((options.resourcesOnly || options.workloadsOnly) && replacements.some(([current, next]) => !current || !next)) throw new Error("Incomplete Kubernetes snapshot.");
         replacements.forEach(([current, next]) => { if (current && next) current.replaceWith(next); });
         const sourceTime = incoming.querySelector("[data-monitor-refresh-time]");
         const currentTime = root.querySelector("[data-monitor-refresh-time]");
@@ -7748,7 +7793,14 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
         root.dataset.kubernetesCanRunCron = incoming.dataset.kubernetesCanRunCron || root.dataset.kubernetesCanRunCron || "";
         root.dataset.kubernetesCanLogs = incoming.dataset.kubernetesCanLogs || root.dataset.kubernetesCanLogs || "";
         if (options.pushHistory !== false) history.pushState({ kubernetesMonitor: true }, "", destination);
-        renderIcons(root); localizeTimes(root); window.requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
+        snapshotURL = location.href;
+        if (!options.workloadsOnly && !options.resourcesOnly) {
+          const monitorLink = root.querySelector('.kubernetes-page-tabs a[aria-current="page"]');
+          const nextLink = incoming.querySelector('.kubernetes-page-tabs a[aria-current="page"]');
+          if (monitorLink && nextLink) monitorLink.href = nextLink.href;
+        }
+        replacements.forEach(([, next]) => { if (next?.isConnected) { renderIcons(next); localizeTimes(next); } });
+        window.requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
         root.querySelectorAll("[data-kubernetes-refresh-status]").forEach(status => { status.textContent = root.dataset.kubernetesRefreshed; });
       } catch (error) {
         if (error?.name !== "AbortError") {
@@ -7764,12 +7816,18 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
         }
       }
     };
+    root._restoreKubernetesSnapshot = () => {
+      if (!root.querySelector("[data-kubernetes-section]") || location.pathname !== "/monitor/kubernetes" || ["connections", "local"].includes(new URL(location.href).searchParams.get("tab"))) return false;
+      const sameCluster = new URL(snapshotURL).searchParams.get("cluster") === new URL(location.href).searchParams.get("cluster");
+      replaceSnapshot(location.href, { pushHistory: false, workloadsOnly: sameCluster }).catch(() => {});
+      return true;
+    };
     setupMonitorRefresh(root, () => {
       if (root.getAttribute("aria-busy") === "true") return Promise.resolve();
       const destination = new URL(location.href);
       destination.searchParams.set("refresh", "1");
       return replaceSnapshot(destination.toString(), { pushHistory: false });
-    }, cleanups, () => snapshotController?.abort());
+    }, cleanups, () => { if (!operationPending) snapshotController?.abort(); });
     const openDetail = async button => {
       if (!drawer || !body) return;
       const url = button.dataset.kubernetesDetailUrl;
@@ -7793,18 +7851,32 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       }
     };
     const onSubmit = event => {
-      const form = event.target.closest("[data-mysql-batch-backup-form]");
-      if (!form || form.querySelector('input[name="databases"]:checked')) return;
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      const workloadFilter = form.matches(".kubernetes-toolbar");
+      const clusterSwitch = form.matches(".kubernetes-cluster-switch form");
+      const operation = form.hasAttribute("data-kubernetes-confirm");
+      if (!workloadFilter && !clusterSwitch && !operation) return;
+      if (operationPending) { event.preventDefault(); return; }
+      if (operation && confirmFormSubmission(event, form, event.submitter)) return;
       event.preventDefault();
-      form.querySelector("[data-async-submit-error]")?.remove();
-      const message = document.createElement("p");
-      message.className = "async-submit-error";
-      message.dataset.asyncSubmitError = "";
-      message.setAttribute("role", "alert");
-      message.tabIndex = -1;
-      message.textContent = form.dataset.selectionRequired || words().submitFailed;
-      form.querySelector(".mysql-drawer-body")?.prepend(message);
-      message.focus();
+      // Handle monitor forms here so search and cluster switches preserve the current page.
+      const data = new FormData(form);
+      if (!operation) {
+        const destination = new URL(form.action);
+        destination.search = new URLSearchParams(data).toString();
+        replaceSnapshot(destination.toString(), { workloadsOnly: workloadFilter }).catch(() => {});
+        return;
+      }
+      data.set("return_to", location.pathname + location.search);
+      operationPending = true;
+      const submitter = event.submitter;
+      if (submitter) submitter.disabled = true;
+      const inDrawer = drawer?.contains(form);
+      replaceSnapshot(form.action, { workloadsOnly: true, pushHistory: false, request: { method: "POST", body: data } })
+        .then(() => {
+          if (inDrawer && drawer.open) return openDetail({ dataset: { kubernetesDetailUrl: form.action.replace(/\/operate$/, "/details") }, closest: () => null });
+        }).catch(() => {}).finally(() => { operationPending = false; if (submitter) submitter.disabled = false; });
     };
     const clearConnectionBindings = () => connectionCleanups.splice(0).forEach(cleanup => cleanup());
     const renderConnectionPage = page => {
@@ -7864,7 +7936,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     const onClick = event => {
       if (event.target.closest("[data-kubernetes-refresh]")) {
         event.preventDefault();
-        if (root.getAttribute("aria-busy") === "true") return;
+        if (root.getAttribute("aria-busy") === "true" || operationPending) return;
         const destination = new URL(location.href);
         destination.searchParams.set("refresh", "1");
         replaceSnapshot(destination.toString(), { pushHistory: false, resourcesOnly: true }).catch(() => {});
@@ -7884,7 +7956,8 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       const snapshotLink = event.target.closest(".kubernetes-status-tabs a,.kubernetes-sort-link");
       if (snapshotLink && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
         event.preventDefault();
-        replaceSnapshot(snapshotLink.href, { pushHistory: true }).catch(() => {});
+        if (operationPending) return;
+        replaceSnapshot(snapshotLink.href, { pushHistory: true, workloadsOnly: true }).catch(() => {});
         return;
       }
       const detail = event.target.closest("[data-kubernetes-detail-url]");
@@ -8015,6 +8088,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     importDrop?.addEventListener("drop", onImportDrop);
     contextSearch?.addEventListener("input", onContextSearch);
     cleanups.push(() => {
+      delete root._restoreKubernetesSnapshot;
       snapshotController?.abort();
       connectionController?.abort();
       clearConnectionBindings();
@@ -8208,6 +8282,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     initExternalEntryForm(document, cleanups);
 	initVariableForm(document, cleanups);
     initDisplaySettings(cleanups);
+    initEmbeddingSettings(document, cleanups);
 	initSecurityDialogs(cleanups);
 	initMySQLDrawers(cleanups);
     initExternalKeyManagers(cleanups);
@@ -8271,7 +8346,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       const returnURL = taskPanelState.returnURL;
       if (destination.href === returnURL) {
         closeTaskPanel(true);
-      } else if (link.matches("[data-task-link]") && matchMedia("(min-width: 761px)").matches) {
+      } else if (link.matches("[data-task-link]") && (destination.pathname.startsWith("/settings/") || matchMedia("(min-width: 761px)").matches)) {
         openTask(destination.href, false, link);
       } else {
         closeTaskPanel(false);
@@ -8280,7 +8355,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       }
       return;
     }
-    if (link.matches("[data-task-link]") && matchMedia("(min-width: 761px)").matches) {
+    if (link.matches("[data-task-link]") && (destination.pathname.startsWith("/settings/") || matchMedia("(min-width: 761px)").matches)) {
       openTask(destination.href, true, link);
     } else {
       const mainNavigation = link.matches(".sidebar-nav a");
@@ -8430,7 +8505,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     } else if (form.hasAttribute("data-service-restart")) {
       event.preventDefault();
       submitServiceRestart(form, submitter);
-    } else if (form.hasAttribute("data-async")) {
+    } else if (form.hasAttribute("data-async") || form.closest(".task-panel .settings-editor")) {
       event.preventDefault();
       submitAsync(form, submitter);
 	} else if (form.closest("[data-custom-tabs-page]")) {
@@ -8534,6 +8609,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       workflow.restoreWorkflowTab();
       return;
     }
+    if (document.querySelector("[data-kubernetes-page]")?._restoreKubernetesSnapshot?.()) return;
     const navigationLink = mainNavigationLink(location.href, true);
     const databaseHistoryRegion = event.state?.regionSelector || (
       document.querySelector("[data-database-workspace]") && location.pathname === "/resources/databases"
