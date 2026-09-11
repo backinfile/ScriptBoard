@@ -1,6 +1,6 @@
 # ScriptBoard
 
-v2.11 adds image registry cleanup and instance memory settings. Settings are grouped into My account, Users, Instance, Connections and notifications, and Maintenance. Editors open in drawers; display preferences apply only to the current browser.
+v2.12 adds visual workflows: connect scripts and build/deploy nodes, save one-click run entries, inspect step results and logs, and import or export configurations. Execution nodes require Python 3 on the host. See the [workflow guide (Chinese)](./docs/WORKFLOW_USAGE.md).
 
 [简体中文](./README.md) | English
 
