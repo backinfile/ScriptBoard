@@ -8174,6 +8174,8 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     localizeTimes();
     initMarkdownPreview();
     initWorkbench(cleanups);
+    const workflowRoot = document.querySelector("[data-workflow]");
+    if (workflowRoot) loadScriptAsset("/assets/workflow.js", () => window.ScriptBoardWorkflow).then(init => { if (workflowRoot.isConnected) init(workflowRoot); });
     if (window.ScriptBoardFileJump) cleanups.push(window.ScriptBoardFileJump({ navigate, renderIcons, makeIcon }));
     initScriptPreview();
     initTextPreviewPager(cleanups);
@@ -8525,6 +8527,11 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     }
     if (event.state?.task) {
       openTask(event.state.taskURL || location.href, false);
+      return;
+    }
+    const workflow = document.querySelector("[data-workflow]");
+    if (location.pathname === "/workflow" && workflow?.restoreWorkflowTab) {
+      workflow.restoreWorkflowTab();
       return;
     }
     const navigationLink = mainNavigationLink(location.href, true);

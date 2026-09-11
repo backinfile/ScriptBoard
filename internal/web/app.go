@@ -78,6 +78,7 @@ import (
 	"scriptboard/internal/variables"
 	"scriptboard/internal/websitemonitor"
 	"scriptboard/internal/workbench"
+	"scriptboard/internal/workflow"
 )
 
 const initialPasswordFilename = "initial-admin-password"
@@ -515,6 +516,7 @@ func deletePasskeyWithContext(ctx context.Context, store PasskeyStore, userID, c
 }
 
 type App struct {
+	workflowEngine        *workflow.Engine
 	frameAncestors        []string
 	workbenchUpdates      workbench.Notifier
 	db                    *sql.DB
@@ -1069,6 +1071,13 @@ func Open(config Config) (*App, error) {
 	application.shellStatusCache = newShellStatusCache(5*time.Second, time.Now, application.loadShellStatus)
 	application.handler = application.routes()
 	if !validating {
+		application.workflowEngine = &workflow.Engine{Repository: workflow.Repository{DB: application.db}, Executor: workflowExecutor{application}}
+		if err := application.workflowEngine.Start(context.Background()); err != nil {
+			_ = application.Close()
+			return nil, fmt.Errorf("initialize workflow: %w", err)
+		}
+	}
+	if !validating {
 		externalContext, externalStop := context.WithCancel(context.Background())
 		application.externalReconcileStop = externalStop
 		application.externalReconcileWG.Add(1)
@@ -1575,6 +1584,9 @@ func (a *App) applyCredentialOverride(username, passwordFile string) error {
 }
 
 func (a *App) Close() error {
+	if a.workflowEngine != nil {
+		a.workflowEngine.Close()
+	}
 	if a.externalReconcileStop != nil {
 		a.externalReconcileStop()
 		a.externalReconcileWG.Wait()
@@ -3569,7 +3581,7 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
-	canManageExecution := identity.Allows(current.role, identity.PermissionManageExecution)
+	canManageExecution := identity.Allows(current.role, identity.PermissionManageExecution) && run.SourceType != "workflow"
 	canStop := current.role == identity.RoleAdministrator || current.role == identity.RoleMaintainer ||
 		current.role == identity.RoleOperator && run.InitiatorUserID == current.userID
 	startedAt := run.CreatedAt

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}" />
+    <link rel="stylesheet" data-workflow-style href="/assets/workflow.css" />
+    <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+    <script defer src="/assets/workflow.js"></script>
+    <title>工作流 · ScriptBoard</title>
+  </head>
+  <body>
+    <main
+      class="workspace"
+      data-workflow
+      data-csrf="{{.CSRFToken}}"
+      data-manage="{{.CanManage}}"
+      data-execute="{{.CanExecute}}"
+    >
+      <header class="page-heading primary-page-heading wf-page-heading">
+        <div>
+          <p class="page-eyebrow">自动化</p>
+          <h1>工作流</h1>
+          <p>编排节点、执行任务与追踪运行结果。</p>
+        </div>
+      </header>
+      <nav class="wf-tabs" role="tablist" aria-label="工作流功能">
+        <button type="button" data-wf-tab="entries" role="tab">执行</button
+        ><button type="button" data-wf-tab="editor" role="tab">编排</button
+        ><button type="button" data-wf-tab="history" role="tab">运行历史</button
+        ><button type="button" data-wf-tab="custom" role="tab">
+          自定义节点</button
+        ><button type="button" data-wf-tab="guide" role="tab">说明</button>
+      </nav>
+      <div class="wf-content" data-wf-content></div>
+      <dialog class="wf-drawer" data-wf-drawer></dialog>
+      <dialog data-wf-search></dialog>
+      <div class="wf-toast" role="status" data-wf-toast></div>
+    </main>
+  </body>
+</html>

@@ -49,6 +49,9 @@ type StartRequest struct {
 }
 
 type OneTimeStartRequest struct {
+	SourceType        string
+	SourceName        string
+	SourceID          string
 	WorkingDirectory  string
 	Extension         string
 	Source            string
@@ -398,13 +401,17 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 		_ = os.RemoveAll(runRoot)
 		return "", errors.New("one-time source is not a regular file")
 	}
+	sourceType, sourceName := "one_time", "one-time"
+	if request.SourceType != "" {
+		sourceType, sourceName = request.SourceType, request.SourceName
+	}
 	digest := sha256.Sum256([]byte(request.Source))
 	runID, err := m.startPrepared(preparedStart{
 		id: id, displayPath: sourceFilename,
 		script:           hostfiles.Script{Path: sourcePath, Digest: fmt.Sprintf("%x", digest[:]), Info: sourceInfo},
 		workingDirectory: workingDirectory, scriptKind: "one_time", sourceFilename: sourceFilename,
 		executors: executors, templateArguments: templateArguments, arguments: arguments,
-		argumentsTemplate: request.ArgumentsTemplate, sourceType: "one_time", sourceName: "one-time",
+		argumentsTemplate: request.ArgumentsTemplate, sourceType: sourceType, sourceName: sourceName, sourceID: request.SourceID,
 		memoryLimit: request.MemoryLimit, timeoutSeconds: request.TimeoutSeconds, auditSource: request.AuditSource,
 		initiatorUserID: request.InitiatorUserID, initiatorUsername: request.InitiatorUsername, initiatorRole: request.InitiatorRole,
 	})

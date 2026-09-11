@@ -246,4 +246,4 @@ Apply global changes with elevated `scriptboard service restart`, or restart the
 
 ## Planned workflows
 
-See the [visual workflow proposal (Chinese; not yet implemented)](./docs/WORKFLOW_DESIGN.md).
+See the [visual workflow and build/deployment integration plan (Chinese; not yet implemented)](./docs/WORKFLOW_DESIGN.md).

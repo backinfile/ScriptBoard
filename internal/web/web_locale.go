@@ -69,6 +69,7 @@ var webMessages = map[string]localizedMessage{
 	"external.sections":                             {"外部接口分区", "External interface sections"},
 	"external.interface_list":                       {"接口列表", "Interfaces"},
 	"external.activity_description":                 {"查看外部调用的时间、结果及关联运行。", "Review external calls, results, and linked runs."},
+	"nav.workflow":                                  {"工作流", "Workflow"},
 	"nav.workbench":                                 {"灵感空间", "Inspiration space"},
 	"setup.failure":                                 {"请检查账号设置", "Check your account details"},
 	"setup.created_login":                           {"账号已创建，请使用刚设置的用户名和密码登录。", "Your account is ready. Sign in with the username and password you just set."},

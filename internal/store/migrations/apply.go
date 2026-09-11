@@ -18,6 +18,7 @@ import (
 	storesqlite "scriptboard/internal/store/sqlite"
 	"scriptboard/internal/websitemonitor"
 	"scriptboard/internal/workbench"
+	"scriptboard/internal/workflow"
 )
 
 // Options supplies the application-specific capabilities needed by legacy
@@ -46,6 +47,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		statements []string
 	}{
 		{name: "SQLite", statements: baseSchemaStatements},
+		{name: "Workflow SQLite", statements: workflow.SchemaStatements},
 		{name: "Inspiration space SQLite", statements: workbench.SchemaStatements},
 		{name: "Website Monitor SQLite", statements: websitemonitor.SchemaStatements},
 		{name: "External Interface SQLite", statements: externaltrigger.SchemaStatements},

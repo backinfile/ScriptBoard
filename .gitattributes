@@ -4,3 +4,6 @@
 /runtime/pi-runtime-lock.json text eol=lf
 /runtime/scriptboard-extension.ts text eol=lf
 /runtime/playbooks/*.md text eol=lf
+
+# Keep the approved workflow preview byte-identical to its freeze manifest.
+/docs/previews/workflow-platform.html -text

@@ -137,7 +137,7 @@ scriptboard admin reset --config CONFIG_PATH
 ## 更多信息
 
 - [项目文档](./docs/)
-- [可视化工作流方案（规划中）](./docs/WORKFLOW_DESIGN.md)
+- [可视化工作流实施说明](./docs/WORKFLOW_DESIGN.md)
 - [发布说明](./docs/RELEASE_NOTES.md)
 - [安全问题报告](./SECURITY.md)
 
@@ -156,3 +156,9 @@ scriptboard admin reset --config CONFIG_PATH
 默认禁止嵌入。首次在设置页保存前，沿用 `config.yaml` 的 `frame_ancestors`、环境变量 `SCRIPTBOARD_FRAME_ANCESTORS`（逗号分隔）或 `--frame-ancestor` 启动参数；支持 `"*"` 允许所有来源。设置页保存后优先于启动配置。
 
 在父实例“自定义页签”中填写目标实例 URL，选择“保留目标登录态”并启用，使用目标实例自己的账号登录。两个实例应使用不同主机名，避免同名 Cookie 冲突。同站 HTTP 可用；跨站登录需要目标 HTTPS 且浏览器允许第三方 Cookie，HTTPS 父页不能嵌入 HTTP 目标。浏览器拦截时使用“在新窗口打开”。嵌入后可切换并保留界面语言。这不会共享两个实例的账号或 Key 登录。
+
+### 工作流
+
+进入“工作流”，在编排页，每个输入参数的端口与填写控件合并显示，连线后显示上游来源；拖线选择节点时可点击关闭、按 Esc 或点击窗口外取消，可一键分层整理并撤销，点击保存后即可创建 Entry 配置参数并运行。支持 Git、本地脚本、Maven、Go、镜像制作/推送/拉取和 k3d/k3s 部署；自定义脚本节点通过卡片右下角“…”打开配置抽屉，删除操作位于抽屉底部，正文和版本保存在 ScriptBoard。执行 Entry 沿用快捷执行卡片，展示最近运行状态、时间和总耗时。顶部提供并列的入口参数、出口参数按钮，在统一抽屉中配置，保存时校验参数类型和默认值。支持算术、比较、布尔逻辑、按值分支、成功/失败出口、汇合、等待和显式结束；节点可配置失败重试。Entry 独立配置运行前二次确认，并可从更多菜单打开对应工作流。支持固定时间等待和等待指定节点完成。内部页签切换同步 URL，支持刷新恢复及前进、后退。JSON 导入/导出统一位于编排页的更多菜单；“说明”页签可下载 AI 编写指南和示例，自定义脚本版本随配置迁移。运行历史展示命中出口、每次尝试、结果与日志，支持取消。
+
+执行节点需要主机安装 Python 3 和对应工具链。相同工作区或环境设置相同互斥标签；流程保存新版本后需显式更新 Entry 绑定。详见[使用说明与 API](docs/WORKFLOW_USAGE.md)、[实施计划](docs/WORKFLOW_DESIGN.md)和[测试报告](docs/WORKFLOW_IMPLEMENTATION_CHECKS.md)。

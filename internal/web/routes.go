@@ -11,6 +11,36 @@ import (
 
 func (a *App) routes() http.Handler {
 	mux := newDeclaredRouteMux()
+	mux.Handle("POST /workflow/delete", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.workflowDelete)))
+	mux.Handle("GET /workflow/logs/{id}", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workflowLogs)))
+	mux.Handle("GET /workflow", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workflowPage)))
+	mux.Handle("GET /workflow/runs/{id}", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workflowRun)))
+	mux.Handle("GET /workflow/state", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workflowState)))
+	mux.Handle("POST /workflow/custom", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.workflowSaveCustom)))
+	mux.Handle("GET /workflow/guide", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workflowGuide)))
+	mux.Handle("POST /workflow/import", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.workflowImport)))
+	mux.Handle("POST /workflow/export", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.workflowExport)))
+	mux.Handle("POST /workflow/save", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.workflowSave)))
+	mux.Handle("POST /workflow/draft", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.workflowSaveDraft)))
+	mux.Handle("POST /workflow/publish", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.workflowPublish)))
+	mux.Handle("POST /workflow/entry", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.workflowSaveEntry)))
+	mux.Handle("POST /workflow/entry-lock", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.workflowEntryLock)))
+	mux.Handle("POST /workflow/start", a.requirePermission(identity.PermissionExecute, http.HandlerFunc(a.workflowStart)))
+	mux.Handle("POST /workflow/cancel", a.requirePermission(identity.PermissionExecute, http.HandlerFunc(a.workflowCancel)))
+	mux.Handle("POST /workflow/resolve", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.workflowResolve)))
+	for _, asset := range []string{"workflow-layout-worker.js", "vendor/elk-0.12.0.js"} {
+		name := asset
+		route := strings.TrimPrefix(name, "vendor/")
+		mux.Public("GET /assets/"+route, func(w http.ResponseWriter, r *http.Request) {
+			serveWebAsset(w, r, "text/javascript; charset=utf-8", mustWebAsset("ui/assets/"+name))
+		})
+	}
+	mux.Public("GET /assets/workflow.js", func(w http.ResponseWriter, r *http.Request) {
+		serveWebAsset(w, r, "text/javascript; charset=utf-8", mustWebAsset("ui/assets/workflow.js"))
+	})
+	mux.Public("GET /assets/workflow.css", func(w http.ResponseWriter, r *http.Request) {
+		serveWebAsset(w, r, "text/css; charset=utf-8", mustWebAsset("ui/assets/workflow.css"))
+	})
 	mux.Handle("GET /resources/workbench", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchPage)))
 	mux.Handle("GET /resources/workbench/state", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchState)))
 	mux.Handle("GET /resources/workbench/events", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.workbenchEvents)))

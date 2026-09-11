@@ -466,6 +466,11 @@ func (a *App) rerunOneTimeRun(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "one-time Run is unavailable", http.StatusNotFound)
 		return
 	}
+	// Workflow steps must be dispatched through their saved Entry and resource queue.
+	if sourceRun.SourceType == "workflow" {
+		http.Error(response, "Run this workflow through its Entry", http.StatusConflict)
+		return
+	}
 	source, err := a.runs.ReadSource(sourceRun.ID)
 	if errors.Is(err, runmanager.ErrSourceExpired) {
 		http.Error(response, "one-time source has expired", http.StatusGone)
