@@ -1,13 +1,23 @@
-.registry-connections{display:flex;gap:4px;overflow:auto;border-bottom:1px solid var(--rule)}
-.registry-connection{display:flex;gap:10px;align-items:center;min-width:190px;padding:14px 20px;text-decoration:none;color:var(--muted);border-bottom:2px solid transparent}
-.registry-connection[aria-current]{color:var(--ink);border-bottom-color:var(--accent);background:var(--surface)}
-.registry-connection strong,.registry-connection small{display:block}.registry-connection small{font-size:.72rem;overflow-wrap:anywhere}
-.registry-connection-facts{display:flex;align-items:center;gap:24px;padding:19px 20px;background:var(--surface);border-bottom:1px solid var(--rule)}
-.registry-connection-facts>div{margin-right:auto}.registry-connection-facts code{display:block;font-size:.78rem;color:var(--muted);overflow-wrap:anywhere}
+/* 连接列表与命名空间沿用数据库工作台的纵向导航轨道。 */
+.registry-workspace{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:calc(100vh - 154px);border-top:1px solid var(--rule)}
+.registry-connection-rail{min-width:0;padding:28px 20px;border-right:1px solid var(--rule)}
+.registry-rail-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.registry-rail-heading h2{margin:0;font-size:1rem}.registry-rail-heading small{color:var(--muted)}
+.registry-connections{display:grid;gap:4px;min-width:0}
+.registry-connection{display:flex;align-items:center;gap:10px;min-width:0;padding:12px;text-decoration:none;color:var(--muted);border-radius:var(--radius-sm)}
+.registry-connection>span:last-child{min-width:0}.registry-connection strong,.registry-connection small{display:block;overflow-wrap:anywhere}.registry-connection small{font-size:.72rem}
+.registry-connection:hover{background:var(--surface)}.registry-connection[aria-current]{color:var(--accent-text);background:var(--accent-soft)}
+.registry-content{min-width:0;background:var(--surface)}
+.registry-content-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 20px;border-bottom:1px solid var(--rule)}
+.registry-content-head .registry-subtabs{margin:0;padding-top:20px;border:0}
+.registry-connection-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 0}
+.registry-connection-actions small{color:var(--muted);font-size:.72rem}
 .registry-subtabs{display:flex;gap:24px;border-bottom:1px solid var(--rule);margin:24px 0 18px}.registry-subtabs a{padding:0 0 10px;text-decoration:none;color:var(--muted)}.registry-subtabs [aria-current]{color:var(--accent-text);border-bottom:2px solid var(--accent)}
-.registry-browser{display:grid;grid-template-columns:210px minmax(0,1fr);border:1px solid var(--rule);border-radius:var(--radius);background:var(--surface);overflow:hidden}
-.registry-namespaces{padding:18px 12px;background:var(--surface-2);border-right:1px solid var(--rule)}.registry-namespaces h2{font-size:.75rem;font-weight:500;color:var(--muted);margin:0 10px 14px}
+.registry-browser{background:var(--surface);min-width:0}
+.registry-namespaces{margin-top:24px;padding-top:20px;border-top:1px solid var(--rule)}.registry-namespaces h2{font-size:.75rem;font-weight:500;color:var(--muted);margin:0 10px 14px}
 .registry-namespaces a{display:flex;align-items:center;gap:8px;padding:10px;border-radius:7px;color:var(--muted);text-decoration:none;overflow-wrap:anywhere}.registry-namespaces [aria-current]{background:var(--accent-soft);color:var(--accent-text)}
+/* 宽表在列表容器内横向滚动，保持窄屏页面宽度稳定。 */
+.registry-inventory>.table-shell{max-width:100%;overflow-x:auto}
 .registry-inventory{min-width:0}.registry-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:20px}.registry-toolbar h2{font-size:1.05rem;margin:0}
 .registry-search{display:flex;align-items:center;gap:8px;padding:0 20px 18px}.registry-search input[type=search]{min-width:0;flex:1;max-width:440px}
 .registry-table{width:100%;border-collapse:collapse}.registry-table th,.registry-table td{padding:12px 18px;border-bottom:1px solid var(--rule);text-align:left}.registry-table th{font-size:.72rem;font-weight:500;background:var(--surface-2);color:var(--muted)}.registry-table td{font-size:.82rem}.registry-table small{display:block;font-size:.65rem;overflow-wrap:anywhere}.registry-table input[type=checkbox]{accent-color:var(--accent)}
@@ -15,5 +25,18 @@
 .registry-list-footer{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;gap:16px;color:var(--muted);font-size:.75rem}.registry-footnote{font-size:.75rem;color:var(--muted);margin-top:16px}
 .registry-empty{padding:44px 24px;text-align:center;color:var(--muted)}.registry-empty h2{font-size:1.2rem}.registry-empty p{margin:12px 0 20px}
 .registry-task .registry-digest{display:block;font-size:.64rem;color:var(--muted);overflow-wrap:anywhere;white-space:normal;max-width:32ch;margin-top:4px}.registry-task .task-sheet>form{margin-bottom:20px}.registry-task .registry-check{display:flex;align-items:center;gap:10px}.registry-check input[type=checkbox]{width:auto}.registry-message{padding:14px 18px;background:var(--warning-soft);color:var(--ink);margin:16px 0;border-radius:7px;overflow-wrap:anywhere}.registry-task .field-help{font-size:.76rem;color:var(--muted)}.registry-task .table-shell{margin:20px 0}.registry-task .registry-table td{vertical-align:top;padding:12px 8px}.registry-task .registry-table td:first-child{padding-left:12px}.registry-task .registry-table td:last-child{padding-right:12px}.registry-records{background:var(--surface);padding:20px}.registry-records details{border-bottom:1px solid var(--rule);padding:16px 0}.registry-records li{overflow-wrap:anywhere}.registry-page svg{width:18px;height:18px;flex:none}
-@media(max-width:1000px){.registry-browser{grid-template-columns:170px minmax(0,1fr)}.registry-toolbar,.registry-search{flex-wrap:wrap}}
-@media(max-width:760px){.registry-browser{grid-template-columns:1fr}.registry-namespaces{display:flex;overflow:auto;gap:5px;border-right:0;border-bottom:1px solid var(--rule)}.registry-namespaces h2{display:none}.registry-namespaces a{white-space:nowrap}.registry-connection-facts{flex-wrap:wrap;gap:12px}.registry-connection-facts>div{width:100%}.registry-subtabs{gap:20px}.registry-table th,.registry-table td{padding:10px}.registry-list-footer{flex-wrap:wrap}}
+/* 镜像工作台沿用数据库页的全宽轨道，让列表使用右侧可用空间。 */
+.workspace.registry-page{width:100%;max-width:none;margin:0;padding:0;min-height:100vh}
+.registry-page>.page-heading{margin:0;padding:30px var(--workspace-gutter)}
+.registry-content>.registry-footnote{padding:0 var(--workspace-gutter) 20px}
+.registry-summary-table td{vertical-align:top}.registry-summary-table td:first-child{min-width:180px}
+.registry-version-tags{display:flex;flex-wrap:wrap;gap:6px;min-width:120px;max-width:320px}
+.registry-version-tags a{padding:4px 8px;border:1px solid var(--rule);border-radius:var(--radius-sm);color:var(--accent-text);font:.75rem var(--font-mono);overflow-wrap:anywhere;text-decoration:none}
+.registry-version-tags a:hover{background:var(--accent-soft)}
+.registry-status-error{color:var(--danger)}
+.registry-namespace-node{min-width:0}.registry-namespace-node summary{padding:10px;cursor:pointer;font-size:.8rem;overflow-wrap:anywhere}.registry-namespace-node summary svg{vertical-align:middle;margin-right:6px}.registry-namespace-children{margin-left:12px;border-left:1px solid var(--rule);padding-left:6px}
+@media(max-width:1023px){.workspace.registry-page{padding-top:64px}}
+@media(max-width:1000px){.registry-workspace{grid-template-columns:240px minmax(0,1fr)}.registry-content-head,.registry-toolbar,.registry-search{flex-wrap:wrap}.registry-summary-table{min-width:690px}}
+@media(max-width:760px){.registry-workspace{grid-template-columns:minmax(0,1fr)}.registry-connection-rail{padding:20px 16px;border-right:0;border-bottom:1px solid var(--rule)}.registry-connections{max-height:240px;overflow:auto}.registry-namespaces{max-height:260px;overflow:auto}.registry-content-head{gap:4px}.registry-subtabs{gap:20px}.registry-connection-actions{margin-left:auto}.registry-table th,.registry-table td{padding:10px}.registry-list-footer{flex-wrap:wrap}.registry-version-tags a{min-height:44px;display:inline-flex;align-items:center}.registry-page>.page-heading{padding:24px var(--workspace-gutter)}}
+
+.registry-version-tags .is-current{background:var(--accent-soft);border-color:var(--accent-border)}

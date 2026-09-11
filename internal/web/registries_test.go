@@ -1,6 +1,7 @@
 package web_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,7 +48,7 @@ func TestRegistryManagementDrawerFlowAndCSRF(t *testing.T) {
 	if res.StatusCode != 403 {
 		t.Fatal("missing CSRF accepted")
 	}
-	res, e = client.PostForm(base+"/resources/registries/save", url.Values{"csrf_token": {csrf}, "name": {"Main"}, "endpoint": {registry.URL}, "auth_mode": {"anonymous"}, "username": {"ignored-user"}})
+	res, e = client.PostForm(base+"/resources/registries/save", url.Values{"csrf_token": {csrf}, "name": {"Main"}, "endpoint": {registry.URL}, "auth_mode": {"anonymous"}, "username": {"ignored-user"}, "access_mode": {"write"}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -102,4 +103,47 @@ func TestRegistryManagementDrawerFlowAndCSRF(t *testing.T) {
 		t.Fatalf("execute %d %s", res.StatusCode, result)
 	}
 	getBody(t, client, base+destination+"&tab=history", 200)
+}
+
+func TestRegistryInventoryPagination(t *testing.T) {
+	repositories := make([]string, 25)
+	for i := range repositories {
+		repositories[i] = fmt.Sprintf("jiangnan/main/server-%02d", i)
+	}
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/_catalog" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"repositories": repositories})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/tags/list") {
+			fmt.Fprint(w, `{"tags":[]}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer registry.Close()
+	client, base := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state")})
+	csrf := formToken(t, getBody(t, client, base+"/resources/registries/task?task=new", 200))
+	response, err := client.PostForm(base+"/resources/registries/save", url.Values{"csrf_token": {csrf}, "name": {"Pages"}, "endpoint": {registry.URL}, "auth_mode": {"anonymous"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	destination := response.Header.Get("Location") + "&namespace=jiangnan%2Fmain%2F&query=server"
+	first := string(getBody(t, client, base+destination, 200))
+	second := string(getBody(t, client, base+destination+"&page=2", 200))
+	if strings.Count(first, `class="registry-image-link"`) != 20 || strings.Count(second, `class="registry-image-link"`) != 5 {
+		t.Fatal("incorrect page sizes")
+	}
+	if !strings.Contains(second, "server-24") || strings.Contains(second, "server-00") {
+		t.Fatal("incorrect page contents")
+	}
+	invalid := string(getBody(t, client, base+destination+"&page=999999999999999999999", 200))
+	if strings.Count(invalid, `class="registry-image-link"`) != 20 {
+		t.Fatal("invalid page did not reset")
+	}
+	empty := string(getBody(t, client, base+destination+"-missing", 200))
+	if strings.Contains(empty, `class="registry-image-link"`) {
+		t.Fatal("empty search returned images")
+	}
 }

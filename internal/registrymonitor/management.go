@@ -75,6 +75,7 @@ type DeleteResult struct {
 	Error      string
 }
 type ManagementResponse struct {
+	Images       []ImageResult
 	Connections  []ManagedConnection
 	Repositories []string
 	Artifacts    []Artifact

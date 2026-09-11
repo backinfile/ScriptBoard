@@ -24,7 +24,7 @@ ScriptBoard is built for personal servers, small-team utility hosts, and interna
 - **Reuse tasks:** save scripts as Quick Runs with parameters, variables, timeouts, and five-field Cron schedules.
 - **Observe the host:** inspect CPU, memory, storage, applications, Docker, Kubernetes, websites, and run history. Kubernetes external access, workloads, and nodes start collapsed, with manual refresh, auto refresh, and expand/collapse controls in one row. Filtering, searching, and sorting update only the workload section.
 - **Manage data connections:** back up and restore MySQL/MariaDB; inspect Redis health, key types, TTLs, and memory without mutation.
-- **Manage image registries:** switch Registry V2 connections, inspect tags, and preview batch deletion by namespace, prefix, or manual cleanup rules in drawers.
+- **Manage image registries:** browse collapsible nested namespaces, tags, compressed sizes, and version times. Connections switch between read-only and allow-changes modes; new connections default to read-only. Switch connections in the left-hand list and edit the current connection at the top right of the content area. Use Cleanup rules for bulk deletion or open an image for per-tag deletion.
 - **Keep boundaries visible:** use fixed roles, audit records, host-security checks, bounded external triggers, and signed updates.
 
 <p align="center">

@@ -123,6 +123,10 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 	if !exists || !record.Managed {
 		return out, ErrNotFound
 	}
+	// Enforce the saved access mode before preview retrieval or remote deletion.
+	if record.Config.ReadOnly && (req.Command == "preview" || req.Command == "plan" || req.Command == "execute") {
+		return out, errors.New("Registry connection is read-only")
+	}
 	config := record.Config
 	config.Password = record.Password
 	switch req.Command {
@@ -137,6 +141,17 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 			}
 		}
 		return out, store.writeManagement(state)
+	case "summary":
+		if len(req.Repositories) == 0 || len(req.Repositories) > 20 {
+			return out, ErrInvalidConnection
+		}
+		for _, repo := range req.Repositories {
+			if strings.ContainsAny(repo, "*?[") {
+				return out, ErrInvalidConnection
+			}
+		}
+		config.Images = req.Repositories
+		out.Images, err = service.inspector.Inspect(ctx, config)
 	case "catalog":
 		out.Repositories, err = service.inspector.Repositories(ctx, config)
 	case "detail":

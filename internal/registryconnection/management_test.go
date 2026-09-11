@@ -261,3 +261,86 @@ func TestManagementExpiryAndStorageIsolation(t *testing.T) {
 		t.Fatal("expired plan deleted an image")
 	}
 }
+
+func TestManagementAccessModeAndTransport(t *testing.T) {
+	for _, mode := range []string{"http", "https", "skip-verify"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture := fixtureRegistry()
+			var server *httptest.Server
+			if mode == "http" {
+				server = httptest.NewServer(fixture)
+			} else {
+				server = httptest.NewTLSServer(fixture)
+			}
+			defer server.Close()
+			client := server.Client()
+			if mode == "skip-verify" {
+				client = &http.Client{}
+			}
+			root := t.TempDir()
+			service, err := New(Options{StateRoot: root, Client: client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			config := registrymonitor.Config{Endpoint: server.URL, AuthMode: "anonymous", ReadOnly: true, SkipTLSVerify: mode == "skip-verify"}
+			saved, err := service.Manage(ctx, registrymonitor.ManagementRequest{Command: "save", Name: "Access test", Config: config})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := saved.ID
+			service, err = New(Options{StateRoot: root, Client: client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listed, err := service.Manage(ctx, registrymonitor.ManagementRequest{Command: "list"})
+			if err != nil || !listed.Connections[0].Config.ReadOnly || listed.Connections[0].Config.SkipTLSVerify != config.SkipTLSVerify {
+				t.Fatalf("access mode not persisted: %+v %v", listed, err)
+			}
+			for _, command := range []string{"catalog", "detail", "summary", "history"} {
+				_, err := service.Manage(ctx, registrymonitor.ManagementRequest{Command: command, ID: id, Repository: "team-a/api", Repositories: []string{"team-a/api"}})
+				if err != nil {
+					t.Fatalf("read %s: %v", command, err)
+				}
+			}
+			for _, command := range []string{"preview", "plan", "execute"} {
+				_, err := service.Manage(ctx, registrymonitor.ManagementRequest{Command: command, ID: id, Repository: "team-a/api"})
+				if err == nil || !strings.Contains(err.Error(), "read-only") {
+					t.Fatalf("allowed %s: %v", command, err)
+				}
+			}
+			config.ReadOnly = false
+			if _, err = service.Manage(ctx, registrymonitor.ManagementRequest{Command: "save", ID: id, Name: "Access test", Config: config}); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := service.Manage(ctx, registrymonitor.ManagementRequest{Command: "preview", ID: id, Repository: "team-a/api"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			config.ReadOnly = true
+			if _, err = service.Manage(ctx, registrymonitor.ManagementRequest{Command: "save", ID: id, Name: "Access test", Config: config}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = service.Manage(ctx, registrymonitor.ManagementRequest{Command: "execute", ID: id, PlanID: plan.Plan.ID, Confirmation: "Access test"}); err == nil {
+				t.Fatal("executed read-only plan")
+			}
+			config.ReadOnly = false
+			if _, err = service.Manage(ctx, registrymonitor.ManagementRequest{Command: "save", ID: id, Name: "Access test", Config: config}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = service.Manage(ctx, registrymonitor.ManagementRequest{Command: "execute", ID: id, PlanID: plan.Plan.ID, Confirmation: "Access test"}); err == nil {
+				t.Fatal("revived invalidated plan")
+			}
+			plan, err = service.Manage(ctx, registrymonitor.ManagementRequest{Command: "preview", ID: id, Repository: "team-a/api"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = service.Manage(ctx, registrymonitor.ManagementRequest{Command: "execute", ID: id, PlanID: plan.Plan.ID, Confirmation: "Access test"}); err != nil {
+				t.Fatal(err)
+			}
+			if len(fixture.deleted) != 1 {
+				t.Fatalf("deletions: %v", fixture.deleted)
+			}
+		})
+	}
+}

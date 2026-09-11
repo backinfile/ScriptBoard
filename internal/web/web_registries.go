@@ -18,7 +18,11 @@ type registryPageData struct {
 	Connections  []registrymonitor.ManagedConnection
 	Connection   registrymonitor.ManagedConnection
 	Repositories []string
-	Namespaces   []string
+	Namespaces   []*registryNamespace
+	Images       map[string]registrymonitor.ImageResult
+	Total        int
+	PreviousURL  string
+	NextURL      string
 	Query        string
 	Namespace    string
 	Tab          string
@@ -90,8 +94,13 @@ func (a *App) registriesPage(response http.ResponseWriter, request *http.Request
 	if request.URL.Path == "/resources/registries/task" {
 		switch view.Task {
 		case "new":
-			view.Connection = registrymonitor.ManagedConnection{Config: registrymonitor.Config{AuthMode: "anonymous"}}
-		case "edit", "cleanup", "remove":
+			view.Connection = registrymonitor.ManagedConnection{Config: registrymonitor.Config{AuthMode: "anonymous", ReadOnly: true}}
+		case "edit", "remove":
+		case "cleanup":
+			if view.Connection.Config.ReadOnly {
+				view.Task = "error"
+				err = errors.New("Registry connection is read-only")
+			}
 		case "detail":
 			out, e := backend.Manage(request.Context(), registrymonitor.ManagementRequest{Command: "detail", ID: id, Repository: view.Repository})
 			view.Artifacts, err = out.Artifacts, e
@@ -111,20 +120,46 @@ func (a *App) registriesPage(response http.ResponseWriter, request *http.Request
 			out, e := backend.Manage(request.Context(), registrymonitor.ManagementRequest{Command: command, ID: id})
 			err = e
 			view.Events = out.Events
-			namespaces := map[string]bool{}
+
 			for _, repo := range out.Repositories {
-				if index := strings.Index(repo, "/"); index >= 0 {
-					namespaces[repo[:index+1]] = true
-				}
 				if strings.HasPrefix(repo, view.Namespace) && strings.Contains(strings.ToLower(repo), strings.ToLower(view.Query)) {
 					view.Repositories = append(view.Repositories, repo)
 				}
 			}
-			for ns := range namespaces {
-				view.Namespaces = append(view.Namespaces, ns)
-			}
-			sort.Strings(view.Namespaces)
+			view.Namespaces = registryNamespaceTree(out.Repositories, view.Namespace, view.BackURL)
 			sort.Strings(view.Repositories)
+			view.Total = len(view.Repositories)
+			page, _ := strconv.Atoi(request.URL.Query().Get("page"))
+			pages := (view.Total + 19) / 20
+			if page < 1 || page > pages {
+				page = 1
+			}
+			start := (page - 1) * 20
+			view.Repositories = view.Repositories[start:min(start+20, view.Total)]
+			pageURL := view.BackURL + "&namespace=" + url.QueryEscape(view.Namespace) + "&query=" + url.QueryEscape(view.Query)
+			if page > 1 {
+				view.PreviousURL = pageURL + "&page=" + strconv.Itoa(page-1)
+			}
+			if page < pages {
+				view.NextURL = pageURL + "&page=" + strconv.Itoa(page+1)
+			}
+			if command == "catalog" && len(view.Repositories) > 0 {
+				summary, summaryErr := backend.Manage(request.Context(), registrymonitor.ManagementRequest{Command: "summary", ID: id, Repositories: view.Repositories})
+				view.Images = map[string]registrymonitor.ImageResult{}
+				for _, name := range view.Repositories {
+					item := registrymonitor.ImageResult{Image: name}
+					if summaryErr != nil {
+						item.Error = summaryErr.Error()
+					}
+					view.Images[name] = item
+				}
+				for _, item := range summary.Images {
+					view.Images[item.Image] = item
+				}
+				if summaryErr != nil {
+					err = summaryErr
+				}
+			}
 		}
 	}
 	if err != nil {
@@ -150,7 +185,7 @@ func (a *App) registryMutation(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	if command == "save" {
-		req.Config = registrymonitor.Config{Endpoint: request.FormValue("endpoint"), Images: []string{"*"}, Username: request.FormValue("username"), AuthMode: request.FormValue("auth_mode"), SkipTLSVerify: request.FormValue("skip_tls_verify") == "1"}
+		req.Config = registrymonitor.Config{ReadOnly: request.FormValue("access_mode") != "write", Endpoint: request.FormValue("endpoint"), Images: []string{"*"}, Username: request.FormValue("username"), AuthMode: request.FormValue("auth_mode"), SkipTLSVerify: request.FormValue("skip_tls_verify") == "1"}
 		req.Password = request.FormValue("password")
 		req.Preserve = req.ID != "" && req.Password == ""
 	}
@@ -198,4 +233,44 @@ func (a *App) registryMutation(response http.ResponseWriter, request *http.Reque
 		req.ID = ""
 	}
 	http.Redirect(response, request, registryURL(req.ID), 303)
+}
+
+// Preserve every namespace segment and its slash boundary when filtering descendants.
+type registryNamespace struct {
+	Name, Path, URL string
+	Selected, Open  bool
+	Children        []*registryNamespace
+}
+
+func registryNamespaceTree(repositories []string, selected, base string) []*registryNamespace {
+	root := &registryNamespace{}
+	for _, repo := range repositories {
+		parts := strings.Split(repo, "/")
+		parent := root
+		prefix := ""
+		for _, part := range parts[:len(parts)-1] {
+			prefix += part + "/"
+			var node *registryNamespace
+			for _, child := range parent.Children {
+				if child.Path == prefix {
+					node = child
+					break
+				}
+			}
+			if node == nil {
+				node = &registryNamespace{Name: part, Path: prefix, URL: base + "&namespace=" + url.QueryEscape(prefix), Selected: selected == prefix, Open: strings.HasPrefix(selected, prefix)}
+				parent.Children = append(parent.Children, node)
+			}
+			parent = node
+		}
+	}
+	var sortNodes func(*registryNamespace)
+	sortNodes = func(node *registryNamespace) {
+		sort.Slice(node.Children, func(i, j int) bool { return node.Children[i].Name < node.Children[j].Name })
+		for _, child := range node.Children {
+			sortNodes(child)
+		}
+	}
+	sortNodes(root)
+	return root.Children
 }

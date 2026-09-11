@@ -32,6 +32,7 @@ var imagePattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._-][a-z0-9]+)|(?:/[a-z0
 var digestPattern = regexp.MustCompile(`^[a-z0-9]+(?:[+._-][a-z0-9]+)*:[a-fA-F0-9]{32,}$`)
 
 type Config struct {
+	ReadOnly      bool     `json:"readOnly,omitempty"`
 	SkipTLSVerify bool     `json:"skipTLSVerify,omitempty"`
 	Endpoint      string   `json:"endpoint"`
 	Images        []string `json:"images"`

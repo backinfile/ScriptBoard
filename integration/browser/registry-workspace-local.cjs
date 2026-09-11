@@ -1,0 +1,58 @@
+// Run against the retained local fixture and a disposable Registry V2 server.
+const { chromium } = require('playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const base = process.env.REGISTRY_APP_URL || 'http://127.0.0.1:19746';
+const endpoint = process.env.REGISTRY_TEST_URL || 'http://127.0.0.1:18946';
+const output = path.resolve(process.env.REGISTRY_TEST_OUTPUT || '.scratch/registry-test');
+const password = process.env.REGISTRY_TEST_PASSWORD;
+if (!password) throw Error('Set REGISTRY_TEST_PASSWORD');
+(async()=>{
+ fs.mkdirSync(output,{recursive:true});
+ const browser=await chromium.launch({channel:'msedge',headless:true});
+ const context=await browser.newContext({locale:'zh-CN',viewport:{width:1600,height:1000}});
+ const page=await context.newPage(),checks=[],errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ try{
+  assert.equal((await context.request.get(base+'/resources/registries',{maxRedirects:0})).status(),303);
+  assert.equal((await context.request.get(base+'/missing-registry-route')).status(),404);checks.push('basic access and authentication');
+  await page.goto(base+'/login');await page.locator('[name=username]').fill('admin');await page.locator('[name=password]').fill(password);await page.locator('form[action="/login"] button[type=submit]').click();await page.waitForURL('**/monitor');
+  await page.goto(base+'/resources/registries');await page.getByRole('link',{name:'添加仓库',exact:true}).first().click();
+  const panel=page.locator('.task-panel-host.is-open .task-panel');await panel.waitFor();
+  assert.equal(await panel.locator('[name=access_mode]').inputValue(),'read');
+  await panel.locator('[name=name]').fill('江南镜像仓库');await panel.locator('[name=endpoint]').fill(endpoint);await panel.getByRole('button',{name:'保存连接',exact:true}).click();await panel.waitFor({state:'detached'});
+  const id=new URL(page.url()).searchParams.get('connection');
+  await page.locator('.registry-image-link').first().waitFor();
+  assert.equal(await page.getByRole('link',{name:'清理规则',exact:true}).count(),0);
+  const root=page.locator('.registry-namespaces details').filter({has:page.locator(':scope > summary').filter({hasText:'jiangnan'})}).first();
+  await root.locator(':scope > summary').click();
+  const main=root.locator('details').filter({has:page.locator(':scope > summary').filter({hasText:'main'})}).first();
+  await main.locator(':scope > summary').click();await main.locator(':scope > a').click();
+  await page.waitForURL('**/*namespace=jiangnan%2Fmain%2F');
+  assert.equal(await page.locator('.registry-image-link').count(),2);assert.equal(await page.locator('.registry-image-link').filter({hasText:'mainly'}).count(),0);
+  assert.equal(await page.locator('.registry-namespaces details[open]').count(),2);checks.push('nested namespace collapse, selection, ancestor expansion and sibling boundary');
+  const row=page.locator('.registry-summary-table tr').filter({hasText:'jiangnan/main/server-gate'});
+  assert.match(await row.innerText(),/latest/);assert.match(await row.innerText(),/10.*MiB/);assert.match(await row.innerText(),/2026/);checks.push('tags, compressed size, source-labelled time and status');
+  const box=await page.locator('.registry-page').boundingBox();assert.ok(box.width>1300);checks.push('desktop workspace fills content width');
+  await page.screenshot({path:path.join(output,'desktop.png'),fullPage:true});
+  await row.locator('.registry-image-link').click();await panel.waitFor();assert.equal(await panel.locator('form[action$="/preview"]').count(),0);assert.match(await panel.innerText(),/sha256:/);
+  await panel.locator('[data-task-panel-close]').click();await panel.waitFor({state:'detached'});
+  await page.getByRole('link',{name:'仓库连接',exact:true}).click();await panel.waitFor();
+  const token=await panel.locator('[name=csrf_token]').first().inputValue();
+  let res=await context.request.post(base+'/resources/registries/preview',{form:{csrf_token:token,connection:id,repository:'jiangnan/main/server-gate'},maxRedirects:0});assert.equal(res.status(),422);checks.push('read-only backend denies direct preview requests');
+  await panel.locator('[name=access_mode]').selectOption('write');await panel.getByRole('button',{name:'保存连接',exact:true}).click();await panel.waitFor({state:'detached'});
+  assert.equal(await page.getByRole('link',{name:'清理规则',exact:true}).count(),1);assert.equal(await page.locator('input[name=repositories]').count(),0);checks.push('one bulk cleanup entry');
+  await page.getByRole('link',{name:'清理规则',exact:true}).click();await panel.waitFor();await panel.locator('[name=prefix]').fill('jiangnan/main/nested/');await panel.locator('[name=protect]').uncheck();await panel.getByRole('button',{name:'预览清理范围',exact:true}).click();await panel.locator('[name=confirmation]').waitFor();
+  await page.screenshot({path:path.join(output,'cleanup.png'),fullPage:true});
+  await panel.locator('[name=confirmation]').fill('江南镜像仓库');await panel.getByRole('button',{name:'确认执行删除',exact:true}).click();await panel.getByRole('link',{name:'返回镜像仓库',exact:true}).waitFor();assert.match(await panel.innerText(),/已删除引用/);
+  assert.deepEqual((await (await context.request.get(endpoint+'/v2/jiangnan/main/nested/worker/tags/list')).json()).tags,[]);
+  assert.ok((await (await context.request.get(endpoint+'/v2/jiangnan/mainly/api/tags/list')).json()).tags.includes('stable'));checks.push('confirmed remote deletion preserves sibling namespace');
+  await panel.getByRole('link',{name:'返回镜像仓库',exact:true}).click();await panel.waitFor({state:'detached'});
+  await page.getByRole('link',{name:'操作记录',exact:true}).click();await page.locator('.registry-records details').waitFor();checks.push('operation history');
+  await page.goto(base+'/resources/registries?connection='+id+'&namespace=jiangnan%2Fmain%2F');
+  await page.setViewportSize({width:390,height:844});await page.reload();await page.locator('.registry-table').waitFor();await page.evaluate(()=>Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{}))));await page.screenshot({path:path.join(output,'mobile.png'),fullPage:true,animations:'disabled'});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));checks.push('mobile no page overflow');
+  assert.deepEqual(errors,[]);
+  fs.writeFileSync(path.join(output,'browser-results.json'),JSON.stringify({checks,errors,base,endpoint,connection:id},null,2));console.log(JSON.stringify({checks,errors,connection:id}));
+ }finally{await browser.close()}
+})().catch(e=>{console.error(e);process.exitCode=1});
