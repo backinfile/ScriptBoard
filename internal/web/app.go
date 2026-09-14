@@ -4775,7 +4775,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		} else if uploadName != filename {
 			detail = fmt.Sprintf(webText(locale, "upload_results.renamed"), uploadName)
 		}
-		results = append(results, uploadResult{Name: uploadName, Result: webText(locale, "upload_results.succeeded"), Detail: detail, Succeeded: true})
+		results = append(results, uploadResult{Name: uploadName, Result: uploadOutcome(locale, trashed != nil, uploadName != filename), Detail: detail, Succeeded: true})
 		succeeded++
 	}
 	if fileCount == 0 {

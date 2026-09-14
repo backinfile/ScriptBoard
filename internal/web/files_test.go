@@ -1901,7 +1901,7 @@ func TestExecutableHostUploadIsSavedLikeRegularFile(t *testing.T) {
 	_ = response.Body.Close()
 	content := "Write-Output 'staged'\n"
 	status, result := postHostUpload(t, client, serverURL, formToken(t, page), hostRoot, "deploy.ps1", content, "")
-	if status != http.StatusOK || !bytes.Contains(result, []byte("Succeeded")) {
+	if status != http.StatusOK || !bytes.Contains(result, []byte("Created")) {
 		t.Fatalf("executable upload was not saved directly: status=%d body=%s", status, result)
 	}
 	stored, err := os.ReadFile(filepath.Join(hostRoot, "deploy.ps1"))
@@ -1909,7 +1909,7 @@ func TestExecutableHostUploadIsSavedLikeRegularFile(t *testing.T) {
 		t.Fatalf("uploaded executable content=%q err=%v", stored, err)
 	}
 	status, result = postHostUpload(t, client, serverURL, formToken(t, page), hostRoot, "deploy.ps1", "replacement", "overwrite")
-	if status != http.StatusOK || !bytes.Contains(result, []byte("Succeeded")) {
+	if status != http.StatusOK || !bytes.Contains(result, []byte("Overwritten")) {
 		t.Fatalf("direct executable overwrite failed: status=%d body=%s", status, result)
 	}
 	stored, err = os.ReadFile(filepath.Join(hostRoot, "deploy.ps1"))
@@ -2045,7 +2045,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read upload response: %v", err)
 	}
-	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("hello.txt")) || !bytes.Contains(resultPage, []byte("Succeeded")) ||
+	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("hello.txt")) || !bytes.Contains(resultPage, []byte("Created")) ||
 		!bytes.Contains(resultPage, []byte(`data-upload-results`)) || !bytes.Contains(resultPage, []byte(`data-upload-results-close`)) {
 		t.Fatalf("upload response: status=%d body=%q", response.StatusCode, resultPage)
 	}
@@ -2101,7 +2101,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read replacement response: %v", err)
 	}
-	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("Succeeded")) {
+	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("Overwritten")) {
 		t.Fatalf("replacement response: status=%d body=%q", response.StatusCode, resultPage)
 	}
 	content, err = os.ReadFile(filepath.Join(hostRoot, "hello.txt"))
@@ -2955,5 +2955,61 @@ func TestTextEditPreservesExistingLineEndingStyle(t *testing.T) {
 				t.Fatalf("saved content = %q, want %q", content, testCase.want)
 			}
 		})
+	}
+}
+
+func TestUploadResultsDescribeCommittedOutcome(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		for _, locale := range []string{"zh-CN", "en-US"} {
+			t.Run(fmt.Sprintf("batch=%t/%s", batch, locale), func(t *testing.T) {
+				root := t.TempDir()
+				directory := filepath.Join(root, "managed")
+				client, serverURL := authenticatedClient(t, directory, filepath.Join(root, "state"))
+				address, _ := url.Parse(serverURL)
+				client.Jar.SetCookies(address, []*http.Cookie{{Name: "scriptboard_locale", Value: locale, Path: "/"}})
+				response, err := client.Get(hostFilesRequestURL(serverURL, directory))
+				if err != nil {
+					t.Fatal(err)
+				}
+				page, _ := io.ReadAll(response.Body)
+				response.Body.Close()
+				token := formToken(t, page)
+				for _, action := range []string{"overwrite", "overwrite", "rename"} {
+					existed := false
+					if _, err := os.Stat(filepath.Join(directory, "example.txt")); err == nil {
+						existed = true
+					}
+					var status int
+					var body []byte
+					if batch {
+						status, body = postHostUploadBatch(t, client, serverURL, token, directory, action, map[string]string{"example.txt": "content", "fresh-" + action + ".txt": "fresh"})
+					} else {
+						status, body = postHostUpload(t, client, serverURL, token, directory, "example.txt", "content", action)
+					}
+					expected := "新创建"
+					if existed {
+						expected = "已覆盖"
+					}
+					if action == "rename" {
+						expected = "已重命名"
+					}
+					if locale == "en-US" {
+						expected = map[string]string{"新创建": "Created", "已覆盖": "Overwritten", "已重命名": "Renamed"}[expected]
+					}
+					if status != http.StatusOK || !bytes.Contains(body, []byte("</span>"+expected+"</span>")) {
+						t.Fatalf("action=%s status=%d expected=%s body=%s", action, status, expected, body)
+					}
+					if batch && action == "rename" {
+						created := "新创建"
+						if locale == "en-US" {
+							created = "Created"
+						}
+						if !bytes.Contains(body, []byte("</span>"+created+"</span>")) {
+							t.Fatalf("mixed batch missing created outcome: %s", body)
+						}
+					}
+				}
+			})
+		}
 	}
 }
