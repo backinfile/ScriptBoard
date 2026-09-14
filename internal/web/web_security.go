@@ -153,8 +153,11 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		"to":   {request.URL.Query().Get("to")},
 	})
 	if dateErr != nil {
-		dateRange = localDateRange{}
+		dateRange = localDateRange{FromDate: request.URL.Query().Get("from"), ToDate: request.URL.Query().Get("to")}
 	}
+	// Validate custom dates before collection to match the Broker's bounded query contract.
+	invalidLoginDates := dateErr != nil || dateRange.HasFromDate != dateRange.HasToDate ||
+		dateRange.HasFromDate && dateRange.ToExclusive.Sub(dateRange.From) > 31*24*time.Hour
 	page := positiveInt(request.URL.Query().Get("page"), 1)
 	pageSize := positiveInt(request.URL.Query().Get("page_size"), 5)
 	if pageSize != 20 && pageSize != 50 && pageSize != 100 {
@@ -249,7 +252,10 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 
 	// Linux SSH journals can be large; keep overview on configuration probes and load journal-backed login records only on the logins tab.
 	loadLogins := tab == "logins" || capabilities.OS == "windows" && (tab == "overview" || tab == "defense")
-	if loadLogins {
+	if loadLogins && invalidLoginDates {
+		view.LoginError = webText(locale, "security.login_date_range_invalid")
+	}
+	if loadLogins && !invalidLoginDates {
 		loginContext, cancelLogins := context.WithTimeout(request.Context(), 15*time.Second)
 		loginPage, err := a.hostSecurity.Logins(loginContext, query)
 		cancelLogins()

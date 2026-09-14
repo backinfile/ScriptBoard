@@ -1,6 +1,6 @@
 # ScriptBoard
 
-v2.13 improves registry management with read-only/write access modes, nested namespace navigation, and a consistent layout across databases and registries. See the [release notes (Chinese)](./docs/RELEASE_NOTES.md).
+v2.13.1 fixes host sign-in type filters and adds clear custom date range validation. See the [release notes (Chinese)](./docs/RELEASE_NOTES.md).
 
 [简体中文](./README.md) | English
 
@@ -27,6 +27,8 @@ ScriptBoard is built for personal servers, small-team utility hosts, and interna
 - **Manage image registries:** browse nested namespaces beside the image list, along with tags, compressed sizes, and version times. Click a namespace to filter its images; click the selected node again to expand or collapse its children. Connections switch between read-only and allow-changes modes; new connections default to read-only. Switch connections in the left-hand list and edit the current connection at the top right of the content area. Use Cleanup rules for bulk deletion or open an image for per-tag deletion.
 - **Keep boundaries visible:** use fixed roles, audit records, host-security checks, bounded external triggers, and signed updates.
 - **Filter host sign-ins:** choose SSH password/public key authentication or Windows RDP/network logins.
+
+Custom sign-in dates require both a start and an end, spanning at most 31 days. Clear both dates to use the preset range.
 
 <p align="center">
   <img src="./docs/images/readme/files-en.png" alt="ScriptBoard Host Files" width="49%">

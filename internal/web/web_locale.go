@@ -566,6 +566,7 @@ var webMessages = map[string]localizedMessage{
 	"common.start_date":                             {"开始日期", "Start date"},
 	"common.end_date":                               {"结束日期", "End date"},
 	"common.invalid_date_range":                     {"日期范围无效，请选择有效日期。", "The date range is invalid. Choose valid dates."},
+	"security.login_date_range_invalid":             {"请同时填写有效的开始和结束日期，开始日期不得晚于结束日期，查询跨度最多 31 天；清空两个日期可使用快捷时间范围。", "Choose both start and end dates, with the start no later than the end and a maximum span of 31 days. Clear both dates to use the preset range."},
 	"common.invalid_date_order":                     {"开始日期不能晚于结束日期。", "The start date cannot be later than the end date."},
 	"common.size":                                   {"大小", "Size"},
 	"common.source":                                 {"来源", "Source"},

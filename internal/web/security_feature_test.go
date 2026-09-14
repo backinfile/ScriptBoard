@@ -211,6 +211,47 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	}
 }
 
+func TestHostSecurityLoginDateValidation(t *testing.T) {
+	service := &securityFixtureService{capabilities: hostsecurity.Capabilities{OS: "linux"}}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
+	for _, test := range []struct {
+		name, from, to string
+		valid          bool
+	}{
+		{"default", "", "", true},
+		{"start only", "2026-08-01", "", false},
+		{"end only", "", "2026-08-31", false},
+		{"31 days", "2026-08-01", "2026-08-31", true},
+		{"32 days", "2026-08-01", "2026-09-01", false},
+		{"reversed", "2026-08-05", "2026-08-01", false},
+		{"malformed", "bad-date", "2026-08-01", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service.mu.Lock()
+			before := service.loginCalls
+			service.mu.Unlock()
+			page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=logins&from="+test.from+"&to="+test.to)
+			service.mu.Lock()
+			calls := service.loginCalls - before
+			service.mu.Unlock()
+			if test.valid {
+				if calls != 1 {
+					t.Fatalf("valid date range made %d login calls", calls)
+				}
+				return
+			}
+			if calls != 0 || !bytes.Contains(page, []byte("Choose both start and end dates")) {
+				t.Fatalf("invalid dates must show guidance without querying: calls=%d page=%s", calls, page)
+			}
+			for _, value := range []string{test.from, test.to} {
+				if !bytes.Contains(page, []byte(`value="`+value+`"`)) {
+					t.Fatalf("date input %q was not preserved", value)
+				}
+			}
+		})
+	}
+}
+
 func TestHostSecurityLoginFiltersArePassedToService(t *testing.T) {
 	t.Parallel()
 	service := &securityFixtureService{
