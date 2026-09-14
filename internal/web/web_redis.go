@@ -26,6 +26,7 @@ type redisDatabasesPageData struct {
 	Scan        *redismanager.ScanPage
 	KeyGroups   []redisKeyGroup
 	KeyValue    *redismanager.KeyValue
+	Separator   string
 	Pattern     string
 	SelectedKey string
 	Database    int
@@ -48,13 +49,13 @@ func redisLoadError(locale webLocale, err error) string {
 	return secretredaction.String(err.Error())
 }
 
-func groupRedisKeys(keys []redismanager.KeySummary) []redisKeyGroup {
+func groupRedisKeys(keys []redismanager.KeySummary, separator string) []redisKeyGroup {
 	groups := make(map[string][]redismanager.KeySummary)
 	order := make([]string, 0)
 	for _, key := range keys {
 		namespace := ""
-		// Redis 键空间仅将显式 "::" 视为层级分隔符，避免拆散包含普通冒号的键名。
-		if prefix, _, found := strings.Cut(key.Name, "::"); found {
+		// 按所选分隔符解析键分组，保留完整键名用于读取。
+		if prefix, _, found := strings.Cut(key.Name, separator); found {
 			namespace = strings.TrimSpace(prefix)
 		}
 		if _, exists := groups[namespace]; !exists {
@@ -150,6 +151,14 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 	current := request.Context().Value(sessionContextKey).(session)
 	// Redis keys are binary-safe identifiers; preserve URL-decoded leading and trailing spaces exactly.
 	data := redisDatabasesPageData{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Instances: instances, ActiveTab: "overview", Pattern: strings.TrimSpace(request.URL.Query().Get("pattern")), SelectedKey: request.URL.Query().Get("key")}
+	data.Separator = request.URL.Query().Get("separator")
+	if data.Separator == "" {
+		data.Separator = "::"
+	}
+	if data.Separator != ":" && data.Separator != "::" {
+		http.Error(response, "Redis key separator is invalid", http.StatusBadRequest)
+		return
+	}
 	if rawDatabase := strings.TrimSpace(request.URL.Query().Get("database")); rawDatabase != "" {
 		data.Database, err = strconv.Atoi(rawDatabase)
 		if err != nil || data.Database < 0 || data.Database > 1<<20 {
@@ -195,7 +204,7 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 				data.LoadError = redisLoadError(data.Locale, scanErr)
 			} else {
 				data.Scan = &scan
-				data.KeyGroups = groupRedisKeys(scan.Keys)
+				data.KeyGroups = groupRedisKeys(scan.Keys, data.Separator)
 				if data.SelectedKey != "" {
 					value, valueErr := a.redis.ReadKey(ctx, id, data.Database, data.SelectedKey)
 					if valueErr != nil {

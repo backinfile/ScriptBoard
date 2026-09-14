@@ -66,6 +66,18 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 71 {
+		exists, err := storesqlite.ColumnExists(migration, "mysql_operations", "plan_id")
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE mysql_operations ADD COLUMN plan_id TEXT NOT NULL DEFAULT '';
+			UPDATE mysql_operations SET plan_id=COALESCE((SELECT plan_id FROM mysql_backups WHERE mysql_backups.id=mysql_operations.backup_id AND kind='scheduled'), '')`); err != nil {
+				return err
+			}
+		}
+	}
 	if schemaVersion > 0 && schemaVersion <= 66 {
 		if err := workbench.MigrateShared(migration); err != nil {
 			return fmt.Errorf("migrate inspiration space: %w", err)

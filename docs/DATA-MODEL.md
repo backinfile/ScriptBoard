@@ -622,3 +622,5 @@ schema 65 增加 `documents`，持久化当前实例的文档收藏条目（每�
 ## 页面嵌入设置
 
 Schema 70 的 `embedding_settings` 单例保存 `frame_ancestors` JSON 数组、更新时间和操作者。无记录时沿用启动配置；空数组表示禁止嵌入，`["*"]` 表示全部地址，其他值为精确 HTTP/HTTPS 来源。设置页保存后优先于启动配置，立即生效并随数据库备份和重启保留。每个请求使用同一份策略生成 CSP、X-Frame-Options 和 Cookie 属性。
+
+Schema 72 为 mysql_operations 增加 plan_id，独立保留备份计划执行记录（含失败和重叠跳过），不随备份文件轮换删除。旧记录通过仍保留的 scheduled 备份回填计划归属；无法确认归属的旧记录继续保留在实例操作历史中。

@@ -8786,9 +8786,9 @@ body:has(> .error-page) {
 .redis-metrics > div:not(:nth-child(3n/**/+1)) { border-left: 1px solid var(--rule); }
 .redis-metrics small { color: var(--muted); }
 .redis-metrics strong { font-size: 1.125rem; }
-.redis-scan-toolbar { display: grid; grid-template-columns: 7rem minmax(16rem, 1fr) auto auto; gap: 14px; align-items: end; padding: 18px 20px; background: var(--canvas); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.redis-scan-toolbar { display: grid; grid-template-columns: 7rem minmax(10rem, 1fr) auto auto auto; gap: 14px; align-items: end; padding: 18px 20px; background: var(--canvas); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
 .redis-database-selector { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 8px; }
-.redis-database-selector label, .redis-database-field { display: grid; gap: 7px; color: var(--muted); font-size: .72rem; font-weight: 650; letter-spacing: .04em; }
+.redis-database-selector label, .redis-database-field, .redis-separator-field { display: grid; gap: 7px; color: var(--muted); font-size: .72rem; font-weight: 650; letter-spacing: .04em; }
 .redis-database-selector input, .redis-database-field input { width: 7rem; }
 .redis-pattern { display: flex; min-width: 0; align-items: center; gap: 10px; color: var(--muted); font-size: .72rem; font-weight: 650; letter-spacing: .04em; }
 .redis-pattern > span:first-child { flex: none; white-space: nowrap; }
@@ -9111,3 +9111,10 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 .task-panel .settings-editor .settings-section-heading h2 { display: none; }
 .settings-editor .section-index { display: none; }
 @media (max-width: 760px) { .settings-workspace .page-heading, .settings-workspace .settings-section-heading { align-items: flex-start; } .settings-workspace .settings-nav { gap: 2px; } .settings-workspace .settings-nav a { padding: 9px 10px; } .settings-entry-list a { padding: 16px 4px; } }
+
+.mysql-plan-details-body { overflow-y: auto; min-height: 0; }
+.mysql-plan-details-body > section { display: grid; gap: 12px; }
+.mysql-plan-next-times { display: grid; gap: 10px; padding-left: 1.4rem; }
+.mysql-plan-history-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+.mysql-plan-history-item small, .mysql-plan-history-item p { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.mysql-plan-details-body code, .mysql-plan-details-body time { overflow-wrap: anywhere; }

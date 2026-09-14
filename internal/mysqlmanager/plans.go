@@ -214,7 +214,7 @@ func (m *Manager) RunDuePlans(ctx context.Context) error {
 			_, err := m.Backup(ctx, BackupRequest{InstanceID: plan.InstanceID, Database: database, PlanID: plan.ID, Kind: BackupScheduled, ActorUsername: "system"})
 			if err != nil {
 				if strings.Contains(err.Error(), "another MySQL operation") {
-					_ = m.recordSkippedOperation(ctx, plan.InstanceID, database)
+					_ = m.recordSkippedOperation(ctx, plan.InstanceID, database, plan.ID)
 				}
 				continue
 			}
@@ -251,11 +251,11 @@ func (m *Manager) applyRetention(ctx context.Context, planID, database string, k
 	return nil
 }
 
-func (m *Manager) recordSkippedOperation(ctx context.Context, instanceID, database string) error {
+func (m *Manager) recordSkippedOperation(ctx context.Context, instanceID, database, planID string) error {
 	now := m.now().UTC().UnixNano()
 	_, err := m.db.ExecContext(ctx, `INSERT INTO mysql_operations
-		(id,kind,instance_id,database_name,phase,created_at,updated_at,actor_username)
-		VALUES (?,'scheduled_backup',?,?,'skipped_overlap',?,?, 'system')`, randomID(), instanceID, database, now, now)
+		(id,kind,instance_id,database_name,phase,created_at,updated_at,actor_username,plan_id)
+		VALUES (?,'scheduled_backup',?,?,'skipped_overlap',?,?, 'system',?)`, randomID(), instanceID, database, now, now, planID)
 	return err
 }
 

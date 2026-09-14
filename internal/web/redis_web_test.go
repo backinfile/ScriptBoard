@@ -148,6 +148,22 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	if backend.lastDatabase != 8 {
 		t.Fatalf("continued Redis scan database=%d, want 8", backend.lastDatabase)
 	}
+	for _, separator := range []string{":", "::"} {
+		page := string(getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&database=5&cursor=73&separator="+url.QueryEscape(separator)+"&key=cache:item", http.StatusOK))
+		if strings.Contains(page, `data-redis-key-namespace="cache"`) != (separator == ":") {
+			t.Fatalf("unexpected grouping for %q", separator)
+		}
+		for _, expected := range []string{`value="` + separator + `" selected`, `name="separator" value="` + separator + `"`, "separator=" + url.QueryEscape(separator), "cursor=73", "database=5"} {
+			if !strings.Contains(page, expected) {
+				t.Fatalf("separator %q missing %q", separator, expected)
+			}
+		}
+		if backend.lastKey != "cache:item" || backend.lastDatabase != 5 || backend.lastScan.Cursor != 73 {
+			t.Fatal("separator changed Redis request identifiers")
+		}
+	}
+	_ = getBody(t, client, serverURL+"/resources/databases?engine=redis&separator=invalid", http.StatusBadRequest)
+
 	paddedKey := "  padded Redis key  "
 	_ = getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&database=11&key="+url.QueryEscape(paddedKey), http.StatusOK)
 	if backend.lastKey != paddedKey {

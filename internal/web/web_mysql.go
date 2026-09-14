@@ -30,6 +30,8 @@ type mysqlDatabasesPageData struct {
 	BackupDatabases                               []string
 	BackupDatabase                                string
 	Plans                                         []mysqlmanager.Plan
+	PlanDetails                                   *mysqlPlanDetails
+	LoadPlanDatabases                             bool
 	Operations                                    []mysqlmanager.Operation
 	Tools                                         mysqlmanager.ToolSettings
 	LoadError                                     string
@@ -154,30 +156,34 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 			}
 		}
 		data.PlanCount = len(data.Plans)
-		probeContext, cancel := context.WithTimeout(request.Context(), 5*time.Second)
-		status, statusErr := a.mysql.Status(probeContext, selectedID)
-		if statusErr != nil {
-			data.Selected.ConnectionState = mysqlmanager.ConnectionFailed
-		} else {
-			data.Selected.ConnectionState = mysqlmanager.ConnectionConnected
-			data.Status = &status
-			data.Databases, statusErr = a.mysql.Databases(probeContext, selectedID)
-		}
-		for index := range data.InstanceRows {
-			if data.InstanceRows[index].ID == selectedID {
-				data.InstanceRows[index].ConnectionState = data.Selected.ConnectionState
-				break
+		data.LoadPlanDatabases = data.ActiveTab == "plans" && request.URL.Query().Get("load_databases") == "1"
+		// 本地备份和历史按需读取，只有远端数据页或显式加载数据库时建立连接。
+		if data.ActiveTab == "overview" || data.ActiveTab == "databases" || data.ActiveTab == "objects" || data.ActiveTab == "sql" || data.LoadPlanDatabases {
+			probeContext, cancel := context.WithTimeout(request.Context(), 5*time.Second)
+			status, statusErr := a.mysql.Status(probeContext, selectedID)
+			if statusErr != nil {
+				data.Selected.ConnectionState = mysqlmanager.ConnectionFailed
+			} else {
+				data.Selected.ConnectionState = mysqlmanager.ConnectionConnected
+				data.Status = &status
+				data.Databases, statusErr = a.mysql.Databases(probeContext, selectedID)
 			}
-		}
-		for index := range data.ConnectionRows {
-			if data.ConnectionRows[index].Engine == "mysql" && data.ConnectionRows[index].ID == selectedID {
-				data.ConnectionRows[index].ConnectionState = string(data.Selected.ConnectionState)
-				break
+			for index := range data.InstanceRows {
+				if data.InstanceRows[index].ID == selectedID {
+					data.InstanceRows[index].ConnectionState = data.Selected.ConnectionState
+					break
+				}
 			}
-		}
-		cancel()
-		if statusErr != nil {
-			data.LoadError = secretredaction.String(statusErr.Error())
+			for index := range data.ConnectionRows {
+				if data.ConnectionRows[index].Engine == "mysql" && data.ConnectionRows[index].ID == selectedID {
+					data.ConnectionRows[index].ConnectionState = string(data.Selected.ConnectionState)
+					break
+				}
+			}
+			cancel()
+			if statusErr != nil {
+				data.LoadError = secretredaction.String(statusErr.Error())
+			}
 		}
 		data.DatabaseCount = len(data.Databases)
 		if data.ActiveTab == "objects" || data.ActiveTab == "sql" {
@@ -245,6 +251,9 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 				data.Operations, _, _ = a.mysql.OperationsPage(request.Context(), selectedID, mysqlPageSize, (data.Pagination.Page-1)*mysqlPageSize)
 			}
 		}
+	}
+	if !a.loadMySQLPlanDetails(response, request, &data) {
+		return
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = mysqlDatabasesTemplate.Execute(response, data)

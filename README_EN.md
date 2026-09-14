@@ -135,6 +135,10 @@ MySQL, Redis, Kubernetes, website, and model endpoints preserve the secure and p
 
 Roles apply to the whole instance. Custom roles and per-script permissions are not currently supported.
 
+MySQL connections open local backups first. Backups, downloads, plans, and execution history remain accessible while the server is offline. Backup downloads use the browser's native download flow. Hover over a database connection to see its full name and address. Click a backup plan name to inspect its Cron expression, next five occurrences, and paginated execution history.
+
+Redis keyspace supports colon (`:`) or double-colon (`::`) grouping, defaulting to double colon. Pagination and value previews preserve the selected mode.
+
 When editing a Redis connection, leaving the password blank preserves it. To change the host, port, or TLS settings of a passwordless instance, explicitly select “Use an empty password”.
 
 ## Network and configuration

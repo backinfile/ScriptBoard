@@ -412,6 +412,27 @@ func TestBackupPlanCanBeEditedInDrawerAndRequiresTypedDeleteConfirmation(t *test
 			t.Fatalf("plan drawer missing %q: %s", expected, page)
 		}
 	}
+	for i := 0; i < 27; i++ {
+		_, err := database.Exec("INSERT INTO mysql_operations (id,kind,instance_id,database_name,plan_id,phase,error,created_at,updated_at) VALUES (?,'backup',?,'inventory','plan-edit-fixture','failed','retained failure',?,?)", fmt.Sprintf("plan-history-%02d", i), instanceID, now-int64(i), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	details := string(getBody(t, client, serverURL+"/resources/databases?instance="+instanceID+"&tab=plans&plan=plan-edit-fixture", http.StatusOK))
+	for _, expected := range []string{"open data-mysql-plan-details", "mysql-plan-next-times", "0 2 * * *", "retained failure", "plan_page=2"} {
+		if !strings.Contains(details, expected) {
+			t.Fatalf("plan details missing %q", expected)
+		}
+	}
+	if strings.Count(details, "<time datetime=") != 5 || strings.Count(details, "class=\"mysql-plan-history-item\"") != 12 {
+		t.Fatal("wrong preview or history page size")
+	}
+	secondPage := string(getBody(t, client, serverURL+"/resources/databases?instance="+instanceID+"&tab=plans&plan=plan-edit-fixture&plan_page=2", http.StatusOK))
+	if strings.Count(secondPage, "class=\"mysql-plan-history-item\"") != 12 {
+		t.Fatal("history pagination failed")
+	}
+	getBody(t, client, serverURL+"/resources/databases?instance="+instanceID+"&tab=plans&plan=missing", http.StatusNotFound)
+
 	response, err = client.PostForm(serverURL+"/resources/databases/plans/plan-edit-fixture", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"Weeknight"}, "expression": {"30 1 * * 1-5"},
 		"retention_count": {"14"}, "databases": {"inventory"},

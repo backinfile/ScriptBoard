@@ -48,6 +48,7 @@ var SchemaStatements = []string{
 		kind TEXT NOT NULL,
 		instance_id TEXT NOT NULL,
 		database_name TEXT NOT NULL,
+		plan_id TEXT NOT NULL DEFAULT '',
 		target_database TEXT NOT NULL DEFAULT '',
 		backup_id TEXT NOT NULL DEFAULT '',
 		safety_backup_id TEXT NOT NULL DEFAULT '',

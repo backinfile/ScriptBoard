@@ -49,12 +49,12 @@ type Backup struct {
 }
 
 type Operation struct {
-	ID, Kind, InstanceID, Database, TargetDatabase, BackupID, SafetyBackupID string
-	Phase, Error, RollbackError                                              string
-	BytesTotal, BytesCompleted                                               int64
-	CancelRequested                                                          bool
-	CreatedAt, UpdatedAt                                                     time.Time
-	Actor                                                                    Actor
+	ID, Kind, InstanceID, Database, TargetDatabase, BackupID, SafetyBackupID, PlanID string
+	Phase, Error, RollbackError                                                      string
+	BytesTotal, BytesCompleted                                                       int64
+	CancelRequested                                                                  bool
+	CreatedAt, UpdatedAt                                                             time.Time
+	Actor                                                                            Actor
 }
 
 type osCommandRunner struct{}
@@ -85,16 +85,16 @@ func (m *Manager) Backup(ctx context.Context, request BackupRequest) (Backup, er
 	if err != nil {
 		return Backup{}, err
 	}
-	sourceName := ""
+	sourceName, planID := "", ""
 	if request.Kind == BackupScheduled {
 		plan, planErr := m.Plan(ctx, request.PlanID)
 		if planErr != nil || plan.InstanceID != instance.ID {
 			return Backup{}, errors.New("scheduled MySQL backup requires a plan for the selected instance")
 		}
 		// Keep the plan name on the backup so its recorded source survives later plan edits or deletion.
-		sourceName = plan.Name
+		sourceName, planID = plan.Name, plan.ID
 	}
-	operation, operationContext, release, err := m.beginOperation(ctx, "backup", instance.ID, request.Database, Actor{request.ActorUserID, request.ActorUsername})
+	operation, operationContext, release, err := m.beginOperation(ctx, "backup", instance.ID, request.Database, Actor{request.ActorUserID, request.ActorUsername}, planID)
 	if err != nil {
 		return Backup{}, err
 	}
@@ -187,7 +187,7 @@ func (m *Manager) runBackup(ctx context.Context, operation Operation, instance I
 	return backup, nil
 }
 
-func (m *Manager) beginOperation(ctx context.Context, kind, instanceID, database string, actor Actor) (Operation, context.Context, func(), error) {
+func (m *Manager) beginOperation(ctx context.Context, kind, instanceID, database string, actor Actor, planIDs ...string) (Operation, context.Context, func(), error) {
 	m.mu.Lock()
 	if active := m.active[instanceID]; active != "" {
 		m.mu.Unlock()
@@ -195,14 +195,17 @@ func (m *Manager) beginOperation(ctx context.Context, kind, instanceID, database
 	}
 	operationContext, cancel := context.WithCancel(ctx)
 	operation := Operation{ID: randomID(), Kind: kind, InstanceID: instanceID, Database: database, Phase: "preflight", CreatedAt: m.now().UTC(), UpdatedAt: m.now().UTC(), Actor: actor}
+	if len(planIDs) > 0 {
+		operation.PlanID = planIDs[0]
+	}
 	m.active[instanceID] = operation.ID
 	m.cancels[operation.ID] = cancel
 	m.mu.Unlock()
 	_, err := m.db.ExecContext(ctx, `INSERT INTO mysql_operations
 		(id, kind, instance_id, database_name, target_database, backup_id, safety_backup_id, phase, bytes_total, bytes_completed,
-		error, rollback_error, cancel_requested, created_at, updated_at, actor_user_id, actor_username)
-		VALUES (?, ?, ?, ?, '', '', '', ?, 0, 0, '', '', 0, ?, ?, ?, ?)`, operation.ID, operation.Kind, operation.InstanceID,
-		operation.Database, operation.Phase, operation.CreatedAt.UnixNano(), operation.UpdatedAt.UnixNano(), actor.UserID, actor.Username)
+		error, rollback_error, cancel_requested, created_at, updated_at, actor_user_id, actor_username, plan_id)
+		VALUES (?, ?, ?, ?, '', '', '', ?, 0, 0, '', '', 0, ?, ?, ?, ?, ?)`, operation.ID, operation.Kind, operation.InstanceID,
+		operation.Database, operation.Phase, operation.CreatedAt.UnixNano(), operation.UpdatedAt.UnixNano(), actor.UserID, actor.Username, operation.PlanID)
 	if err != nil {
 		m.mu.Lock()
 		delete(m.active, instanceID)
@@ -339,10 +342,10 @@ func (m *Manager) Operation(ctx context.Context, id string) (Operation, error) {
 	var item Operation
 	var createdAt, updatedAt int64
 	err := m.db.QueryRowContext(ctx, `SELECT id, kind, instance_id, database_name, target_database, backup_id, safety_backup_id,
-		phase, bytes_total, bytes_completed, error, rollback_error, cancel_requested, created_at, updated_at, actor_user_id, actor_username
+		phase, bytes_total, bytes_completed, error, rollback_error, cancel_requested, created_at, updated_at, actor_user_id, actor_username, plan_id
 		FROM mysql_operations WHERE id=?`, id).Scan(&item.ID, &item.Kind, &item.InstanceID, &item.Database, &item.TargetDatabase,
 		&item.BackupID, &item.SafetyBackupID, &item.Phase, &item.BytesTotal, &item.BytesCompleted, &item.Error,
-		&item.RollbackError, &item.CancelRequested, &createdAt, &updatedAt, &item.Actor.UserID, &item.Actor.Username)
+		&item.RollbackError, &item.CancelRequested, &createdAt, &updatedAt, &item.Actor.UserID, &item.Actor.Username, &item.PlanID)
 	item.CreatedAt, item.UpdatedAt = time.Unix(0, createdAt).UTC(), time.Unix(0, updatedAt).UTC()
 	return item, err
 }
