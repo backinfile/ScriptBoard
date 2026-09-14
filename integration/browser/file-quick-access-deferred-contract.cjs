@@ -6,6 +6,7 @@ const { chromium } = require("playwright");
 const navigation = `<nav class="sidebar-nav"><a href="/monitor">Monitor</a><a href="/resources/files">Files</a></nav>`;
 const shell = main => `<!doctype html><html><head><title>ScriptBoard</title><script defer src="/assets/app-v2.js"></script></head><body><aside>${navigation}</aside>${main}</body></html>`;
 const files = shell(`<main class="workspace files-page">
+  <a data-file-jump-open href="/resources/files/jump">Jump</a>
   <details data-file-quick-access data-validation-url="/resources/files/validate" data-pins-url="/resources/files/quick-access" data-csrf-token="csrf" data-ungrouped-label="Ungrouped" data-save-failed="Save failed" data-remove-label="Remove" data-edit-label="Edit" hidden>
     <summary>Quick access <span data-file-quick-count>0</span><span data-file-quick-count-label></span></summary>
     <p data-file-quick-status hidden></p><p data-file-quick-empty></p><ul data-file-quick-list></ul>
@@ -21,6 +22,8 @@ const files = shell(`<main class="workspace files-page">
   const errors = [];
   let shellRequests = 0;
   let dataRequests = 0;
+  let releaseData;
+  const dataGate = new Promise(resolve => { releaseData = resolve; });
   page.on("pageerror", error => errors.push(error.message));
   await page.route("http://deferred.test/assets/app-v2.js", route => route.fulfill({
     contentType: "application/javascript",
@@ -36,7 +39,7 @@ const files = shell(`<main class="workspace files-page">
       shellRequests++;
     } else {
       dataRequests++;
-      await new Promise(resolve => setTimeout(resolve, 350));
+      await dataGate;
     }
     await route.fulfill({ contentType: "text/html", body: files });
   });
@@ -45,6 +48,11 @@ const files = shell(`<main class="workspace files-page">
   await page.goto("http://deferred.test/monitor");
   await page.locator('.sidebar-nav a[href="/resources/files"]').click();
   await page.waitForURL("http://deferred.test/resources/files");
+  // Hold the data response to exercise the shell while its listing is still pending.
+  await page.locator('[data-file-jump-open]').waitFor({ state: 'attached' });
+  assert.equal(await page.locator('[data-file-jump-open]').isVisible(), false, 'jump waits for the final listing');
+  releaseData();
+  await page.locator('[data-file-jump-open]').waitFor({ state: 'visible' });
   const quickAccess = page.locator("[data-file-quick-access]");
   await quickAccess.waitFor({ state: "visible" });
   if ((await quickAccess.getAttribute("open")) === null) await quickAccess.locator("summary").click();

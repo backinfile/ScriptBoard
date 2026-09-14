@@ -1430,6 +1430,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
         // Fix: the deferred data pass performs a second cleanup; do not expose
         // Quick access during the shell pass or that cleanup can close its editor.
         deferFileQuickAccess: deferredData,
+        deferFileJump: deferredData,
       });
 
       if (deferredData) {
@@ -8250,7 +8251,10 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     initWorkbench(cleanups);
     const workflowRoot = document.querySelector("[data-workflow]");
     if (workflowRoot) loadScriptAsset("/assets/workflow.js", () => window.ScriptBoardWorkflow).then(init => { if (workflowRoot.isConnected) init(workflowRoot); });
-    if (window.ScriptBoardFileJump) cleanups.push(window.ScriptBoardFileJump({ navigate, renderIcons, makeIcon }));
+    // Keep the jump dialog available after history navigation finishes replacing the listing.
+    const fileJumpOpener = document.querySelector('[data-file-jump-open]');
+    if (fileJumpOpener) fileJumpOpener.hidden = Boolean(options.deferFileJump);
+    if (!options.deferFileJump && window.ScriptBoardFileJump) cleanups.push(window.ScriptBoardFileJump({ navigate, renderIcons, makeIcon }));
     initScriptPreview();
     initTextPreviewPager(cleanups);
     initPasswordControls(document, cleanups);
