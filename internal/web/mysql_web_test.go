@@ -97,7 +97,7 @@ func TestDatabasesPageCombinesMySQLAndRedisConnectionsAndOffersOneAddFlow(t *tes
 	}
 	_ = response.Body.Close()
 	mixedPage := string(getBody(t, client, serverURL+"/resources/databases", http.StatusOK))
-	for _, expected := range []string{`class="mysql-instance-tabs database-connection-tabs"`, `data-engine="mysql"`, `data-engine="redis"`, `data-lucide="database"`, `data-lucide="memory-stick"`, `>MySQL</small>`, `>Redis</small>`} {
+	for _, expected := range []string{`class="mysql-instance-tabs database-connection-tabs resource-connection-list"`, `data-engine="mysql"`, `data-engine="redis"`, `data-lucide="database"`, `data-lucide="memory-stick"`, `>MySQL</small>`, `>Redis</small>`} {
 		if !strings.Contains(mixedPage, expected) {
 			t.Fatalf("unified connection inventory is missing %q: %s", expected, mixedPage)
 		}
@@ -184,12 +184,12 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	selectedBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail database-connection-rail"`, `class="mysql-instance-tabs database-connection-tabs"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `connection-test-result sr-only`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `data-mysql-clear-drawer`, `action="/resources/databases/instances/` + string(instanceMatch[1]) + `/clear"`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`, `mysql-edit-instance-title`, `Edit instance`, `Leave blank to keep the current password.`, `name="id" value="` + string(instanceMatch[1]) + `"`, `name="name" value="Production"`, `class="mysql-danger-zone mysql-instance-delete"`, `action="/resources/databases/instances/` + string(instanceMatch[1]) + `/delete"`, `name="confirm" value="yes"`, `data-confirm="Remove this instance connection?`} {
+	for _, expected := range []string{`class="mysql-instance-workspace resource-workspace"`, `class="mysql-instance-rail database-connection-rail resource-connection-rail"`, `class="mysql-instance-tabs database-connection-tabs resource-connection-list"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="resource-tabs mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `connection-test-result sr-only`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `data-mysql-clear-drawer`, `action="/resources/databases/instances/` + string(instanceMatch[1]) + `/clear"`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`, `mysql-edit-instance-title`, `Edit instance`, `Leave blank to keep the current password.`, `name="id" value="` + string(instanceMatch[1]) + `"`, `name="name" value="Production"`, `class="mysql-danger-zone mysql-instance-delete"`, `action="/resources/databases/instances/` + string(instanceMatch[1]) + `/delete"`, `name="confirm" value="yes"`, `data-confirm="Remove this instance connection?`} {
 		if !strings.Contains(string(selectedBody), expected) {
 			t.Fatalf("selected database workspace missing %q: %s", expected, selectedBody)
 		}
 	}
-	for _, expected := range []string{`class="mysql-detail database-detail"`, `data-database-engine="mysql"`, `data-database-detail-tabs`, `data-database-tabs`, `data-database-tab-panel="overview"`} {
+	for _, expected := range []string{`class="mysql-detail database-detail resource-detail"`, `data-database-engine="mysql"`, `data-database-detail-tabs`, `data-database-tabs`, `data-database-tab-panel="overview"`} {
 		if !strings.Contains(string(selectedBody), expected) {
 			t.Fatalf("MySQL detail does not follow the shared database tab framework; missing %q: %s", expected, selectedBody)
 		}

@@ -2277,7 +2277,7 @@ func safeWebErrorMessage(message string) string {
 	return strings.TrimSpace(string(clean))
 }
 
-var appCSS = mustWebAsset("ui/assets/app.css") + "\n" + mustWebAsset("ui/assets/file-jump.css") + "\n" + mustWebAsset("ui/assets/registries.css")
+var appCSS = mustWebAsset("ui/assets/app.css") + "\n" + mustWebAsset("ui/assets/file-jump.css") + "\n" + mustWebAsset("ui/assets/registries.css") + "\n" + mustWebAsset("ui/assets/resource-workspace.css")
 
 var workbenchJS = mustWebAsset("ui/assets/workbench.js")
 

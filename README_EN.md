@@ -23,8 +23,8 @@ ScriptBoard is built for personal servers, small-team utility hosts, and interna
 - **Run scripts:** execute PowerShell, Python, Shell, Batch, and CMD scripts with live output, duration, and results.
 - **Reuse tasks:** save scripts as Quick Runs with parameters, variables, timeouts, and five-field Cron schedules.
 - **Observe the host:** inspect CPU, memory, storage, applications, Docker, Kubernetes, websites, and run history. Kubernetes external access, workloads, and nodes start collapsed, with manual refresh, auto refresh, and expand/collapse controls in one row. Filtering, searching, and sorting update only the workload section.
-- **Manage data connections:** back up and restore MySQL/MariaDB; inspect Redis health, key types, TTLs, and memory without mutation.
-- **Manage image registries:** browse collapsible nested namespaces, tags, compressed sizes, and version times. Connections switch between read-only and allow-changes modes; new connections default to read-only. Switch connections in the left-hand list and edit the current connection at the top right of the content area. Use Cleanup rules for bulk deletion or open an image for per-tag deletion.
+- **Manage data connections:** databases and registries share a consistent connection sidebar and content layout. Back up and restore MySQL/MariaDB; inspect Redis health, key types, TTLs, and memory without mutation.
+- **Manage image registries:** browse nested namespaces beside the image list, along with tags, compressed sizes, and version times. Click a namespace to filter its images; click the selected node again to expand or collapse its children. Connections switch between read-only and allow-changes modes; new connections default to read-only. Switch connections in the left-hand list and edit the current connection at the top right of the content area. Use Cleanup rules for bulk deletion or open an image for per-tag deletion.
 - **Keep boundaries visible:** use fixed roles, audit records, host-security checks, bounded external triggers, and signed updates.
 
 <p align="center">

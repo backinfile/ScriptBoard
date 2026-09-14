@@ -1,0 +1,37 @@
+/* 数据库与镜像仓库共用框架，统一标题、连接轨道和内容起点。 */
+.workspace.resource-page{width:100%;max-width:none;margin:0;padding:0}
+.resource-page>.page-heading.resource-page-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:28px;min-height:154px;margin:0;padding:30px var(--workspace-gutter)}
+.resource-page-heading>div:first-child{min-width:0}
+.resource-page-heading h1{margin:0;font-size:2.2rem;line-height:1.2;letter-spacing:-.02em}
+.resource-page-heading p{margin:2px 0 0;font-size:.86rem;line-height:1.55}
+.resource-page>.resource-workspace{display:grid;grid-template-columns:minmax(240px,280px) minmax(0,1fr);align-items:stretch;min-height:max(600px,calc(100vh - 154px));margin:0;border-top:1px solid var(--rule-strong)}
+.resource-workspace>.resource-connection-rail{display:flex;flex-direction:column;gap:24px;min-width:0;padding:28px 22px 72px var(--workspace-gutter);border-right:1px solid var(--rule)}
+.resource-connection-rail>.resource-rail-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0;min-height:24px}
+.resource-rail-heading h2{margin:0;font-size:1rem;line-height:1.3;letter-spacing:-.02em}
+.resource-rail-heading>small{color:var(--faint);font:600 .7rem/1.4 var(--font-mono)}
+.resource-connection-rail>.resource-connection-list{display:grid;gap:2px;min-width:0;margin:0;padding:0;overflow:visible}
+.resource-connection-list>a{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:3px 10px;min-width:0;max-width:none;padding:11px 12px;color:var(--ink);border:0;border-radius:var(--radius-sm);text-decoration:none}
+.resource-connection-list>a:hover{color:var(--ink);background:var(--surface)}
+.resource-connection-list>a[aria-current="page"]{color:var(--ink);background:var(--accent-soft);box-shadow:inset 3px 0 var(--accent)}
+.resource-connection-list>a>svg{width:17px;height:17px;color:var(--faint)}
+.resource-connection-list .resource-connection-copy{display:grid;min-width:0;gap:3px}
+.resource-connection-copy strong,.resource-connection-copy small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.resource-connection-list .resource-connection-copy strong{font-size:.8rem;line-height:1.3}
+.resource-connection-list .resource-connection-copy>small{color:var(--muted);font:.64rem/1.35 var(--font-mono)}
+.resource-workspace>.resource-detail{box-sizing:border-box;min-width:0;height:max(600px,calc(100vh - 154px));min-height:max(600px,calc(100vh - 154px));overflow-y:auto;margin:0;padding:28px var(--workspace-gutter) 72px}
+.resource-detail .resource-tabs{display:flex;gap:4px;margin:0 0 16px;overflow-x:auto;border-bottom:1px solid var(--rule)}
+.resource-detail .resource-tabs a{position:relative;display:inline-flex;flex:0 0 auto;align-items:center;gap:7px;padding:9px 13px;color:var(--muted);border:0;font-size:13px;font-weight:550;text-decoration:none}
+.resource-detail .resource-tabs a[aria-current="page"]{color:var(--ink);font-weight:650}
+.resource-detail .resource-tabs a[aria-current="page"]::after{position:absolute;right:0;bottom:0;left:0;height:2px;background:var(--accent);content:""}
+@media(max-width:1024px){.workspace.resource-page{padding-top:64px}}
+@media(max-width:1000px){
+ .resource-page>.resource-workspace{grid-template-columns:minmax(0,1fr);min-height:0}
+ .resource-workspace>.resource-connection-rail{padding:24px 18px 18px;border-right:0;border-bottom:1px solid var(--rule)}
+ .resource-connection-rail>.resource-connection-list{max-height:240px;overflow-y:auto;overflow-x:hidden}
+ .resource-workspace>.resource-detail{height:auto;min-height:0;overflow-y:visible;padding:28px 18px 64px}
+}
+@media(max-width:760px){
+ .resource-page>.page-heading.resource-page-heading{align-items:stretch;flex-direction:column;padding:24px 18px}
+ .resource-page-heading h1{font-size:2rem}
+ .resource-detail .resource-tabs a{min-height:44px}
+}

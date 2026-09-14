@@ -2,12 +2,12 @@
 <html lang="{{.Locale}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "database.title"}} · ScriptBoard</title></head>
 <body>
-<main class="workspace" data-database-workspace data-redis-workspace>
+<main class="workspace resource-page" data-database-workspace data-redis-workspace>
   {{template "database-header" .}}
-  <div class="mysql-instance-workspace" data-mysql-instances-region>
+  <div class="mysql-instance-workspace resource-workspace" data-mysql-instances-region>
     {{template "database-connection-rail" .}}
     {{if .Selected}}
-    <section class="mysql-detail database-detail" data-database-engine="redis" data-database-instance="{{.Selected.ID}}" data-database-active-tab="{{.ActiveTab}}">
+    <section class="mysql-detail database-detail resource-detail" data-database-engine="redis" data-database-instance="{{.Selected.ID}}" data-database-active-tab="{{.ActiveTab}}">
       <header class="mysql-detail__head database-detail__head">
         <div><p class="page-eyebrow">{{.Selected.Environment}}</p><h2>{{.Selected.Name}}</h2><p><code>{{.Selected.Username}}@{{.Selected.Host}}:{{.Selected.Port}}</code></p></div>
         <div class="mysql-instance-actions">
@@ -21,7 +21,7 @@
       </header>
       {{if .LoadError}}<div class="page-error" role="alert"><strong>{{t .Locale "redis.unavailable"}}</strong><code>{{.LoadError}}</code></div>{{end}}
 
-      <nav class="mysql-tabs" aria-label="Redis detail" data-database-detail-tabs data-database-tabs>
+      <nav class="resource-tabs mysql-tabs" aria-label="Redis detail" data-database-detail-tabs data-database-tabs>
         <a href="/resources/databases?engine=redis&amp;instance={{.Selected.ID}}&amp;connection_page={{.ConnectionPagination.Page}}&amp;tab=overview&amp;database={{.Database}}" data-preserve-scroll {{if eq .ActiveTab "overview"}}aria-current="page"{{end}}><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "redis.overview"}}</a>
         <a href="/resources/databases?engine=redis&amp;instance={{.Selected.ID}}&amp;connection_page={{.ConnectionPagination.Page}}&amp;tab=keys&amp;database={{.Database}}" data-preserve-scroll {{if eq .ActiveTab "keys"}}aria-current="page"{{end}}><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "redis.keys"}}</a>
         <a href="/resources/databases?engine=redis&amp;instance={{.Selected.ID}}&amp;connection_page={{.ConnectionPagination.Page}}&amp;tab=diagnostics&amp;database={{.Database}}" data-preserve-scroll {{if eq .ActiveTab "diagnostics"}}aria-current="page"{{end}}><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "redis.diagnostics"}}</a>
@@ -64,7 +64,7 @@
       {{end}}
     </section>
     {{else}}
-    <section class="mysql-detail mysql-detail--empty database-detail database-detail--empty"><span data-lucide="panel-left-open" aria-hidden="true"></span><h2>{{t .Locale "redis.select"}}</h2><p>{{t .Locale "redis.select_description"}}</p></section>
+    <section class="mysql-detail mysql-detail--empty database-detail database-detail--empty resource-detail"><span data-lucide="panel-left-open" aria-hidden="true"></span><h2>{{t .Locale "redis.select"}}</h2><p>{{t .Locale "redis.select_description"}}</p></section>
     {{end}}
   </div>
 </main>

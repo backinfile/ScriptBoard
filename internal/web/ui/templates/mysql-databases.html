@@ -2,12 +2,12 @@
 <html lang="{{.Locale}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "database.title"}} · ScriptBoard</title></head>
 <body>
-<main class="workspace" data-database-workspace data-mysql-workspace>
+<main class="workspace resource-page" data-database-workspace data-mysql-workspace>
   {{template "database-header" .}}
-  <div class="mysql-instance-workspace" data-mysql-instances-region>
+  <div class="mysql-instance-workspace resource-workspace" data-mysql-instances-region>
   {{template "database-connection-rail" .}}
   {{if .Selected}}
-  <section class="mysql-detail database-detail" data-database-engine="mysql" data-database-instance="{{.Selected.ID}}" data-database-active-tab="{{.ActiveTab}}" data-mysql-instance="{{.Selected.ID}}">
+  <section class="mysql-detail database-detail resource-detail" data-database-engine="mysql" data-database-instance="{{.Selected.ID}}" data-database-active-tab="{{.ActiveTab}}" data-mysql-instance="{{.Selected.ID}}">
     <header class="mysql-detail__head database-detail__head"><div><p class="page-eyebrow">{{t .Locale "mysql.selected"}}</p><h2>{{.Selected.Name}}</h2><p><code>{{.Selected.Username}}@{{.Selected.Host}}:{{.Selected.Port}}</code></p></div><div class="mysql-instance-actions"><form method="post" action="/resources/databases/instances/{{.Selected.ID}}/test" data-connection-test data-test-kind="mysql" data-connection-title="{{t .Locale "mysql.connection_test_title"}}" data-connection-success="{{t .Locale "mysql.connection_test_passed"}}" data-connection-failure="{{t .Locale "mysql.connection_test_failed"}}" data-close-label="{{t .Locale "common.close"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--compact" type="submit"><span data-lucide="plug-zap" aria-hidden="true"></span>{{t .Locale "mysql.test"}}</button><span class="connection-test-result sr-only" role="status" aria-live="polite" data-connection-test-result></span></form>
       <details class="mysql-drawer"><summary class="button button--compact"><span data-lucide="database-zap" aria-hidden="true"></span>{{t .Locale "mysql.create_database"}}</summary><div class="mysql-drawer-layer"><a class="mysql-drawer-scrim" href="/resources/databases?instance={{.Selected.ID}}" aria-label="{{t .Locale "common.close"}}" data-mysql-drawer-close></a><section class="mysql-drawer-sheet" role="dialog" aria-modal="true" aria-labelledby="mysql-create-title" tabindex="-1"><header><div><p>{{.Selected.Name}}</p><h2 id="mysql-create-title">{{t .Locale "mysql.create_database"}}</h2><small>{{t .Locale "mysql.create_database_description"}}</small></div><a class="icon-button icon-button--quiet" href="/resources/databases?instance={{.Selected.ID}}" aria-label="{{t .Locale "common.close"}}" data-mysql-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header><form class="mysql-drawer-form" method="post" action="/resources/databases/instances/{{.Selected.ID}}/databases"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><div class="mysql-drawer-body"><label>{{t .Locale "common.name"}}<input name="name" required maxlength="64"></label><label>{{t .Locale "mysql.charset"}}<input name="charset" value="utf8mb4"></label><label>{{t .Locale "mysql.collation"}}<input name="collation" placeholder="utf8mb4_0900_ai_ci"></label></div><footer><a class="button button--quiet" href="/resources/databases?instance={{.Selected.ID}}" data-mysql-drawer-close>{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="database-zap" aria-hidden="true"></span>{{t .Locale "common.create"}}</button></footer></form></section></div></details>
       <details class="mysql-drawer"><summary class="button button--compact"><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "mysql.edit_instance"}}</summary><div class="mysql-drawer-layer"><a class="mysql-drawer-scrim" href="/resources/databases?instance={{.Selected.ID}}" aria-label="{{t .Locale "common.close"}}" data-mysql-drawer-close></a><section class="mysql-drawer-sheet" role="dialog" aria-modal="true" aria-labelledby="mysql-edit-instance-title" tabindex="-1">
@@ -18,7 +18,7 @@
     </div></header>
     {{if .LoadError}}<div class="page-error" role="alert"><strong>{{t .Locale "mysql.unavailable"}}</strong><code>{{.LoadError}}</code></div>{{end}}
 
-    <nav class="mysql-tabs" aria-label="{{t .Locale "mysql.instance_sections"}}" data-database-detail-tabs data-database-tabs>
+    <nav class="resource-tabs mysql-tabs" aria-label="{{t .Locale "mysql.instance_sections"}}" data-database-detail-tabs data-database-tabs>
           <a href="/resources/databases?instance={{.Selected.ID}}&amp;instance_page={{.InstancePagination.Page}}&amp;tab=overview" data-preserve-scroll {{if eq .ActiveTab "overview"}}aria-current="page"{{end}}><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "mysql.overview"}}</a>
 	      <a href="/resources/databases?instance={{.Selected.ID}}&amp;instance_page={{.InstancePagination.Page}}&amp;tab=databases" data-preserve-scroll {{if eq .ActiveTab "databases"}}aria-current="page"{{end}}><span data-lucide="database" aria-hidden="true"></span>{{t .Locale "mysql.databases"}}<small>{{.DatabaseCount}}</small></a>
 	      <a href="/resources/databases?instance={{.Selected.ID}}&amp;instance_page={{.InstancePagination.Page}}&amp;tab=objects" data-preserve-scroll {{if eq .ActiveTab "objects"}}aria-current="page"{{end}}><span data-lucide="table-properties" aria-hidden="true"></span>{{t .Locale "mysql.objects"}}</a>
@@ -114,7 +114,7 @@
 
   </section>
   {{else}}
-  <section class="mysql-detail mysql-detail--empty database-detail database-detail--empty"><span data-lucide="panel-left-open" aria-hidden="true"></span><h2>{{t .Locale "mysql.select_instance"}}</h2><p>{{t .Locale "mysql.select_instance_description"}}</p></section>
+  <section class="mysql-detail mysql-detail--empty database-detail database-detail--empty resource-detail"><span data-lucide="panel-left-open" aria-hidden="true"></span><h2>{{t .Locale "mysql.select_instance"}}</h2><p>{{t .Locale "mysql.select_instance_description"}}</p></section>
   {{end}}
   </div>
 </main>
