@@ -3,6 +3,7 @@ package clusterstatus
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func testHTTPKubeClient(t *testing.T, handler http.Handler) Client {
@@ -56,7 +58,7 @@ func TestHTTPSnapshotAggregatesPodsAndMetricsByStableWorkload(t *testing.T) {
 		"/apis/apps/v1/replicasets":            `{"items":[{"metadata":{"name":"api-7dc9","namespace":"production","uid":"rs-api","ownerReferences":[{"uid":"deployment-api","kind":"Deployment","name":"api"}]}}]}`,
 		"/apis/batch/v1/cronjobs":              `{"items":[]}`,
 		"/apis/batch/v1/jobs":                  `{"items":[]}`,
-		"/api/v1/pods":                         `{"items":[{"metadata":{"name":"api-7dc9-a","namespace":"production","ownerReferences":[{"uid":"rs-api","kind":"ReplicaSet","name":"api-7dc9"}]},"spec":{"nodeName":"worker-01","containers":[{"name":"api","image":"ghcr.io/acme/api:v2"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","ready":true,"restartCount":1}]}},{"metadata":{"name":"api-7dc9-b","namespace":"production","ownerReferences":[{"uid":"rs-api","kind":"ReplicaSet","name":"api-7dc9"}]},"spec":{"nodeName":"worker-02","containers":[{"name":"api","image":"ghcr.io/acme/api:v2"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","ready":true,"restartCount":0}]}}]}`,
+		"/api/v1/pods":                         `{"items":[{"metadata":{"name":"api-7dc9-a","namespace":"production","ownerReferences":[{"uid":"rs-api","kind":"ReplicaSet","name":"api-7dc9"}]},"spec":{"nodeName":"worker-01","containers":[{"name":"api","image":"ghcr.io/acme/api:v2"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","ready":true,"restartCount":1,"state":{"running":{"startedAt":"2026-09-14T04:00:00Z"}}}]}},{"metadata":{"name":"api-7dc9-b","namespace":"production","ownerReferences":[{"uid":"rs-api","kind":"ReplicaSet","name":"api-7dc9"}]},"spec":{"nodeName":"worker-02","containers":[{"name":"api","image":"ghcr.io/acme/api:v2"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","ready":true,"restartCount":0,"state":{"running":{"startedAt":"2026-09-14T02:00:00Z"}}}]}}]}`,
 		"/api/v1/nodes":                        `{"items":[{"metadata":{"name":"worker-01","labels":{"node-role.kubernetes.io/worker":""}},"status":{"conditions":[{"type":"Ready","status":"True"}],"capacity":{"cpu":"4","memory":"8Gi"},"nodeInfo":{"kubeletVersion":"v1.35.1"}}},{"metadata":{"name":"worker-02"},"status":{"conditions":[{"type":"Ready","status":"True"}],"capacity":{"cpu":"4","memory":"8Gi"},"nodeInfo":{"kubeletVersion":"v1.35.1"}}}]}`,
 		"/api/v1/namespaces":                   `{"items":[{"metadata":{"name":"production"}},{"metadata":{"name":"kube-system"}}]}`,
 		"/api/v1/services":                     `{"items":[{"metadata":{"name":"api-public","namespace":"production"},"spec":{"type":"NodePort","clusterIPs":["10.43.0.20"],"externalTrafficPolicy":"Local","ports":[{"name":"http","protocol":"TCP","port":80,"targetPort":8080,"nodePort":30080}]}},{"metadata":{"name":"database","namespace":"production"},"spec":{"type":"ClusterIP","clusterIP":"10.43.0.21","ports":[{"protocol":"TCP","port":5432,"targetPort":5432}]}}]}`,
@@ -89,6 +91,9 @@ func TestHTTPSnapshotAggregatesPodsAndMetricsByStableWorkload(t *testing.T) {
 		t.Fatalf("workloads: %#v", snapshot.Workloads)
 	}
 	workload := snapshot.Workloads[0]
+	if !workload.LastStartedAt.Equal(time.Date(2026, 9, 14, 4, 0, 0, 0, time.UTC)) {
+		t.Fatalf("latest start: %v", workload.LastStartedAt)
+	}
 	if workload.Key != "production/Deployment/api" || workload.Ready != 2 || workload.Desired != 2 || workload.Restarts != 1 || workload.CPUMillicores != 200 || workload.MemoryBytes != 224*1024*1024 || workload.Nodes != "worker-01, worker-02" {
 		t.Fatalf("aggregated workload: %#v", workload)
 	}
@@ -146,5 +151,31 @@ func TestHTTPSnapshotKeepsWorkloadsWhenExternalAccessIsDenied(t *testing.T) {
 	}
 	if len(snapshot.Workloads) != 1 || snapshot.Errors["services"] == "" || snapshot.Errors["ingresses"] == "" {
 		t.Fatalf("partial snapshot = %#v", snapshot)
+	}
+}
+
+func TestContainerStartStates(t *testing.T) {
+	for _, tc := range []struct{ name, state, want string }{
+		{"running", `{"running":{"startedAt":"2026-09-14T04:00:00Z"}}`, "2026-09-14T04:00:00Z"},
+		{"terminated", `{"terminated":{"startedAt":"2026-09-13T04:00:00Z"}}`, "2026-09-13T04:00:00Z"},
+		{"waiting", `{"waiting":{"reason":"CrashLoopBackOff"}}`, ""},
+		{"missing", `{}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var state kubeContainerState
+			if err := json.Unmarshal([]byte(tc.state), &state); err != nil {
+				t.Fatal(err)
+			}
+			got := state.startedAt()
+			if tc.want == "" {
+				if !got.IsZero() {
+					t.Fatal(got)
+				}
+				return
+			}
+			if got.Format(time.RFC3339) != tc.want {
+				t.Fatal(got)
+			}
+		})
 	}
 }

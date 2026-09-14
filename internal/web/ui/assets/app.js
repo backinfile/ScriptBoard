@@ -135,6 +135,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     "gauge": '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
     "globe": '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
     "history": '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+    "columns-3": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M15 3v18"/>',
     "layout-grid": '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
     "loader": '<path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/>',
     "moon": '<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/>',
@@ -7735,9 +7736,40 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.versions)}</h3><div class="kubernetes-detail-list">${versionRows}</div></section>`;
   }
 
+  function setupKubernetesColumns(root, cleanups) {
+    const key = "scriptboard.kubernetes.columns.v1";
+    const narrow = window.matchMedia("(max-width: 800px)");
+    let saved = null;
+    try { const value = JSON.parse(localStorage.getItem(key)); if (Array.isArray(value)) saved = value.filter(item => typeof item === "string"); } catch {}
+    const apply = () => {
+      const visible = new Set(saved || (narrow.matches ? ["name", "status", "ready"] : ["name", "namespace", "status", "ready", "node", "cpu", "memory", "restarts", "image", "started"]));
+      visible.add("name"); visible.add("actions");
+      root.querySelectorAll("[data-kubernetes-column]").forEach(cell => { cell.hidden = !visible.has(cell.dataset.kubernetesColumn); });
+      root.querySelectorAll("[data-kubernetes-column-toggle]").forEach(input => { input.checked = visible.has(input.dataset.kubernetesColumnToggle); });
+      const empty = root.querySelector(".kubernetes-table-empty");
+      if (empty) empty.colSpan = root.querySelectorAll("th[data-kubernetes-column]:not([hidden])").length;
+      const picker = root.querySelector("[data-kubernetes-columns]");
+      if (picker) picker.hidden = false;
+    };
+    const persist = () => { try { if (saved) localStorage.setItem(key, JSON.stringify(saved)); else localStorage.removeItem(key); } catch {} apply(); };
+    const change = event => {
+      if (!event.target.matches("[data-kubernetes-column-toggle]")) return;
+      saved = Array.from(root.querySelectorAll("[data-kubernetes-column-toggle]:checked"), input => input.dataset.kubernetesColumnToggle);
+      persist();
+    };
+    const click = event => { if (event.target.closest("[data-kubernetes-columns-reset]")) { saved = null; persist(); } };
+    const escape = event => { if (event.key === "Escape") { const picker = root.querySelector("[data-kubernetes-columns][open]"); if (picker) { picker.open = false; picker.querySelector("summary").focus(); } } };
+    root.addEventListener("change", change); root.addEventListener("click", click); root.addEventListener("keydown", escape);
+    narrow.addEventListener("change", apply);
+    cleanups.push(() => { root.removeEventListener("change", change); root.removeEventListener("click", click); root.removeEventListener("keydown", escape); narrow.removeEventListener("change", apply); });
+    apply();
+    return apply;
+  }
+
   function initKubernetes(cleanups) {
     const root = document.querySelector("[data-kubernetes-page]");
     if (!root) return;
+    const applyColumns = setupKubernetesColumns(root, cleanups);
     const drawer = root.querySelector("[data-kubernetes-drawer]");
     const body = drawer?.querySelector("[data-kubernetes-drawer-body]");
     const title = drawer?.querySelector("[data-kubernetes-drawer-title]");
@@ -7781,6 +7813,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
         const replacements = selectors.map(selector => [root.querySelector(selector), incoming.querySelector(selector)]);
         if ((options.resourcesOnly || options.workloadsOnly) && replacements.some(([current, next]) => !current || !next)) throw new Error("Incomplete Kubernetes snapshot.");
         replacements.forEach(([current, next]) => { if (current && next) current.replaceWith(next); });
+        applyColumns();
         const sourceTime = incoming.querySelector("[data-monitor-refresh-time]");
         const currentTime = root.querySelector("[data-monitor-refresh-time]");
         if (sourceTime && currentTime) {

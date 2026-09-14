@@ -113,6 +113,25 @@ type kubeJob struct {
 	} `json:"status"`
 }
 
+type kubeContainerState struct {
+	Running *struct {
+		StartedAt time.Time `json:"startedAt"`
+	} `json:"running"`
+	Terminated *struct {
+		StartedAt time.Time `json:"startedAt"`
+	} `json:"terminated"`
+}
+
+func (state kubeContainerState) startedAt() time.Time {
+	if state.Running != nil {
+		return state.Running.StartedAt
+	}
+	if state.Terminated != nil {
+		return state.Terminated.StartedAt
+	}
+	return time.Time{}
+}
+
 type kubePod struct {
 	Metadata kubeMetadata `json:"metadata"`
 	Spec     struct {
@@ -122,9 +141,11 @@ type kubePod struct {
 	Status struct {
 		Phase             string `json:"phase"`
 		ContainerStatuses []struct {
-			Name         string `json:"name"`
-			Ready        bool   `json:"ready"`
-			RestartCount int    `json:"restartCount"`
+			Name         string             `json:"name"`
+			Ready        bool               `json:"ready"`
+			RestartCount int                `json:"restartCount"`
+			State        kubeContainerState `json:"state"`
+			LastState    kubeContainerState `json:"lastState"`
 		} `json:"containerStatuses"`
 	} `json:"status"`
 }
@@ -336,6 +357,12 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 		podToWorkload[pod.Metadata.Namespace+"/"+pod.Metadata.Name] = key
 		for _, status := range pod.Status.ContainerStatuses {
 			workload.Restarts += status.RestartCount
+			// Include the previous run when a container is waiting to restart.
+			for _, started := range []time.Time{status.State.startedAt(), status.LastState.startedAt()} {
+				if started.After(workload.LastStartedAt) {
+					workload.LastStartedAt = started
+				}
+			}
 		}
 		if pod.Spec.NodeName != "" {
 			if workloadNodes[key] == nil {
