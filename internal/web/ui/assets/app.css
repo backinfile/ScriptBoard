@@ -9118,3 +9118,21 @@ html:not([data-pjax-swapped]) body[data-app-shell] .wb-enhanced>*{animation:none
 .mysql-plan-history-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
 .mysql-plan-history-item small, .mysql-plan-history-item p { grid-column: 1 / -1; overflow-wrap: anywhere; }
 .mysql-plan-details-body code, .mysql-plan-details-body time { overflow-wrap: anywhere; }
+/* Explicit column selection stays usable at every viewport width. */
+.kubernetes-columns { margin: 0 0 12px; }
+.kubernetes-columns > summary { width: fit-content; cursor: pointer; }
+.kubernetes-columns__options { display: flex; flex-wrap: wrap; gap: 12px 20px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+.kubernetes-columns__options p { flex-basis: 100%; margin: 0; color: var(--muted); font-size: .75rem; }
+.kubernetes-columns__options label { display: inline-flex; align-items: center; gap: 6px; font-size: .75rem; }
+.kubernetes-columns__options input { width: 16px; height: 16px; accent-color: var(--accent); }
+/* Keep positioned row actions inside the table scroll container on narrow screens. */
+.kubernetes-page .kubernetes-table-shell { position: relative; overflow-x: auto; }
+.kubernetes-page .kubernetes-table:has([data-kubernetes-column]) { min-width: 0; table-layout: auto; }
+.kubernetes-page .kubernetes-table [data-kubernetes-column] { display: table-cell; width: auto; }
+.kubernetes-page .kubernetes-table [data-kubernetes-column][hidden] { display: none; }
+.kubernetes-page .kubernetes-table [data-kubernetes-column="image"] { min-width: 220px; max-width: 380px; white-space: normal; }
+.kubernetes-page .kubernetes-table [data-kubernetes-column="image"] code { overflow-wrap: anywhere; white-space: normal; }
+.kubernetes-page .kubernetes-table [data-kubernetes-column="started"] { white-space: nowrap; }
+@media(max-width:800px) {
+  .kubernetes-page .kubernetes-table [data-kubernetes-column="name"] .kubernetes-workload-open { min-width: 110px; }
+}

@@ -70,6 +70,7 @@ type Node struct {
 }
 
 type Workload struct {
+	LastStartedAt                                          time.Time
 	Key, Namespace, Kind, Name, Image, Status, StatusLabel string
 	Ready, Desired, Restarts                               int
 	CPUMillicores                                          int64
