@@ -153,7 +153,7 @@ func (a *App) uploadBatchFiles(response http.ResponseWriter, request *http.Reque
 		} else if result.Name != relativePaths[index] {
 			detail = fmt.Sprintf(webText(locale, "upload_results.renamed"), result.Name)
 		}
-		views = append(views, uploadResult{Name: result.Name, Result: webText(locale, "upload_results.succeeded"), Detail: detail, Succeeded: true})
+		views = append(views, uploadResult{Name: result.Name, Result: uploadOutcome(locale, result.Trashed != nil, result.Name != relativePaths[index]), Detail: detail, Succeeded: true})
 	}
 	a.recordAuditForRequest(request, "upload_batch", fmt.Sprintf("%d files", len(results)), "succeeded")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -164,4 +164,15 @@ func (a *App) uploadBatchFiles(response http.ResponseWriter, request *http.Reque
 	}{Link: filesURL(relative), Results: views, Locale: locale}); err != nil {
 		http.Error(response, "文件已上传，但无法呈现结果："+err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// Use the committed replacement record so mixed uploads report each file's actual outcome.
+func uploadOutcome(locale webLocale, replaced, renamed bool) string {
+	if replaced {
+		return webText(locale, "upload_results.overwritten")
+	}
+	if renamed {
+		return webText(locale, "upload_results.renamed_status")
+	}
+	return webText(locale, "upload_results.created")
 }

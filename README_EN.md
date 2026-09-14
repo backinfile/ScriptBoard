@@ -108,7 +108,7 @@ mkdir -p state
 
 Existing accounts sign in normally. Automated deployments can provide `--admin-password-file` to skip setup; the supplied credentials are written to the account database once during startup. Subsequent account edits take effect immediately. Local account recovery remains available with `scriptboard admin reset`.
 
-For multi-file uploads, ScriptBoard validates the whole batch before committing it, so a failed batch does not leave partial results. Files and directories can both be pinned to instance-wide Quick access. A pinned file opens its containing directory and focuses the file; display names and ordering can be edited in place.
+Upload results show whether each file was created, overwritten, or renamed. For multi-file uploads, ScriptBoard validates the whole batch before committing it, so a failed batch does not leave partial results. Files and directories can both be pinned to instance-wide Quick access. A pinned file opens its containing directory and focuses the file; display names and ordering can be edited in place.
 
 ## Everyday use
 
