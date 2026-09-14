@@ -99,7 +99,10 @@ func validHostSecurityLoginQuery(query hostsecurity.LoginQuery) bool {
 	if query.Result != "" && query.Result != hostsecurity.ResultSuccess && query.Result != hostsecurity.ResultFailure {
 		return false
 	}
-	if query.Type != "" && query.Type != "ssh" && query.Type != "rdp" || len(query.Type) > 16 {
+	// Include the UI authentication filters so valid login queries reach the collector.
+	switch query.Type {
+	case "", "ssh", "password", "publickey", "rdp", "network":
+	default:
 		return false
 	}
 	return query.Start.IsZero() && query.End.IsZero() || !query.Start.IsZero() && !query.End.IsZero() && query.End.After(query.Start) && query.End.Sub(query.Start) <= 31*24*time.Hour

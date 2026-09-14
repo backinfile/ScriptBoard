@@ -26,6 +26,7 @@ ScriptBoard is built for personal servers, small-team utility hosts, and interna
 - **Manage data connections:** databases and registries share a consistent connection sidebar and content layout. Back up and restore MySQL/MariaDB; inspect Redis health, key types, TTLs, and memory without mutation.
 - **Manage image registries:** browse nested namespaces beside the image list, along with tags, compressed sizes, and version times. Click a namespace to filter its images; click the selected node again to expand or collapse its children. Connections switch between read-only and allow-changes modes; new connections default to read-only. Switch connections in the left-hand list and edit the current connection at the top right of the content area. Use Cleanup rules for bulk deletion or open an image for per-tag deletion.
 - **Keep boundaries visible:** use fixed roles, audit records, host-security checks, bounded external triggers, and signed updates.
+- **Filter host sign-ins:** choose SSH password/public key authentication or Windows RDP/network logins.
 
 <p align="center">
   <img src="./docs/images/readme/files-en.png" alt="ScriptBoard Host Files" width="49%">

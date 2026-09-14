@@ -39,6 +39,27 @@ func TestRemoteHostSecurityReadsEverySnapshotThroughBroker(t *testing.T) {
 	}
 }
 
+func TestRemoteHostSecurityLoginTypesThroughBroker(t *testing.T) {
+	for _, loginType := range []string{"", "ssh", "password", "publickey", "rdp", "network", "unknown"} {
+		t.Run(loginType, func(t *testing.T) {
+			host := &fixtureHostSecurity{logins: hostsecurity.LoginPage{Total: 1}}
+			server, client := observabilityFixture(t, host, &fixtureServiceLogs{})
+			defer server.Close()
+			service := NewRemoteHostSecurity(client, hostsecurity.RuntimePrivilege{})
+			page, err := service.Logins(context.Background(), hostsecurity.LoginQuery{Range: "30d", Page: 1, PageSize: 50, Type: loginType})
+			if loginType == "unknown" {
+				if err == nil || host.loginReads != 0 {
+					t.Fatalf("unknown type reached collector: reads=%d err=%v", host.loginReads, err)
+				}
+				return
+			}
+			if err != nil || page.Total != 1 || host.loginReads != 1 {
+				t.Fatalf("login type %q rejected: page=%#v reads=%d err=%v", loginType, page, host.loginReads, err)
+			}
+		})
+	}
+}
+
 func TestRemoteServiceLogsPreservesBoundedQueryThroughBroker(t *testing.T) {
 	logs := &fixtureServiceLogs{report: servicelogs.Report{Supported: true, Provider: "root-journal", Entries: []servicelogs.Entry{{Service: "broker", Severity: logstream.SeverityError, Message: "fixture"}}}}
 	server, client := observabilityFixture(t, &fixtureHostSecurity{}, logs)
