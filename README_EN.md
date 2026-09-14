@@ -1,6 +1,6 @@
 # ScriptBoard
 
-v2.12 adds visual workflows: connect scripts and build/deploy nodes, save one-click run entries, inspect step results and logs, and import or export configurations. Execution nodes require Python 3 on the host. See the [workflow guide (Chinese)](./docs/WORKFLOW_USAGE.md).
+v2.13 improves registry management with read-only/write access modes, nested namespace navigation, and a consistent layout across databases and registries. See the [release notes (Chinese)](./docs/RELEASE_NOTES.md).
 
 [简体中文](./README.md) | English
 
