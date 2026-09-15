@@ -13,7 +13,12 @@
             "'": "&#39;",
           })[c],
       ),
-    uid = () => crypto.randomUUID();
+    // HTTP pages may lack randomUUID; keep node creation working with secure random bytes.
+    uid = () =>
+      crypto.randomUUID?.() ||
+      Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+        b.toString(16).padStart(2, "0"),
+      ).join("");
   const field = (name, type = "string", value, required = false) => ({
     name,
     type,
