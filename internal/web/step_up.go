@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,15 +27,16 @@ func (a *App) stepUpTask(response http.ResponseWriter, request *http.Request) {
 	returnTo := safeStepUpReturnTo(request.URL.Query().Get("return_to"))
 	secondFactorOnly := mfaStatus.Enabled || len(passkeyUser.Credentials) > 0
 	a.renderTaskPage(response, request, taskPageData{
-		Kind:             "step-up",
-		Title:            webText(resolveWebLocale(request), "step_up.title"),
-		Description:      webText(resolveWebLocale(request), "step_up.description"),
-		BackURL:          returnTo,
-		Action:           "/auth/step-up",
-		ReturnTo:         returnTo,
-		MFAEnabled:       mfaStatus.Enabled,
-		PasskeyEnabled:   len(passkeyUser.Credentials) > 0,
-		SecondFactorOnly: secondFactorOnly,
+		Kind:              "step-up",
+		Title:             webText(resolveWebLocale(request), "step_up.title"),
+		Description:       webText(resolveWebLocale(request), "step_up.description"),
+		BackURL:           returnTo,
+		Action:            "/auth/step-up",
+		ReturnTo:          returnTo,
+		ReturnTargetLabel: stepUpTargetLabel(resolveWebLocale(request), returnTo),
+		MFAEnabled:        mfaStatus.Enabled,
+		PasskeyEnabled:    len(passkeyUser.Credentials) > 0,
+		SecondFactorOnly:  secondFactorOnly,
 	})
 }
 
@@ -154,15 +156,26 @@ func (a *App) renderStepUpFailure(response http.ResponseWriter, request *http.Re
 	mfaStatus, _ := a.mfa.Status(current.userID)
 	passkeyUser, _ := a.passkeys.User(current.userID, current.username)
 	a.renderTaskPageStatus(response, request, status, taskPageData{
-		Kind:             "step-up",
-		Title:            webText(locale, "step_up.title"),
-		Description:      webText(locale, "step_up.description"),
-		BackURL:          returnTo,
-		Action:           "/auth/step-up",
-		ReturnTo:         returnTo,
-		MFAEnabled:       mfaStatus.Enabled,
-		PasskeyEnabled:   len(passkeyUser.Credentials) > 0,
-		SecondFactorOnly: secondFactorOnly,
-		Error:            webText(locale, messageKey),
+		Kind:              "step-up",
+		Title:             webText(locale, "step_up.title"),
+		Description:       webText(locale, "step_up.description"),
+		BackURL:           returnTo,
+		Action:            "/auth/step-up",
+		ReturnTo:          returnTo,
+		ReturnTargetLabel: stepUpTargetLabel(resolveWebLocale(request), returnTo),
+		MFAEnabled:        mfaStatus.Enabled,
+		PasskeyEnabled:    len(passkeyUser.Credentials) > 0,
+		SecondFactorOnly:  secondFactorOnly,
+		Error:             webText(locale, messageKey),
 	})
+}
+
+// Only known local route labels are displayed; query strings and arbitrary URLs remain hidden.
+func stepUpTargetLabel(locale webLocale, target string) string {
+	for _, route := range []struct{ path, key string }{{"/config/quick-runs", "nav.quick_runs"}, {"/config/dashboards", "nav.dashboards"}, {"/resources/registries", "nav.registries"}, {"/settings/account", "settings.account"}, {"/resources/files", "nav.files"}, {"/config/schedules", "nav.schedules"}} {
+		if target == route.path || strings.HasPrefix(target, route.path+"?") || strings.HasPrefix(target, route.path+"/") {
+			return webText(locale, route.key)
+		}
+	}
+	return webText(locale, "step_up.return_previous")
 }

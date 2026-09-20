@@ -197,7 +197,7 @@ func TestCustomDashboardFlowScriptAndUsesEndToEnd(t *testing.T) {
 	}
 	managePage, _ := io.ReadAll(manage.Body)
 	manage.Body.Close()
-	if !strings.Contains(string(managePage), "2 个节点 · 含内置/脚本") {
+	if !strings.Contains(string(managePage), "2 nodes · includes built-ins / scripts") {
 		t.Fatalf("manage page summary missing custom-node hint: %s", managePage)
 	}
 	response, err = fixture.client.PostForm(fixture.serverURL+"/config/dashboard-cards/"+cardID+"/flow/run", url.Values{"csrf_token": {dashboardActionToken(t, page)}})

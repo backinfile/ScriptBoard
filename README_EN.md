@@ -262,3 +262,5 @@ Open **Workflows** to arrange nodes, configure execution entries, and inspect ru
 Editable records support private notes of up to 500 characters. Registry connections default to read-only, with connection tests, image details and bulk-operation previews.
 
 Dashboard flows support node and global cleanup steps, parameterized Quick Runs, inline scripts and built-in operations with retained history. Public action buttons report run outcomes. Built-in HTTP supports HTTP/HTTPS; explicitly skipping certificate verification creates a man-in-the-middle risk. See the [dashboard configuration format](docs/DASHBOARD-CONFIG-FORMAT.md).
+
+Image versions are ordered newest first by creation time, with unknown dates last. Dashboards support localized controls, mobile editing and inline flow validation; expand the selected image scope before cleanup.

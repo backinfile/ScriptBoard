@@ -46,7 +46,7 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	}
 	page, _ = io.ReadAll(response.Body)
 	response.Body.Close()
-	if !bytes.Contains(page, []byte("支持 HTTP 与 HTTPS；HTTP 请求头和响应均为明文传输。")) {
+	if !bytes.Contains(page, []byte("Supports HTTP and HTTPS. HTTP headers and responses are transmitted in plaintext.")) {
 		t.Fatalf("dashboard form does not explain HTTP support: %s", page)
 	}
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
@@ -81,9 +81,9 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	if rendered := string(page); !strings.Contains(rendered, `data-dashboard-drawer-name="export"`) || !strings.Contains(rendered, `data-dashboard-import-selection`) || strings.Count(rendered, `name="selection"`) != 2 ||
 		!strings.Contains(rendered, `data-dashboard-open-drawer="export"><span data-lucide="file-output"`) ||
 		!strings.Contains(rendered, `data-dashboard-open-drawer="import"><span data-lucide="file-input"`) ||
-		!strings.Contains(rendered, `data-lucide="file-output" aria-hidden="true"></span>导出所选节点`) ||
-		!strings.Contains(rendered, `data-lucide="file-input" aria-hidden="true"></span>导入所选节点`) ||
-		!strings.Contains(rendered, "导入到当前面板") || strings.Contains(rendered, "创建一个新的私有面板") {
+		!strings.Contains(rendered, `data-lucide="file-output" aria-hidden="true"></span>Export selected cards`) ||
+		!strings.Contains(rendered, `data-lucide="file-input" aria-hidden="true"></span>Import selected cards`) ||
+		!strings.Contains(rendered, "add to this dashboard") || strings.Contains(rendered, "创建一个新的私有面板") {
 		t.Fatal("dashboard node transfer UI is incomplete")
 	}
 	postExport := func(selections ...string) (*http.Response, []byte) {
@@ -187,7 +187,7 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	importedPage, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	importedRendered := string(importedPage)
-	for _, expected := range []string{"迁移测试", "私有 · 3 张卡片", "请求次数", "http://api.example.test/requests", `value="次"`, `name="slug" value="transfer-test"`} {
+	for _, expected := range []string{"迁移测试", "Private · 3 cards", "请求次数", "http://api.example.test/requests", `value="次"`, `name="slug" value="transfer-test"`} {
 		if !strings.Contains(importedRendered, expected) {
 			t.Fatalf("imported dashboard missing %q", expected)
 		}
@@ -237,7 +237,7 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	}
 	rollbackPage, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if strings.Contains(string(rollbackPage), "不应保留") || !strings.Contains(string(rollbackPage), "私有 · 3 张卡片") {
+	if strings.Contains(string(rollbackPage), "不应保留") || !strings.Contains(string(rollbackPage), "Private · 3 cards") {
 		t.Fatalf("failed node import was not rolled back: %s", rollbackPage)
 	}
 }
@@ -324,7 +324,7 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 	renderedBytes, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	rendered := string(renderedBytes)
-	for _, expected := range []string{"生产镜像", "team/api", "v2.5.0", "team/web", "1.8.1", "上传时间 2026-08-18", "构建时间 2026-08-17", "下载大小（压缩） 12.5 KiB", "下载大小（压缩） 1.2 KiB"} {
+	for _, expected := range []string{"生产镜像", "team/api", "v2.5.0", "team/web", "1.8.1", "上传时间 2026-08-18", "构建时间 2026-08-17", "Download size (compressed) 12.5 KiB", "Download size (compressed) 1.2 KiB"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("registry card missing %q", expected)
 		}
@@ -368,7 +368,7 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 func TestHTTPRegistryCardCanRegisterDockerInsecureRegistry(t *testing.T) {
 	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		username, password, ok := request.BasicAuth()
-		if !ok || username != "robot" || password != "secret" {
+		if !ok || username != "robot" || password != "registry-private-password-52917" {
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -412,7 +412,7 @@ func TestHTTPRegistryCardCanRegisterDockerInsecureRegistry(t *testing.T) {
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"Private image"}, "type": {"registry"},
 		"registry_endpoint": {registry.URL}, "registry_images": {"team/api"}, "registry_auth_mode": {"basic"},
-		"registry_username": {"robot"}, "registry_password": {"secret"}, "refresh_seconds": {"60"},
+		"registry_username": {"robot"}, "registry_password": {"registry-private-password-52917"}, "refresh_seconds": {"60"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -425,7 +425,7 @@ func TestHTTPRegistryCardCanRegisterDockerInsecureRegistry(t *testing.T) {
 	page, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	cardMatch := regexp.MustCompile(`action="/config/dashboard-cards/([^/"]+)/registry/insecure"`).FindSubmatch(page)
-	if len(cardMatch) != 2 || !bytes.Contains(page, []byte("Register HTTP")) || bytes.Contains(page, []byte("secret")) {
+	if len(cardMatch) != 2 || !bytes.Contains(page, []byte("Register HTTP")) || bytes.Contains(page, []byte("registry-private-password-52917")) {
 		t.Fatalf("HTTP Registry registration action or credential boundary missing: %s", page)
 	}
 	maintainer := createRoleUserClient(t, client, serverURL, "registry-maintainer", "maintainer")
@@ -496,7 +496,7 @@ func TestNumberCardRendersStringValue(t *testing.T) {
 	}
 	page, _ = io.ReadAll(response.Body)
 	response.Body.Close()
-	if rendered := string(page); !strings.Contains(rendered, "显示数值或文本") || !strings.Contains(rendered, "字符串使用 JSON 路径") {
+	if rendered := string(page); !strings.Contains(rendered, "Display a number or text") || !strings.Contains(rendered, "Use a JSON path for text") {
 		t.Fatalf("number card string guidance missing: %s", rendered)
 	}
 
@@ -572,7 +572,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(string(page), `aria-labelledby="custom-dashboard-edit-title"`) {
 		t.Fatal("edit dashboard drawer missing")
 	}
-	if rendered := string(page); strings.Count(rendered, `href="/monitor/dashboard/`+dashboardID+`"`) != 1 || !strings.Contains(rendered, `data-dashboard-tab-visibility`) || !strings.Contains(rendered, `aria-label="显示到页签栏"`) {
+	if rendered := string(page); strings.Count(rendered, `href="/monitor/dashboard/`+dashboardID+`"`) != 1 || !strings.Contains(rendered, `data-dashboard-tab-visibility`) || !strings.Contains(rendered, `aria-label="Show in tabs"`) {
 		t.Fatal("new dashboard tab visibility was not disabled by default")
 	}
 	if rendered := string(page); strings.Contains(rendered, "更多面板操作") || !strings.Contains(rendered, `data-dashboard-delete-drawer`) || !strings.Contains(rendered, `data-dashboard-delete-open`) || !strings.Contains(rendered, `data-dashboard-slug-preview`) {
@@ -603,7 +603,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	}
 	page, _ = io.ReadAll(response.Body)
 	response.Body.Close()
-	if rendered := string(page); strings.Count(rendered, `href="/monitor/dashboard/`+dashboardID+`"`) < 2 || !strings.Contains(rendered, `aria-label="从页签栏隐藏"`) {
+	if rendered := string(page); strings.Count(rendered, `href="/monitor/dashboard/`+dashboardID+`"`) < 2 || !strings.Contains(rendered, `aria-label="Hide from tabs"`) {
 		t.Fatal("enabled dashboard was not appended to the monitor tab bar")
 	}
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID, url.Values{"csrf_token": {formToken(t, page)}, "name": {"API 与额度"}, "slug": {"api-credits"}, "public": {"1"}})
@@ -703,7 +703,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if strings.Contains(configRendered, "数值路径：") || strings.Contains(configRendered, "60 秒刷新") {
 		t.Fatal("dashboard configuration row exposes drawer-only details")
 	}
-	if !strings.Contains(configRendered, `href="/monitor/dashboard/`+dashboardID+`"`) || !strings.Contains(configRendered, "打开监控页") || !strings.Contains(configRendered, `data-dashboard-card-row`) {
+	if !strings.Contains(configRendered, `href="/monitor/dashboard/`+dashboardID+`"`) || !strings.Contains(configRendered, "Open monitor") || !strings.Contains(configRendered, `data-dashboard-card-row`) {
 		t.Fatal("dashboard configuration page is missing its monitor shortcut or clickable card row")
 	}
 	testResponse, err := client.PostForm(serverURL+"/config/dashboard-card-tests", url.Values{
@@ -756,7 +756,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	}
 	reorderPage, _ := io.ReadAll(reorderResponse.Body)
 	reorderResponse.Body.Close()
-	if reorderRendered := string(reorderPage); !strings.Contains(reorderRendered, "完成排序") || !strings.Contains(reorderRendered, `/config/dashboard-cards/`) || !strings.Contains(reorderRendered, `/move`) {
+	if reorderRendered := string(reorderPage); !strings.Contains(reorderRendered, "Finish ordering") || !strings.Contains(reorderRendered, `/config/dashboard-cards/`) || !strings.Contains(reorderRendered, `/move`) {
 		t.Fatal("dashboard card reorder mode is missing")
 	}
 	moveMatches := regexp.MustCompile(`action="/config/dashboard-cards/([^/"]+)/move"`).FindAllStringSubmatch(string(reorderPage), -1)

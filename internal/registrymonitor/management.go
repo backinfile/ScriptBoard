@@ -186,6 +186,13 @@ func (client *Client) Artifacts(ctx context.Context, config Config, repository s
 		}
 		artifacts = append(artifacts, item)
 	}
+	// Show newest image creation times first; unknown dates stay last and ties use tags.
+	sort.SliceStable(artifacts, func(i, j int) bool {
+		if artifacts[i].Created.Equal(artifacts[j].Created) {
+			return artifacts[i].Tag < artifacts[j].Tag
+		}
+		return artifacts[i].Created.After(artifacts[j].Created)
+	})
 	return artifacts, nil
 }
 

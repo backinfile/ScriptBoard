@@ -117,7 +117,7 @@ func setupDashboardActionFixture(t *testing.T) dashboardActionFixture {
 	if len(cardMatch) != 2 {
 		t.Fatalf("card id missing: %s", page)
 	}
-	if !strings.Contains(string(page), "3 个操作按钮") || !strings.Contains(string(page), "2 个允许公开") {
+	if !strings.Contains(string(page), "3 actions") || !strings.Contains(string(page), "2 public actions") {
 		t.Fatalf("action count badge missing: %s", page)
 	}
 	return dashboardActionFixture{

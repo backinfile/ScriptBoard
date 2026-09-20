@@ -2538,7 +2538,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     }
     try {
       const action = formActionURL(form, submitter);
-      const result = await fetchDocument(action, { method: form.method, body: data, stepUpReturnFocus: submitter || form });
+      const result = await fetchDocument(action, { method: form.method, body: data, headers: form.querySelector("[name=flow_yaml]") ? {Accept: "application/json"} : {}, stepUpReturnFocus: submitter || form });
       if (submittingTaskState && taskPanelState !== submittingTaskState) return;
       if (!submittingTaskState && !form.isConnected) return;
       const fileConflict = result.document?.querySelector("main[data-file-conflict]");
@@ -2547,6 +2547,22 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
         ? result.document?.querySelector("main.confirmation-page")
         : null;
       if (confirmation && confirmDocumentAction(confirmation, form, submitter)) return;
+      // Keep YAML validation beside its input, preserving the draft and editor context.
+      if (result.response.status === 422 && form.querySelector('[name="flow_yaml"]') && result.text) {
+        let validation; try { validation = JSON.parse(result.text); } catch (_) {}
+        if (validation?.field === "flow_yaml") {
+          const input = form.querySelector('[name="flow_yaml"]');
+          let message = form.querySelector('[data-flow-validation]');
+          if (!message) { message = document.createElement("p"); message.dataset.flowValidation = ""; message.className = "page-error"; message.setAttribute("role", "alert"); message.id = "flow-validation-" + form.action.split("/").pop(); input.before(message); }
+          message.textContent = dashboardLocaleText("流程配置有误：", "Invalid flow configuration: ") + validation.message;
+          input.setAttribute("aria-invalid", "true"); input.setAttribute("aria-describedby", message.id); input.focus({preventScroll:true});
+          const line = Number(validation.line);
+          if (line > 0) { const rows = input.value.split("\n"); const start = rows.slice(0, line - 1).reduce((n,row)=>n+row.length+1,0); input.setSelectionRange(start, start+(rows[line-1]||"").length); }
+          message.scrollIntoView({block:"center"});
+          input.addEventListener("input", () => {message.remove(); input.removeAttribute("aria-invalid"); input.removeAttribute("aria-describedby");}, {once:true});
+          return;
+        }
+      }
       const responseMain = result.document?.querySelector("main");
       const refreshSelector = form.dataset.asyncRefresh;
       const isTaskValidation = result.response.status === 422 && responseMain &&
@@ -9507,9 +9523,10 @@ function applyDashboardFlowSnapshot(container, view) {
         const row = document.createElement("span");
         row.className = "custom-dashboard-flow__post";
         row.dataset.state = post.status;
+        const whenLabel = ({always:dashboardLocaleText("始终","always"),on_success:dashboardLocaleText("成功时","on success"),on_failure:dashboardLocaleText("失败时","on failure")})[post.when] || post.when;
         row.textContent = post.durationMs > 0
-          ? `${post.nodeId ? post.nodeId + " / " : ""}${post.name}（${post.when}）· ${dashboardFlowDuration(post.durationMs)}`
-          : `${post.name}（${post.when}）`;
+          ? `${post.nodeId ? post.nodeId + " / " : ""}${post.name}（${whenLabel}）· ${dashboardFlowDuration(post.durationMs)}`
+          : `${post.name}（${whenLabel}）`;
         if (post.message) {
           const note = document.createElement("small");
           note.textContent = post.message;
@@ -9597,7 +9614,8 @@ function renderDashboardFlowHistory(container, entries) {
   if (last) {
     // 上次执行：最新一条记录的时间、结果与耗时。
     const latest = valid[0];
-    last.hidden = !latest;
+    last.hidden = false;
+    if (!latest) last.textContent = dashboardLocaleText("尚未执行", "Not run yet");
     if (latest) {
       last.dataset.state = latest.status;
       last.textContent = dashboardLocaleText("上次 ", "Last ") + dashboardFlowStamp(latest.startedAtMs)

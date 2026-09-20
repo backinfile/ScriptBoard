@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"scriptboard/internal/identity"
 	"sort"
 	"strconv"
@@ -565,7 +566,7 @@ func (a *App) createCustomDashboardCard(response http.ResponseWriter, request *h
 		return
 	}
 	if err := a.applyDashboardFlowYAML(request, &input); err != nil {
-		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		writeDashboardFlowValidation(response, request, err)
 		return
 	}
 	if err := a.enforceFlowExecutionPermission(request, input); err != nil {
@@ -708,7 +709,7 @@ func (a *App) updateCustomDashboardCard(response http.ResponseWriter, request *h
 		return
 	}
 	if err := a.applyDashboardFlowYAML(request, &input); err != nil {
-		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		writeDashboardFlowValidation(response, request, err)
 		return
 	}
 	if err := a.enforceFlowExecutionPermission(request, input); err != nil {
@@ -884,4 +885,19 @@ func dashboardNumericValue(value any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// Field errors preserve the open YAML editor instead of displaying an HTTP failure dialog.
+func writeDashboardFlowValidation(w http.ResponseWriter, r *http.Request, err error) {
+	if !strings.Contains(r.Header.Get("Accept"), "application/json") {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	line := 0
+	if match := regexp.MustCompile("line ([0-9]+)").FindStringSubmatch(err.Error()); len(match) > 1 {
+		line, _ = strconv.Atoi(match[1])
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	_ = json.NewEncoder(w).Encode(map[string]any{"field": "flow_yaml", "message": dashboardFlowValidationMessage(resolveWebLocale(r), err.Error()), "line": line})
 }

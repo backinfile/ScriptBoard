@@ -167,7 +167,7 @@ func TestCustomDashboardFlowCardLifecycle(t *testing.T) {
 	}
 	page, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if !strings.Contains(string(page), "2 个节点") || !strings.Contains(string(page), `name="flow_yaml"`) {
+	if !strings.Contains(string(page), "2 nodes") || !strings.Contains(string(page), `name="flow_yaml"`) {
 		t.Fatalf("manage page flow affordances missing: %s", page)
 	}
 

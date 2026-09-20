@@ -46,6 +46,7 @@ type taskPageData struct {
 	Groups              []quickRunGroup
 	ScheduleGroupID     string
 	ScheduleGroups      []scheduleGroup
+	ReturnTargetLabel   string
 	ReturnTo            string
 	PreviewAction       string
 	TimeoutInput        string
