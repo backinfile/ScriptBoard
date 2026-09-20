@@ -16,6 +16,7 @@ var baseSchemaStatements = []string{
 			id TEXT PRIMARY KEY,
 			username TEXT NOT NULL UNIQUE,
 			password_hash TEXT NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
 			role TEXT NOT NULL CHECK (role IN ('administrator', 'maintainer', 'operator', 'viewer')),
 			enabled INTEGER NOT NULL DEFAULT 1,
 			auth_version INTEGER NOT NULL DEFAULT 1,
@@ -123,6 +124,7 @@ var baseSchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS quick_run_groups (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+			note TEXT NOT NULL DEFAULT '',
 			sort_order INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
@@ -130,6 +132,7 @@ var baseSchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS quick_runs (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
 			script_path TEXT NOT NULL,
 			script_path_key TEXT NOT NULL,
 			arguments_template TEXT NOT NULL,
@@ -143,11 +146,13 @@ var baseSchemaStatements = []string{
 			require_confirmation INTEGER NOT NULL DEFAULT 0 CHECK (require_confirmation IN (0, 1)),
 			script_sha256 TEXT NOT NULL DEFAULT '',
 			revision INTEGER NOT NULL DEFAULT 1,
-			updated_at INTEGER NOT NULL DEFAULT 0
+			updated_at INTEGER NOT NULL DEFAULT 0,
+			params_json TEXT NOT NULL DEFAULT ''
 		)`,
 	`CREATE TABLE IF NOT EXISTS schedule_groups (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+			note TEXT NOT NULL DEFAULT '',
 			sort_order INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
@@ -155,6 +160,7 @@ var baseSchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schedules (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
 			group_name TEXT NOT NULL DEFAULT '',
 			group_id TEXT REFERENCES schedule_groups(id) ON DELETE SET NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
@@ -208,6 +214,7 @@ var baseSchemaStatements = []string{
 			path TEXT NOT NULL,
 			path_key TEXT PRIMARY KEY,
 			label TEXT NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
 			target_kind TEXT NOT NULL DEFAULT 'directory' CHECK (target_kind IN ('directory', 'file')),
 			group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL,
 			sort_order INTEGER NOT NULL,

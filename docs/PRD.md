@@ -234,6 +234,7 @@ Linux：
 .sh  → bash → sh
 .py  → python3 → python
 .ps1 → pwsh
+.js  → node
 ```
 
 Windows：
@@ -244,6 +245,7 @@ Windows：
 .bat → cmd.exe
 .cmd → cmd.exe
 .sh  → bash.exe
+.js  → node.exe
 ```
 
 - 候选可包含固定前缀参数，可按 PATH 查找或配置绝对路径。

@@ -10,6 +10,7 @@
     <form method="post" action="{{if .Editing}}/monitor/nodes/{{urlquery .ID}}{{else}}/monitor/nodes{{end}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "common.name"}} <input name="name" maxlength="64" required autofocus autocomplete="off" value="{{.Name}}" placeholder="prod-web-01"></label>
+      <label>{{t .Locale "common.note"}} <textarea name="note" maxlength="500">{{.Note}}</textarea><small>{{t .Locale "common.note_hint"}}</small></label>
       <label>{{t .Locale "fleet.endpoint"}} <input name="endpoint" type="url" maxlength="2048" required autocomplete="off" value="{{.Endpoint}}" placeholder="https://panel.example.com"></label>
       <label>{{t .Locale "fleet.access_token"}} <input name="access_token" type="password" minlength="16" maxlength="4096" {{if not .Editing}}required{{end}} autocomplete="new-password"><small>{{if .Editing}}{{t .Locale "fleet.access_token_optional"}}{{else}}{{t .Locale "fleet.access_token_hint"}}{{end}}</small></label>
       <aside class="inline-notice"><span data-lucide="shield-check" aria-hidden="true"></span><p>{{t .Locale "fleet.read_only_notice"}}</p></aside>

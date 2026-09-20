@@ -851,6 +851,7 @@ func TestScriptPreviewUsesDeterministicHighlightLanguages(t *testing.T) {
 		"health.bat": "dos",
 		"health.sh":  "bash",
 		"health.py":  "python",
+		"health.js":  "javascript",
 		"health.txt": "",
 	}
 	if err := os.MkdirAll(hostRoot, 0o700); err != nil {

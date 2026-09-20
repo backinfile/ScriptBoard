@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/recordnote"
 	"scriptboard/internal/secretstore"
 )
 
@@ -30,21 +31,21 @@ const (
 )
 
 type Instance struct {
-	ID, Name, Host, Username, CAPath string
-	Environment                      Environment
-	Port                             int
-	TLSMode                          TLSMode
-	CredentialConfigured             bool
-	ConnectionState                  ConnectionState
-	CreatedAt, UpdatedAt             time.Time
+	ID, Name, Note, Host, Username, CAPath string
+	Environment                            Environment
+	Port                                   int
+	TLSMode                                TLSMode
+	CredentialConfigured                   bool
+	ConnectionState                        ConnectionState
+	CreatedAt, UpdatedAt                   time.Time
 }
 
 type InstanceInput struct {
-	ClearPassword                              bool
-	ID, Name, Host, Username, Password, CAPath string
-	Environment                                Environment
-	Port                                       int
-	TLSMode                                    TLSMode
+	ClearPassword                                    bool
+	ID, Name, Note, Host, Username, Password, CAPath string
+	Environment                                      Environment
+	Port                                             int
+	TLSMode                                          TLSMode
 }
 
 type ConnectionTest struct {
@@ -134,6 +135,11 @@ func New(options Options) (*Manager, error) {
 
 func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instance, error) {
 	input.Name, input.Host, input.Username, input.CAPath = strings.TrimSpace(input.Name), strings.TrimSpace(input.Host), strings.TrimSpace(input.Username), strings.TrimSpace(input.CAPath)
+	var noteErr error
+	input.Note, noteErr = recordnote.Normalize(input.Note)
+	if noteErr != nil {
+		return Instance{}, noteErr
+	}
 	if input.Name == "" || input.Host == "" || input.Port < 1 || input.Port > 65535 {
 		return Instance{}, errors.New("Redis name, host, and port are required")
 	}
@@ -180,20 +186,20 @@ func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instan
 	}
 	now := m.now().UTC()
 	if creating {
-		_, err = m.db.ExecContext(ctx, `INSERT INTO redis_instances(id,name,environment,host,port,username,tls_mode,ca_path,credential_configured,connection_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, input.Name, input.Environment, input.Host, input.Port, input.Username, input.TLSMode, input.CAPath, configured, state, now.UnixNano(), now.UnixNano())
+		_, err = m.db.ExecContext(ctx, `INSERT INTO redis_instances(id,name,note,environment,host,port,username,tls_mode,ca_path,credential_configured,connection_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, input.Name, input.Note, input.Environment, input.Host, input.Port, input.Username, input.TLSMode, input.CAPath, configured, state, now.UnixNano(), now.UnixNano())
 	} else {
-		_, err = m.db.ExecContext(ctx, `UPDATE redis_instances SET name=?,environment=?,host=?,port=?,username=?,tls_mode=?,ca_path=?,credential_configured=?,connection_state=?,updated_at=? WHERE id=?`, input.Name, input.Environment, input.Host, input.Port, input.Username, input.TLSMode, input.CAPath, configured, state, now.UnixNano(), id)
+		_, err = m.db.ExecContext(ctx, `UPDATE redis_instances SET name=?,note=?,environment=?,host=?,port=?,username=?,tls_mode=?,ca_path=?,credential_configured=?,connection_state=?,updated_at=? WHERE id=?`, input.Name, input.Note, input.Environment, input.Host, input.Port, input.Username, input.TLSMode, input.CAPath, configured, state, now.UnixNano(), id)
 	}
 	if err != nil {
 		return Instance{}, err
 	}
 	if replaceCredential {
-		instance := Instance{ID: id, Name: input.Name, Environment: input.Environment, Host: input.Host, Port: input.Port, Username: input.Username, TLSMode: input.TLSMode, CAPath: input.CAPath, CredentialConfigured: true}
+		instance := Instance{ID: id, Name: input.Name, Note: input.Note, Environment: input.Environment, Host: input.Host, Port: input.Port, Username: input.Username, TLSMode: input.TLSMode, CAPath: input.CAPath, CredentialConfigured: true}
 		if err := m.backend.StoreCredential(ctx, instance, input.Password); err != nil {
 			if creating {
 				_, _ = m.db.ExecContext(context.Background(), "DELETE FROM redis_instances WHERE id=?", id)
 			} else {
-				_, _ = m.db.ExecContext(context.Background(), `UPDATE redis_instances SET name=?,environment=?,host=?,port=?,username=?,tls_mode=?,ca_path=?,credential_configured=?,connection_state=?,updated_at=? WHERE id=?`, previous.Name, previous.Environment, previous.Host, previous.Port, previous.Username, previous.TLSMode, previous.CAPath, previous.CredentialConfigured, previous.ConnectionState, previous.UpdatedAt.UnixNano(), previous.ID)
+				_, _ = m.db.ExecContext(context.Background(), `UPDATE redis_instances SET name=?,note=?,environment=?,host=?,port=?,username=?,tls_mode=?,ca_path=?,credential_configured=?,connection_state=?,updated_at=? WHERE id=?`, previous.Name, previous.Note, previous.Environment, previous.Host, previous.Port, previous.Username, previous.TLSMode, previous.CAPath, previous.CredentialConfigured, previous.ConnectionState, previous.UpdatedAt.UnixNano(), previous.ID)
 			}
 			return Instance{}, err
 		}
@@ -205,14 +211,14 @@ func scanInstance(scanner interface{ Scan(...any) error }) (Instance, error) {
 	var i Instance
 	var configured bool
 	var created, updated int64
-	err := scanner.Scan(&i.ID, &i.Name, &i.Environment, &i.Host, &i.Port, &i.Username, &i.TLSMode, &i.CAPath, &configured, &i.ConnectionState, &created, &updated)
+	err := scanner.Scan(&i.ID, &i.Name, &i.Note, &i.Environment, &i.Host, &i.Port, &i.Username, &i.TLSMode, &i.CAPath, &configured, &i.ConnectionState, &created, &updated)
 	i.CredentialConfigured = configured
 	i.CreatedAt = time.Unix(0, created).UTC()
 	i.UpdatedAt = time.Unix(0, updated).UTC()
 	return i, err
 }
 
-const instanceColumns = `id,name,environment,host,port,username,tls_mode,ca_path,credential_configured,connection_state,created_at,updated_at`
+const instanceColumns = `id,name,note,environment,host,port,username,tls_mode,ca_path,credential_configured,connection_state,created_at,updated_at`
 
 func (m *Manager) Instance(ctx context.Context, id string) (Instance, error) {
 	return scanInstance(m.db.QueryRowContext(ctx, `SELECT `+instanceColumns+` FROM redis_instances WHERE id=?`, id))

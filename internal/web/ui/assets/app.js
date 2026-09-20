@@ -46,6 +46,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     "circle-x": '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
     "clock-alert": '<circle cx="12" cy="13" r="8"/><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/>',
     "copy": '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    "code": '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
     "cpu": '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>',
     "database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
     "download": '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
@@ -60,6 +61,8 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     "file-lock-2": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h7"/><path d="M14 2v6h6"/><rect x="14" y="15" width="8" height="6" rx="1"/><path d="M16 15v-2a2 2 0 0 1 4 0v2"/>',
     "file-terminal": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m8 13 2 2-2 2"/><path d="M12 17h4"/>',
     "file-text": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+    "file-plus-2": '<path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M3 15h6"/><path d="M6 18v-6"/>',
+    "git-branch": '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
     "files": '<path d="M20 7h-3a2 2 0 0 1-2-2V2"/><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"/><path d="M3 7v13a2 2 0 0 0 2 2h9"/>',
     "folder": '<path d="M3 6h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     "folder-code": '<path d="M10 10.5 8 12l2 1.5M14 10.5l2 1.5-2 1.5"/><path d="M2 6h5l2 2h13"/><path d="M2 6v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8"/>',
@@ -143,6 +146,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     "panel-right": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>',
     "play-circle": '<path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z"/><circle cx="12" cy="12" r="10"/>',
     "plug": '<path d="M12 22v-5"/><path d="M15 8V2"/><path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"/><path d="M9 8V2"/>',
+    "puzzle": '<path d="M14 7V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v3H7a2 2 0 0 0-2 2v3H2a2 2 0 1 0 0 4h3v3a2 2 0 0 0 2 2h3v-3a2 2 0 1 1 4 0v3h3a2 2 0 0 0 2-2v-3h3a2 2 0 1 0 0-4h-3V9a2 2 0 0 0-2-2z"/>',
     "plus-circle": '<circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/>',
     "route": '<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>',
     "shapes": '<path d="M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z"/><rect x="3" y="14" width="7" height="7" rx="1"/><circle cx="17.5" cy="17.5" r="3.5"/>',
@@ -1161,6 +1165,8 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       (options.initialFocus instanceof HTMLElement ? options.initialFocus : closeOnly ? confirm : close).focus();
     });
   }
+
+  window.ScriptBoardActionDialog = showActionDialog;
 
   function confirmationLabel(submitter) {
     return submitter?.getAttribute("aria-label")?.trim() || submitter?.textContent?.trim() || words().confirmAction;
@@ -4593,6 +4599,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     const editForm = drawerHost?.querySelector("[data-file-quick-edit-form]");
     const editPath = drawerHost?.querySelector("[data-file-quick-edit-path]");
     const editLabel = drawerHost?.querySelector("[data-file-quick-edit-label]");
+    const editNote = drawerHost?.querySelector("[data-file-quick-edit-note]");
     const editGroup = drawerHost?.querySelector("[data-file-quick-edit-group]");
     const editTechnical = drawerHost?.querySelector("[data-file-quick-edit-technical]");
     // Keep the fixed drawer in the viewport layer because animated workspace
@@ -4703,6 +4710,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       if (!drawerHost || !drawer || !editPath || !editLabel || !editTechnical) return;
       editPath.value = pin.path;
       editLabel.value = pin.label;
+      if (editNote) editNote.value = pin.note || "";
       if (editGroup) {
 		editGroup.replaceChildren(new Option(disclosure.dataset.ungroupedLabel || "Ungrouped", ""));
 		groups.forEach(group => editGroup.add(new Option(group.Name, group.ID)));
@@ -4721,7 +4729,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       const submit = editForm.querySelector('[type="submit"]');
       if (submit) submit.disabled = true;
       try {
-		await savePin("rename", { path: editPath.value, label: editLabel.value, group_id: editGroup?.value || "" });
+		await savePin("rename", { path: editPath.value, label: editLabel.value, note: editNote?.value || "", group_id: editGroup?.value || "" });
         closeEditor();
         render();
       } catch (error) {
@@ -8276,7 +8284,11 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
 
   function initPage(options = {}) {
     const cleanups = [];
-    cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
+    cleanupPage = () => {
+      // 修复：软导航离开监控页时主动关闭流程卡片 SSE，避免订阅泄漏。
+      window.ScriptBoardDashboardFlows?.cleanup?.();
+      cleanups.splice(0).forEach(cleanup => cleanup());
+    };
     renderIcons();
     applySidebarCollapsed(readSidebarCollapsed());
     localizeTimes();
@@ -8310,6 +8322,10 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     initLiveLog(cleanups);
     initStaticLogControls(cleanups);
     initRun(cleanups);
+    // 修复：软导航进入监控页后重新挂载流程卡片的 SSE 订阅，恢复最近运行的节点状态。
+    if (document.body.classList.contains("custom-dashboard-monitor")) {
+      window.ScriptBoardDashboardFlows?.init?.(document);
+    }
     initGroupedRecords(cleanups);
     const quickRunReorder = document.querySelector("[data-quick-run-reorder-url]");
     if (quickRunReorder) cleanups.push(initQuickRunReordering(quickRunReorder));
@@ -8676,8 +8692,14 @@ document.addEventListener("change", function (event) {
   const type = select.value;
   const website = type === "website";
   const registry = type === "registry";
-  form.querySelectorAll("[data-dashboard-http-field]").forEach((field) => { field.hidden = website || registry; });
-  form.querySelectorAll("[data-dashboard-refresh-field]").forEach((field) => { field.hidden = website; });
+  const flow = type === "flow";
+  form.querySelectorAll("[data-dashboard-http-field]").forEach((field) => { field.hidden = website || registry || flow; });
+  form.querySelectorAll("[data-dashboard-refresh-field]").forEach((field) => { field.hidden = website || flow; });
+  form.querySelectorAll("[data-dashboard-flow-field]").forEach((field) => {
+    field.hidden = !flow;
+    const input = field.querySelector("textarea");
+    if (input) input.required = flow;
+  });
   form.querySelectorAll("[data-dashboard-card-types]").forEach((field) => {
     field.hidden = !field.dataset.dashboardCardTypes.split(",").includes(type);
     field.querySelectorAll("[data-dashboard-expression-required]").forEach((input) => {
@@ -8707,11 +8729,11 @@ document.addEventListener("change", function (event) {
     preview.hidden = preview.dataset.dashboardCardPreview !== type;
   });
   const testButton = form.querySelector("[data-dashboard-test-request]");
-  if (testButton) testButton.hidden = website;
+  if (testButton) testButton.hidden = website || flow;
   const testWorkbench = form.querySelector("[data-dashboard-test-workbench]");
-  if (testWorkbench) testWorkbench.hidden = website;
+  if (testWorkbench) testWorkbench.hidden = website || flow;
   const previewLabel = form.querySelector("[data-dashboard-preview-label]");
-  if (previewLabel) previewLabel.textContent = ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态", registry: "镜像版本" })[type] || "数值";
+  if (previewLabel) previewLabel.textContent = ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态", registry: "镜像版本", flow: "流程" })[type] || "数值";
 });
 
 document.addEventListener("change", function (event) {
@@ -9186,6 +9208,511 @@ document.addEventListener("click", function (event) {
 document.addEventListener("input", function (event) {
   if (event.target.matches('.custom-dashboard-card-form [name="value_path"], .custom-dashboard-form-grid [name="value_path"]')) updateDashboardTestPreview(event.target.form);
 });
+
+// 面板操作按钮编辑器：在卡片编辑抽屉中维护 config.actions，序列化到隐藏字段随表单提交。
+function dashboardActionEditorElements(editor) {
+  return {
+    list: editor.querySelector("[data-dashboard-action-list]"),
+    template: editor.querySelector("[data-dashboard-action-template]"),
+    hidden: editor.querySelector("[data-dashboard-actions-json]"),
+  };
+}
+
+function syncDashboardActionItemRows(item) {
+  const kind = item.querySelector('[data-action-field="kind"]')?.value || "quick_run";
+  const confirm = item.querySelector('[data-action-field="confirm"]')?.checked || false;
+  item.querySelectorAll("[data-action-quickrun-row]").forEach((row) => { row.hidden = kind !== "quick_run"; });
+  item.querySelectorAll("[data-action-browser-row]").forEach((row) => { row.hidden = kind !== "browser_http"; });
+  item.querySelectorAll("[data-action-confirm-text-row]").forEach((row) => { row.hidden = !confirm; });
+}
+
+function serializeDashboardActions(editor) {
+  const { list, hidden } = dashboardActionEditorElements(editor);
+  if (!list || !hidden) return;
+  const actions = [];
+  list.querySelectorAll("[data-dashboard-action-item]").forEach((item) => {
+    const read = (name) => item.querySelector(`[data-action-field="${name}"]`)?.value.trim() || "";
+    const label = read("label");
+    if (!label) return;
+    const kind = read("kind") === "browser_http" ? "browser_http" : "quick_run";
+    const action = {
+      id: item.dataset.actionId || "",
+      label,
+      kind,
+      style: read("style") || "default",
+      confirm: Boolean(item.querySelector('[data-action-field="confirm"]')?.checked),
+      confirmText: read("confirmText"),
+      publicAllowed: Boolean(item.querySelector('[data-action-field="publicAllowed"]')?.checked),
+    };
+    if (!action.id) action.id = `a${Math.random().toString(36).slice(2, 10)}`;
+    if (!action.confirm) action.confirmText = "";
+    if (kind === "quick_run") {
+      action.quickRunId = read("quickRunId");
+    } else {
+      action.method = read("method") || "GET";
+      action.url = read("url");
+      const credential = read("visitorCredential");
+      if (credential) action.visitorCredential = credential;
+    }
+    actions.push(action);
+  });
+  hidden.value = actions.length ? JSON.stringify(actions) : "";
+}
+
+function addDashboardActionItem(editor, action) {
+  const { list, template } = dashboardActionEditorElements(editor);
+  if (!list || !template) return;
+  const item = template.content.firstElementChild.cloneNode(true);
+  item.dataset.actionId = action?.id || "";
+  const set = (name, value) => {
+    const field = item.querySelector(`[data-action-field="${name}"]`);
+    if (field) field.value = value ?? "";
+  };
+  set("label", action?.label);
+  set("kind", action?.kind || "quick_run");
+  set("style", action?.style || "default");
+  set("quickRunId", action?.quickRunId);
+  set("method", action?.method || "GET");
+  set("url", action?.url);
+  set("visitorCredential", action?.visitorCredential);
+  set("confirmText", action?.confirmText);
+  const confirmField = item.querySelector('[data-action-field="confirm"]');
+  if (confirmField) confirmField.checked = Boolean(action?.confirm);
+  const publicField = item.querySelector('[data-action-field="publicAllowed"]');
+  if (publicField) publicField.checked = Boolean(action?.publicAllowed);
+  syncDashboardActionItemRows(item);
+  list.append(item);
+  // 修复：模板克隆的行在初始扫描之后才插入，需手动渲染其中的 Lucide 图标（删除按钮等）。
+  window.ScriptBoardRenderIcons?.(item);
+}
+
+function initDashboardActionsEditor(editor) {
+  const { hidden } = dashboardActionEditorElements(editor);
+  let actions = [];
+  try {
+    const parsed = JSON.parse(hidden?.value || "[]");
+    if (Array.isArray(parsed)) actions = parsed;
+  } catch (_) {
+    actions = [];
+  }
+  actions.forEach((action) => addDashboardActionItem(editor, action));
+  serializeDashboardActions(editor);
+}
+
+document.querySelectorAll("[data-dashboard-actions-editor]").forEach(initDashboardActionsEditor);
+
+document.addEventListener("click", function (event) {
+  const add = event.target.closest("[data-dashboard-action-add]");
+  if (add) {
+    const editor = add.closest("[data-dashboard-actions-editor]");
+    if (editor) {
+      addDashboardActionItem(editor, null);
+      serializeDashboardActions(editor);
+    }
+    return;
+  }
+  const remove = event.target.closest("[data-dashboard-action-remove]");
+  if (remove) {
+    const editor = remove.closest("[data-dashboard-actions-editor]");
+    remove.closest("[data-dashboard-action-item]")?.remove();
+    if (editor) serializeDashboardActions(editor);
+    return;
+  }
+});
+
+document.addEventListener("input", function (event) {
+  const editor = event.target.closest?.("[data-dashboard-actions-editor]");
+  if (!editor) return;
+  const item = event.target.closest("[data-dashboard-action-item]");
+  if (item) syncDashboardActionItemRows(item);
+  serializeDashboardActions(editor);
+});
+document.addEventListener("change", function (event) {
+  const editor = event.target.closest?.("[data-dashboard-actions-editor]");
+  if (!editor) return;
+  const item = event.target.closest("[data-dashboard-action-item]");
+  if (item) syncDashboardActionItemRows(item);
+  serializeDashboardActions(editor);
+});
+
+document.addEventListener("click", async function (event) {
+  const button = event.target.closest("[data-copy-dashboard-key]");
+  if (!button) return;
+  try {
+    await window.ScriptBoardCopyText(button.dataset.copyDashboardKey || "");
+    button.dataset.tooltip = "已复制";
+  } catch (_) {
+    button.dataset.tooltip = "复制失败";
+  }
+});
+
+// 面板操作按钮触发：监控页走登录态端点，公开页带访问密钥走公开端点，浏览器直连由访客浏览器发出。
+function dashboardActionStatus(bar, message, runUrl) {
+  const status = bar.querySelector("[data-dashboard-action-status]");
+  if (!status) return;
+  status.hidden = false;
+  status.replaceChildren(document.createTextNode(message));
+  if (runUrl) {
+    const link = document.createElement("a");
+    link.href = runUrl;
+    link.textContent = dashboardLocaleText("查看运行", "View run");
+    status.append(document.createTextNode(" · "), link);
+  }
+}
+
+function dashboardActionStoredKey(slug) {
+  try {
+    return window.localStorage.getItem(`sb-dash-key-${slug}`) || "";
+  } catch (_) {
+    return "";
+  }
+}
+
+async function triggerDashboardAction(button) {
+  const bar = button.closest("[data-dashboard-action-bar]");
+  if (!bar) return;
+  const confirmText = button.dataset.confirmText;
+  if (confirmText && !(await window.ScriptBoardActionDialog({message: confirmText, returnFocus: button, dangerous: button.classList.contains("button--danger")}))) return;
+  const kind = button.dataset.kind || "quick_run";
+  button.disabled = true;
+  try {
+    if (kind === "browser_http") {
+      const headers = {};
+      const credentialHeader = button.dataset.visitorCredential;
+      if (credentialHeader) {
+        let credential = "";
+        try {
+          credential = window.localStorage.getItem(`sb-dash-visitor-${bar.dataset.dashboardSlug || "private"}-${bar.dataset.cardId}-${button.dataset.actionId}-${button.dataset.url}`) || "";
+        } catch (_) { /* 忽略存储不可用 */ }
+        if (!credential) {
+          credential = await dashboardVisitorCredential(credentialHeader, button) || "";
+          if (!credential) return;
+          try {
+            window.localStorage.setItem(`sb-dash-visitor-${bar.dataset.dashboardSlug || "private"}-${bar.dataset.cardId}-${button.dataset.actionId}-${button.dataset.url}`, credential);
+          } catch (_) { /* 忽略存储不可用 */ }
+        }
+        headers[credentialHeader] = credential;
+      }
+      const response = await fetch(button.dataset.url, { method: button.dataset.method || "GET", headers, mode: "cors" });
+      dashboardActionStatus(bar, response.ok
+        ? dashboardLocaleText(`请求已发送（${response.status}）`, `Request sent (${response.status})`)
+        : dashboardLocaleText(`请求失败（${response.status}）`, `Request failed (${response.status})`));
+      return;
+    }
+    const csrfToken = bar.dataset.csrfToken || "";
+    const slug = bar.dataset.dashboardSlug || "";
+    const payload = new URLSearchParams();
+    if (csrfToken) payload.set("csrf_token", csrfToken);
+    if (!csrfToken && slug) {
+      let key = dashboardActionStoredKey(slug);
+      if (!key) {
+        const keyRow = bar.querySelector("[data-dashboard-key-row]");
+        if (keyRow) {
+          keyRow.hidden = false;
+          keyRow.querySelector("[data-dashboard-key-input]")?.focus();
+        }
+        dashboardActionStatus(bar, dashboardLocaleText("请先输入访问密钥", "Enter the access key first"));
+        return;
+      }
+      payload.set("key", key);
+    }
+    const url = csrfToken
+      ? `/config/dashboard-cards/${encodeURIComponent(bar.dataset.cardId)}/actions/${encodeURIComponent(button.dataset.actionId)}/trigger`
+      : `/public/dashboard/${encodeURIComponent(slug)}/cards/${encodeURIComponent(bar.dataset.cardId)}/actions/${encodeURIComponent(button.dataset.actionId)}/trigger`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: payload.toString(),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.ok) {
+      dashboardActionStatus(bar, dashboardLocaleText("已触发", "Triggered"), csrfToken ? result.runUrl : "");
+      if (!csrfToken && result.statusUrl && result.runId) await pollDashboardActionStatus(bar, result, payload.get("key"));
+    } else if (response.status === 409 && result.retry_with_confirm_overlap) {
+      dashboardActionStatus(bar, dashboardLocaleText("已有相同任务在运行，请稍后再试", "An identical run is still active, try again later"));
+    } else {
+      dashboardActionStatus(bar, dashboardLocaleText("触发失败，请检查访问密钥或稍后再试", "Trigger failed; check the access key or try again later"));
+    }
+  } catch (_) {
+    dashboardActionStatus(bar, dashboardLocaleText("请求失败，请检查网络", "Request failed; check the network"));
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.addEventListener("click", function (event) {
+  const trigger = event.target.closest("[data-dashboard-action-trigger]");
+  if (trigger) {
+    triggerDashboardAction(trigger);
+    return;
+  }
+  const keySave = event.target.closest("[data-dashboard-key-save]");
+  if (keySave) {
+    const bar = keySave.closest("[data-dashboard-action-bar]");
+    const input = bar?.querySelector("[data-dashboard-key-input]");
+    const slug = bar?.dataset.dashboardSlug || "";
+    const key = input?.value.trim() || "";
+    if (bar && slug && key) {
+      try {
+        window.localStorage.setItem(`sb-dash-key-${slug}`, key);
+      } catch (_) { /* 忽略存储不可用 */ }
+      bar.querySelector("[data-dashboard-key-row]").hidden = true;
+      dashboardActionStatus(bar, dashboardLocaleText("密钥已保存，请再次点击操作按钮", "Key saved; click the action button again"));
+    }
+  }
+});
+
+// 流程卡片：监控页「运行流程」按钮 + SSE 节点状态推进；
+// 页面加载时回放最近一次运行快照（运行状态只存内存，刷新后据此重建）。
+const dashboardFlowClock = (ms) => new Date(ms).toLocaleTimeString(document.documentElement.lang || undefined, { hour12: false });
+const dashboardFlowDuration = (ms) => `${(ms / 1000).toFixed(1)}s`;
+
+function applyDashboardFlowSnapshot(container, view) {
+  if (!view || !Array.isArray(view.nodes)) return;
+  view.nodes.forEach((node) => {
+    const pill = container.querySelector(`[data-flow-node="${CSS.escape(node.id)}"]`);
+    if (!pill) return;
+    pill.dataset.state = node.status;
+    // 有运行 ID 的节点可点击跳转到对应运行记录；无运行 ID（内置节点/未运行）保持纯展示。
+    const link = pill.querySelector("[data-flow-node-link]");
+    if (link) {
+      if (node.runId) {
+        link.href = `/history/runs/${encodeURIComponent(node.runId)}`;
+        link.title = dashboardLocaleText("查看运行记录", "View run record");
+      } else {
+        link.removeAttribute("href");
+        link.removeAttribute("title");
+      }
+    }
+    // 节点时间信息：运行中显示开始时刻，结束后显示「开始时刻 · 耗时」。
+    const duration = pill.querySelector("[data-flow-node-duration]");
+    if (duration) {
+      const parts = [];
+      if (node.startedAtMs > 0) parts.push(node.durationMs > 0 ? dashboardFlowClock(node.startedAtMs) : dashboardLocaleText(`开始于 ${dashboardFlowClock(node.startedAtMs)}`, `Started ${dashboardFlowClock(node.startedAtMs)}`));
+      if (node.durationMs > 0) parts.push(dashboardFlowDuration(node.durationMs));
+      duration.hidden = !parts.length;
+      duration.textContent = parts.join(" · ");
+    }
+    const message = pill.querySelector("[data-flow-node-message]");
+    if (message) {
+      message.hidden = !node.message;
+      if (node.message) message.textContent = node.message;
+    }
+  });
+  const posts = container.querySelector("[data-dashboard-flow-posts]");
+  if (posts) {
+    posts.replaceChildren();
+    if (Array.isArray(view.posts) && view.posts.length) {
+      view.posts.forEach((post) => {
+        const row = document.createElement("span");
+        row.className = "custom-dashboard-flow__post";
+        row.dataset.state = post.status;
+        row.textContent = post.durationMs > 0
+          ? `${post.nodeId ? post.nodeId + " / " : ""}${post.name}（${post.when}）· ${dashboardFlowDuration(post.durationMs)}`
+          : `${post.name}（${post.when}）`;
+        if (post.message) {
+          const note = document.createElement("small");
+          note.textContent = post.message;
+          row.append(note);
+        }
+        posts.append(row);
+      });
+      posts.hidden = false;
+    } else {
+      posts.hidden = true;
+    }
+  }
+  const status = container.querySelector("[data-dashboard-flow-status]");
+  if (!status) return;
+  // 结束后在状态行补充整体耗时。
+  const total = view.startedAtMs > 0 && view.finishedAtMs > 0 ? ` · ${dashboardFlowDuration(view.finishedAtMs - view.startedAtMs)}` : "";
+  if (view.finished && view.status && view.status !== "idle") {
+    status.hidden = false;
+    status.dataset.state = view.status;
+    status.textContent = (view.status === "succeeded"
+      ? dashboardLocaleText("流程执行成功", "Flow succeeded")
+      : dashboardLocaleText("流程执行失败", "Flow failed")) + total;
+  } else if (view.status === "running") {
+    status.hidden = false;
+    status.dataset.state = "running";
+    status.textContent = dashboardLocaleText("流程执行中…", "Flow running…");
+  } else {
+    status.hidden = true;
+  }
+}
+
+// 跟踪所有打开的 SSE 订阅，软导航离开页面时由主框架统一关闭。
+const dashboardFlowSources = new Set();
+
+function watchDashboardFlow(container) {
+  if (container._flowSource) container._flowSource.close();
+  const source = new EventSource(`/config/dashboard-cards/${encodeURIComponent(container.dataset.dashboardFlow)}/flow/events`);
+  container._flowSource = source;
+  dashboardFlowSources.add(source);
+  const forget = () => {
+    dashboardFlowSources.delete(source);
+    if (container._flowSource === source) container._flowSource = null;
+  };
+  source.addEventListener("flow", (event) => {
+    let view = null;
+    try {
+      view = JSON.parse(event.data);
+    } catch (_) {
+      return;
+    }
+    applyDashboardFlowSnapshot(container, view);
+    if (view.finished) {
+      source.close();
+      forget();
+      // 运行结束后刷新历史面板与「上次执行」。
+      loadDashboardFlowHistory(container);
+    }
+  });
+  source.onerror = () => {
+    source.close();
+    forget();
+  };
+}
+
+// 历史记录：上次执行信息 + 晴雨表 + 最近记录列表。
+const dashboardFlowStamp = (ms) => {
+  const date = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+const dashboardFlowStateText = (state) => state === "succeeded"
+  ? dashboardLocaleText("成功", "Succeeded")
+  : dashboardLocaleText("失败", "Failed");
+
+function renderDashboardFlowHistory(container, entries) {
+  const list = container.querySelector("[data-dashboard-flow-history-list]");
+  const bars = container.querySelector("[data-dashboard-flow-bars]");
+  const empty = container.querySelector("[data-dashboard-flow-history-empty]");
+  const last = container.querySelector("[data-dashboard-flow-last]");
+  if (!list || !bars) return;
+  list.replaceChildren();
+  bars.replaceChildren();
+  const valid = entries.filter((entry) => entry && entry.startedAtMs > 0);
+  if (empty) empty.hidden = valid.length > 0;
+  if (last) {
+    // 上次执行：最新一条记录的时间、结果与耗时。
+    const latest = valid[0];
+    last.hidden = !latest;
+    if (latest) {
+      last.dataset.state = latest.status;
+      last.textContent = dashboardLocaleText("上次 ", "Last ") + dashboardFlowStamp(latest.startedAtMs)
+        + " · " + dashboardFlowStateText(latest.status)
+        + (latest.durationMs > 0 ? " · " + dashboardFlowDuration(latest.durationMs) : "");
+    }
+  }
+  // 晴雨表：左旧右新，高度按相对耗时缩放，tooltip 带时间与结果。
+  const maxDuration = Math.max(...valid.map((entry) => entry.durationMs || 0), 1);
+  valid.slice().reverse().forEach((entry) => {
+    const mark = document.createElement("span");
+    mark.className = "custom-dashboard-flow__bar-mark";
+    mark.dataset.state = entry.status;
+    const ratio = entry.durationMs > 0 ? Math.max(entry.durationMs / maxDuration, 0.25) : 0.25;
+    mark.style.height = `${Math.round(ratio * 100)}%`;
+    mark.title = `${dashboardFlowStamp(entry.startedAtMs)} · ${dashboardFlowStateText(entry.status)}${entry.durationMs > 0 ? ` · ${dashboardFlowDuration(entry.durationMs)}` : ""}`;
+    bars.append(mark);
+  });
+  valid.forEach((entry) => {
+    const row = document.createElement("li");
+    row.dataset.state = entry.status;
+    const dot = document.createElement("i");
+    dot.setAttribute("aria-hidden", "true");
+    const time = document.createElement("time");
+    time.textContent = dashboardFlowStamp(entry.startedAtMs);
+    const state = document.createElement("span");
+    state.textContent = dashboardFlowStateText(entry.status) + (entry.durationMs > 0 ? ` · ${dashboardFlowDuration(entry.durationMs)}` : "");
+    row.append(dot, time, state);
+    if (entry.triggeredBy) {
+      const actor = document.createElement("span");
+      actor.className = "custom-dashboard-flow__history-actor";
+      actor.textContent = entry.triggeredBy;
+      row.append(actor);
+    }
+    list.append(row);
+  });
+}
+
+async function loadDashboardFlowHistory(container) {
+  try {
+    const response = await fetch(`/config/dashboard-cards/${encodeURIComponent(container.dataset.dashboardFlow)}/flow/history`, { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = await response.json().catch(() => ({}));
+    renderDashboardFlowHistory(container, Array.isArray(payload.entries) ? payload.entries : []);
+  } catch (_) { /* 历史加载失败不影响主状态 */ }
+}
+
+// 主框架 initPage 在软导航后调用 init 重建订阅，cleanupPage 调用 cleanup 关闭订阅。
+window.ScriptBoardDashboardFlows = {
+  init(root) {
+    root.querySelectorAll("[data-dashboard-flow]").forEach((container) => {
+      watchDashboardFlow(container);
+      loadDashboardFlowHistory(container);
+    });
+  },
+  cleanup() {
+    dashboardFlowSources.forEach((source) => source.close());
+    dashboardFlowSources.clear();
+  },
+};
+
+if (document.body.classList.contains("custom-dashboard-monitor")) {
+  window.ScriptBoardDashboardFlows.init(document);
+}
+
+document.addEventListener("click", async function (event) {
+  // 历史图标按钮：开关历史面板并在打开时加载记录；点击面板外部时关闭。
+  const historyButton = event.target.closest("[data-dashboard-flow-history]");
+  if (historyButton) {
+    const container = historyButton.closest("[data-dashboard-flow]");
+    const panel = container?.querySelector("[data-dashboard-flow-history-panel]");
+    if (panel) {
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) loadDashboardFlowHistory(container);
+    }
+    return;
+  }
+  if (!event.target.closest("[data-dashboard-flow-history-panel]")) {
+    document.querySelectorAll("[data-dashboard-flow-history-panel]:not([hidden])").forEach((panel) => { panel.hidden = true; });
+  }
+  const button = event.target.closest("[data-dashboard-flow-run]");
+  if (!button) return;
+  const container = button.closest("[data-dashboard-flow]");
+  if (!container) return;
+  if (container.dataset.flowConfirm && !(await window.ScriptBoardActionDialog({message: dashboardLocaleText("流程包含需要确认的节点，确定运行？", "This flow contains nodes marked for confirmation. Run it?"), returnFocus: button}))) return;
+  const status = container.querySelector("[data-dashboard-flow-status]");
+  const show = (state, text) => {
+    if (!status) return;
+    status.hidden = false;
+    status.dataset.state = state;
+    status.textContent = text;
+  };
+  button.disabled = true;
+  try {
+    const response = await fetch(`/config/dashboard-cards/${encodeURIComponent(container.dataset.dashboardFlow)}/flow/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ csrf_token: container.dataset.csrfToken || "" }).toString(),
+    });
+    if (response.ok) {
+      watchDashboardFlow(container);
+    } else if (response.status === 409) {
+      // 已有运行：转为关注当前这次运行的推送。
+      show("running", dashboardLocaleText("已有流程正在运行", "A flow run is already active"));
+      watchDashboardFlow(container);
+    } else {
+      show("failed", dashboardLocaleText("无法启动流程", "Unable to start the flow"));
+    }
+  } catch (_) {
+    show("failed", dashboardLocaleText("请求失败，请检查网络", "Request failed; check the network"));
+  } finally {
+    button.disabled = false;
+  }
+});
+
 (() => {
   const decodeBase64URL = (value) => {
     const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
@@ -9553,3 +10080,155 @@ document.addEventListener("input", function (event) {
     }
   });
 })();
+
+// 快捷执行参数定义编辑器：动态行维护执行参数，提交前序列化到隐藏字段 params_json。
+function quickrunParamEditorElements(editor) {
+  return {
+    list: editor.querySelector("[data-quickrun-param-list]"),
+    template: editor.querySelector("[data-quickrun-param-template]"),
+    hidden: editor.querySelector("[data-quickrun-params-json]"),
+  };
+}
+
+function syncQuickrunParamItemRows(item) {
+  const type = item.querySelector('[data-param-field="type"]')?.value || "string";
+  item.querySelectorAll("[data-quickrun-param-options-row]").forEach((row) => {
+    row.hidden = type !== "enum";
+    row.querySelectorAll("input").forEach((input) => { input.disabled = type !== "enum"; });
+  });
+}
+
+function serializeQuickrunParams(editor) {
+  const { list, hidden } = quickrunParamEditorElements(editor);
+  if (!list || !hidden) return;
+  const params = [];
+  list.querySelectorAll("[data-quickrun-param-item]").forEach((item) => {
+    const read = (name) => item.querySelector(`[data-param-field="${name}"]`)?.value.trim() || "";
+    const name = read("name");
+    if (!name) return;
+    const type = ["string", "number", "boolean", "enum"].includes(read("type")) ? read("type") : "string";
+    // 键序与空值省略对齐后端 json.Marshal，未改动时序列化结果不变，不空推 revision。
+    const param = { name };
+    const label = read("label");
+    if (label) param.label = label;
+    param.type = type;
+    if (item.querySelector('[data-param-field="required"]')?.checked) param.required = true;
+    const defaultValue = read("default");
+    if (defaultValue) param.default = defaultValue;
+    if (type === "enum") {
+      // 枚举选项输入为逗号分隔，序列化时拆成数组。
+      const options = read("options").split(",").map((option) => option.trim()).filter(Boolean);
+      if (options.length) param.options = options;
+    }
+    params.push(param);
+  });
+  hidden.value = params.length ? JSON.stringify(params) : "";
+}
+
+function addQuickrunParamItem(editor, param) {
+  const { list, template } = quickrunParamEditorElements(editor);
+  if (!list || !template) return;
+  const item = template.content.firstElementChild.cloneNode(true);
+  const set = (name, value) => {
+    const field = item.querySelector(`[data-param-field="${name}"]`);
+    if (field) field.value = value ?? "";
+  };
+  set("name", param?.name);
+  set("label", param?.label);
+  set("type", param?.type || "string");
+  set("default", param?.default);
+  // 数组选项回填为逗号分隔输入。
+  set("options", Array.isArray(param?.options) ? param.options.join(", ") : "");
+  const requiredField = item.querySelector('[data-param-field="required"]');
+  if (requiredField) requiredField.checked = Boolean(param?.required);
+  syncQuickrunParamItemRows(item);
+  list.append(item);
+  // 修复：模板克隆的行在初始扫描之后才插入，需手动渲染其中的 Lucide 图标（删除按钮等）。
+  window.ScriptBoardRenderIcons?.(item);
+}
+
+function initQuickrunParamsEditor(editor) {
+  const { hidden } = quickrunParamEditorElements(editor);
+  let params = [];
+  try {
+    const parsed = JSON.parse(hidden?.value || "[]");
+    if (Array.isArray(parsed)) params = parsed;
+  } catch (_) {
+    params = [];
+  }
+  params.forEach((param) => addQuickrunParamItem(editor, param));
+  serializeQuickrunParams(editor);
+}
+
+document.querySelectorAll("[data-quickrun-params-editor]").forEach(initQuickrunParamsEditor);
+
+document.addEventListener("click", function (event) {
+  const add = event.target.closest("[data-quickrun-param-add]");
+  if (add) {
+    const editor = add.closest("[data-quickrun-params-editor]");
+    if (editor) {
+      addQuickrunParamItem(editor, null);
+      serializeQuickrunParams(editor);
+    }
+    return;
+  }
+  const remove = event.target.closest("[data-quickrun-param-remove]");
+  if (remove) {
+    const editor = remove.closest("[data-quickrun-params-editor]");
+    remove.closest("[data-quickrun-param-item]")?.remove();
+    if (editor) serializeQuickrunParams(editor);
+    return;
+  }
+});
+
+document.addEventListener("input", function (event) {
+  const editor = event.target.closest?.("[data-quickrun-params-editor]");
+  if (!editor) return;
+  serializeQuickrunParams(editor);
+});
+document.addEventListener("change", function (event) {
+  const editor = event.target.closest?.("[data-quickrun-params-editor]");
+  if (!editor) return;
+  const item = event.target.closest("[data-quickrun-param-item]");
+  if (item) syncQuickrunParamItemRows(item);
+  serializeQuickrunParams(editor);
+});
+
+// 复制快捷执行 ID：菜单按钮改文案反馈，编辑页图标按钮改 tooltip。
+document.addEventListener("click", async function (event) {
+  const button = event.target.closest("[data-copy-quick-run-id]");
+  if (!button) return;
+  const label = button.querySelector("[data-copy-quick-run-label]");
+  const apply = (text) => {
+    if (label) { label.textContent = text; } else { button.dataset.tooltip = text; }
+  };
+  try {
+    await window.ScriptBoardCopyText(button.dataset.copyQuickRunId || "");
+    apply(button.dataset.copiedLabel || "已复制");
+  } catch (_) {
+    apply(button.dataset.copyFailedLabel || "复制失败");
+  }
+  window.setTimeout(() => apply(button.dataset.copyLabel || "复制 ID"), 1800);
+});
+
+async function pollDashboardActionStatus(bar, result, key) {
+ const token = Symbol(); bar.dashboardPollToken = token;
+ const terminal = new Set(["succeeded", "failed", "stopped", "timed_out", "disconnected"]);
+ while (bar.isConnected && bar.dashboardPollToken === token) {
+  const body = new URLSearchParams({ key, run_id: result.runId });
+  const response = await fetch(result.statusUrl, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+  if (!response.ok) { dashboardActionStatus(bar, dashboardLocaleText("无法读取运行状态，请检查访问密钥", "Unable to read run status; check the access key")); return; }
+  const current = await response.json();
+  const labels = {succeeded:["执行成功","Succeeded"],failed:["执行失败","Failed"],stopped:["已停止","Stopped"],timed_out:["执行超时","Timed out"],disconnected:["运行连接已断开","Disconnected"]};
+  dashboardActionStatus(bar, dashboardLocaleText(...(labels[current.status] || ["正在执行","Running"])));
+  if (terminal.has(current.status)) return;
+  await new Promise(resolve => setTimeout(resolve, 4000));
+ }
+}
+
+async function dashboardVisitorCredential(header, button) {
+ const label = document.createElement("label");label.textContent=header;
+ const input = document.createElement("input");input.type="password";input.autocomplete="off";input.required=true;label.append(input);
+ const accepted=await window.ScriptBoardActionDialog({message:dashboardLocaleText("凭据仅保存在当前浏览器", "Credentials stay in this browser"),content:label,initialFocus:input,returnFocus:button,validate:()=>input.reportValidity()});
+ return accepted?input.value:"";
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"sort"
 	"sync"
@@ -161,6 +162,12 @@ type MetricValues struct {
 	Filesystems map[string]map[string]float64 `json:"filesystems,omitempty"`
 	Disks       map[string]map[string]float64 `json:"disks,omitempty"`
 	Networks    map[string]map[string]float64 `json:"networks,omitempty"`
+}
+
+type persistedMetricValues struct {
+	MetricValues
+	// Keep per-metric counts so partial probe failures cannot overweight sparse values during downsampling.
+	Counts map[string]int `json:"counts,omitempty"`
 }
 
 type SeriesPoint struct {
@@ -478,7 +485,8 @@ func (m *Monitor) Overview(ctx context.Context, selectedRange string) (Overview,
 		if err := rows.Scan(&timestamp, &sampleCount, &averageJSON, &maximumJSON); err != nil {
 			return result, err
 		}
-		var average, maximum MetricValues
+		var average persistedMetricValues
+		var maximum MetricValues
 		if json.Unmarshal([]byte(averageJSON), &average) != nil || json.Unmarshal([]byte(maximumJSON), &maximum) != nil {
 			continue
 		}
@@ -489,7 +497,7 @@ func (m *Monitor) Overview(ctx context.Context, selectedRange string) (Overview,
 			}
 			bucket = newHistoryAccumulator(at)
 		}
-		bucket.add(average.Values, maximum.Values, sampleCount)
+		bucket.add(average.Values, maximum.Values, average.Counts, sampleCount)
 	}
 	if bucket != nil {
 		result.Series = append(result.Series, bucket.point())
@@ -523,7 +531,7 @@ func newHistoryAccumulator(at time.Time) *historyAccumulator {
 	}
 }
 
-func (a *historyAccumulator) add(average, maximum map[string]float64, sampleCount int) {
+func (a *historyAccumulator) add(average, maximum map[string]float64, counts map[string]int, sampleCount int) {
 	if sampleCount < 1 {
 		sampleCount = 1
 	}
@@ -531,8 +539,12 @@ func (a *historyAccumulator) add(average, maximum map[string]float64, sampleCoun
 		if !overviewChartMetric(key) || math.IsNaN(value) || math.IsInf(value, 0) {
 			continue
 		}
-		a.weightedSum[key] += value * float64(sampleCount)
-		a.weight[key] += sampleCount
+		metricSampleCount := sampleCount
+		if count, ok := counts[key]; ok && count > 0 {
+			metricSampleCount = count
+		}
+		a.weightedSum[key] += value * float64(metricSampleCount)
+		a.weight[key] += metricSampleCount
 	}
 	for key, value := range maximum {
 		if !overviewChartMetric(key) || math.IsNaN(value) || math.IsInf(value, 0) {
@@ -585,7 +597,7 @@ func rangeDuration(value string) (time.Duration, bool) {
 
 func (m *Monitor) persist(bucket *minuteAccumulator) error {
 	average, maximum := bucket.values()
-	averageJSON, err := json.Marshal(average)
+	averageJSON, err := json.Marshal(persistedMetricValues{MetricValues: average, Counts: maps.Clone(bucket.valuesAcc.count)})
 	if err != nil {
 		return err
 	}

@@ -10,21 +10,22 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"scriptboard/internal/recordnote"
 )
 
 type Plan struct {
-	ID, Name, InstanceID, Expression string
-	Databases                        []string
-	RetentionCount                   int
-	Enabled                          bool
-	NextFireAt, CreatedAt, UpdatedAt time.Time
+	ID, Name, Note, InstanceID, Expression string
+	Databases                              []string
+	RetentionCount                         int
+	Enabled                                bool
+	NextFireAt, CreatedAt, UpdatedAt       time.Time
 }
 
 type PlanInput struct {
-	ID, Name, InstanceID, Expression string
-	Databases                        []string
-	RetentionCount                   int
-	Enabled                          bool
+	ID, Name, Note, InstanceID, Expression string
+	Databases                              []string
+	RetentionCount                         int
+	Enabled                                bool
 }
 
 var planParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
@@ -44,6 +45,11 @@ func nextPlanFire(expression string, now time.Time) (time.Time, error) {
 
 func (m *Manager) SavePlan(ctx context.Context, input PlanInput) (Plan, error) {
 	input.Name, input.InstanceID, input.Expression = strings.TrimSpace(input.Name), strings.TrimSpace(input.InstanceID), strings.TrimSpace(input.Expression)
+	var noteErr error
+	input.Note, noteErr = recordnote.Normalize(input.Note)
+	if noteErr != nil {
+		return Plan{}, noteErr
+	}
 	if input.Name == "" || input.InstanceID == "" || input.RetentionCount < 1 || input.RetentionCount > 365 {
 		return Plan{}, errors.New("plan name, instance, and retention from 1 to 365 are required")
 	}
@@ -73,12 +79,12 @@ func (m *Manager) SavePlan(ctx context.Context, input PlanInput) (Plan, error) {
 	if id == "" {
 		id = randomID()
 		_, err = m.db.ExecContext(ctx, `INSERT INTO mysql_backup_plans
-			(id,name,instance_id,databases_json,expression,retention_count,enabled,next_fire_at,created_at,updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?)`, id, input.Name, input.InstanceID, databasesJSON, input.Expression, input.RetentionCount,
+			(id,name,note,instance_id,databases_json,expression,retention_count,enabled,next_fire_at,created_at,updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?)`, id, input.Name, input.Note, input.InstanceID, databasesJSON, input.Expression, input.RetentionCount,
 			input.Enabled, next.UnixNano(), now.UTC().UnixNano(), now.UTC().UnixNano())
 	} else {
-		_, err = m.db.ExecContext(ctx, `UPDATE mysql_backup_plans SET name=?,instance_id=?,databases_json=?,expression=?,retention_count=?,enabled=?,next_fire_at=?,updated_at=? WHERE id=?`,
-			input.Name, input.InstanceID, databasesJSON, input.Expression, input.RetentionCount, input.Enabled, next.UnixNano(), now.UTC().UnixNano(), id)
+		_, err = m.db.ExecContext(ctx, `UPDATE mysql_backup_plans SET name=?,note=?,instance_id=?,databases_json=?,expression=?,retention_count=?,enabled=?,next_fire_at=?,updated_at=? WHERE id=?`,
+			input.Name, input.Note, input.InstanceID, databasesJSON, input.Expression, input.RetentionCount, input.Enabled, next.UnixNano(), now.UTC().UnixNano(), id)
 	}
 	if err != nil {
 		return Plan{}, err
@@ -90,8 +96,8 @@ func (m *Manager) Plan(ctx context.Context, id string) (Plan, error) {
 	var item Plan
 	var databasesJSON string
 	var next, created, updated int64
-	err := m.db.QueryRowContext(ctx, `SELECT id,name,instance_id,databases_json,expression,retention_count,enabled,next_fire_at,created_at,updated_at
-		FROM mysql_backup_plans WHERE id=?`, id).Scan(&item.ID, &item.Name, &item.InstanceID, &databasesJSON, &item.Expression,
+	err := m.db.QueryRowContext(ctx, `SELECT id,name,note,instance_id,databases_json,expression,retention_count,enabled,next_fire_at,created_at,updated_at
+		FROM mysql_backup_plans WHERE id=?`, id).Scan(&item.ID, &item.Name, &item.Note, &item.InstanceID, &databasesJSON, &item.Expression,
 		&item.RetentionCount, &item.Enabled, &next, &created, &updated)
 	if err != nil {
 		return Plan{}, err

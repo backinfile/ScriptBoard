@@ -17,6 +17,7 @@ import (
 
 	"scriptboard/internal/registryconnection"
 	"scriptboard/internal/registrymonitor"
+	"scriptboard/internal/secretstore"
 )
 
 func testManager(t *testing.T) *Manager {
@@ -39,7 +40,11 @@ func testManagerWithClient(t *testing.T, client *http.Client) *Manager {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := New(Options{DB: db, Client: client, RegistryConnections: connections})
+	vault, err := secretstore.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := New(Options{DB: db, Client: client, RegistryConnections: connections, SecretStore: vault})
 	if err != nil {
 		t.Fatal(err)
 	}

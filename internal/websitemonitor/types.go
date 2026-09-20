@@ -76,6 +76,7 @@ const (
 type Config struct {
 	GroupID                      string `json:"-"`
 	Name                         string
+	Note                         string
 	Scope                        Scope
 	Kind                         Kind
 	URL                          string

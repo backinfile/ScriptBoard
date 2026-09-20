@@ -81,7 +81,7 @@ func (a *App) scheduleTaskDataFromRequest(request *http.Request) taskPageData {
 		Kind: kind, Title: webText(locale, titleKey),
 		Description: webText(locale, "task.schedule_description"),
 		BackURL:     "/config/schedules", Action: action, PreviewAction: previewAction,
-		Name: request.FormValue("name"), ScheduleGroupID: strings.TrimSpace(request.FormValue("group_id")),
+		Name: request.FormValue("name"), Note: request.FormValue("note"), ScheduleGroupID: strings.TrimSpace(request.FormValue("group_id")),
 		ScheduleGroups: groups, Script: request.FormValue("script"),
 		Arguments: request.FormValue("arguments"), Expression: request.FormValue("expression"),
 		MemoryLimit: request.FormValue("memory_limit"), TimeoutInput: request.FormValue("timeout_seconds"),

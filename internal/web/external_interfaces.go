@@ -26,6 +26,7 @@ import (
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/identity"
 	"scriptboard/internal/privatepath"
+	"scriptboard/internal/quickrun"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/variables"
 )
@@ -423,7 +424,7 @@ func (a *App) createExternalGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}
-	group, err := a.externalTriggers.CreateGroup(request.Context(), request.FormValue("label"), request.FormValue("call_name"))
+	group, err := a.externalTriggers.CreateGroupWithNote(request.Context(), request.FormValue("label"), request.FormValue("call_name"), request.FormValue("note"))
 	if err != nil {
 		a.renderExternalGroupSubmissionError(response, request, "group-new", externaltrigger.Group{}, webText(resolveWebLocale(request), "external.group_save_error"))
 		return
@@ -452,7 +453,7 @@ func (a *App) updateExternalGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}
-	group, err := a.externalTriggers.UpdateGroup(request.Context(), request.PathValue("groupID"), request.FormValue("label"), request.FormValue("call_name"))
+	group, err := a.externalTriggers.UpdateGroupWithNote(request.Context(), request.PathValue("groupID"), request.FormValue("label"), request.FormValue("call_name"), request.FormValue("note"))
 	if err != nil {
 		a.renderExternalGroupSubmissionError(response, request, "group-edit", externaltrigger.Group{ID: request.PathValue("groupID")}, webText(resolveWebLocale(request), "external.group_save_error"))
 		return
@@ -468,6 +469,7 @@ func (a *App) renderExternalGroupSubmissionError(response http.ResponseWriter, r
 	if kind == "group-edit" {
 		title, description, action = webText(locale, "external.edit_group"), webText(locale, "external.edit_group_description"), "/config/external-interfaces/groups/"+group.ID
 	}
+	group.Note = request.FormValue("note")
 	response.WriteHeader(http.StatusUnprocessableEntity)
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: kind, Title: title, Description: description, BackURL: "/config/external-interfaces", Action: action,
@@ -517,7 +519,7 @@ func (a *App) createExternalKey(response http.ResponseWriter, request *http.Requ
 		}
 	}
 	key, secret, err := a.externalTriggers.CreateKey(request.Context(), externaltrigger.CreateKeyInput{
-		GroupID: groupID, Label: request.FormValue("label"), Enabled: request.FormValue("enabled") == "1", ExpiresAt: expiresAt,
+		GroupID: groupID, Label: request.FormValue("label"), Note: request.FormValue("note"), Enabled: request.FormValue("enabled") == "1", ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		if errors.Is(err, externaltrigger.ErrKeyLabelExists) {
@@ -604,7 +606,7 @@ func (a *App) updateExternalKey(response http.ResponseWriter, request *http.Requ
 			return
 		}
 	}
-	if err := a.externalTriggers.UpdateKey(request.Context(), key.ID, label, expiresAt); err != nil {
+	if err := a.externalTriggers.UpdateKeyWithNote(request.Context(), key.ID, label, request.FormValue("note"), expiresAt); err != nil {
 		if errors.Is(err, externaltrigger.ErrKeyLabelExists) {
 			a.renderExternalKeySubmissionError(response, request, "key-edit", key, webText(resolveWebLocale(request), "external.key_name_exists"))
 			return
@@ -638,6 +640,7 @@ func (a *App) renderExternalKeySubmissionError(response http.ResponseWriter, req
 	if kind == "key-edit" {
 		title, description, action = webText(locale, "external.edit_key"), webText(locale, "external.edit_key_description"), "/config/external-interfaces/keys/"+key.ID
 	}
+	key.Note = request.FormValue("note")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	response.WriteHeader(http.StatusUnprocessableEntity)
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
@@ -1107,7 +1110,7 @@ func (a *App) createExternalEntry(response http.ResponseWriter, request *http.Re
 		return
 	}
 	entry, secret, err := a.externalTriggers.CreateEntry(request.Context(), externaltrigger.CreateEntryInput{
-		GroupID: groupID, KeyID: legacyKeyID, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType,
+		GroupID: groupID, KeyID: legacyKeyID, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Note: request.FormValue("note"), Type: actionType,
 		Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", RequireApproval: request.FormValue("require_approval") == "1", Config: config,
 	})
 	if err != nil {
@@ -1139,7 +1142,7 @@ func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, r
 		CSRFToken: request.Context().Value(sessionContextKey).(session).csrfToken, Locale: locale, Group: group,
 		QuickRuns: quickRuns, Variables: variables, EntryEnabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", RequireApproval: request.FormValue("require_approval") == "1", Submitted: true,
 		FormError:            webText(locale, "external.entry_save_error"),
-		Entry:                externaltrigger.Entry{Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: externaltrigger.ActionType(request.FormValue("action_type"))},
+		Entry:                externaltrigger.Entry{Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Note: request.FormValue("note"), Type: externaltrigger.ActionType(request.FormValue("action_type"))},
 		LogConfig:            externaltrigger.LogConfig{File: request.FormValue("log_file"), Managed: request.FormValue("log_target_mode") == "managed", Category: request.FormValue("log_category")},
 		UploadConfig:         externaltrigger.UploadConfig{Directory: request.FormValue("upload_directory"), ConflictPolicy: request.FormValue("upload_conflict")},
 		QuickRunConfig:       externaltrigger.QuickRunConfig{QuickRunID: request.FormValue("quick_run_id")},
@@ -1172,7 +1175,7 @@ func (a *App) updateExternalEntry(response http.ResponseWriter, request *http.Re
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	entry, err := a.externalTriggers.UpdateEntry(request.Context(), externaltrigger.UpdateEntryInput{ID: id, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", RequireApproval: request.FormValue("require_approval") == "1", Config: config})
+	entry, err := a.externalTriggers.UpdateEntry(request.Context(), externaltrigger.UpdateEntryInput{ID: id, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Note: request.FormValue("note"), Type: actionType, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", RequireApproval: request.FormValue("require_approval") == "1", Config: config})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
@@ -2006,7 +2009,21 @@ func (a *App) executeExternalQuickRunPrepared(ctx context.Context, entry externa
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}
-	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: config.ScriptSHA256, DisallowOverlap: true, ArgumentsTemplate: quick.ArgumentsTemplate, MemoryLimit: quick.MemoryLimit, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label + " / " + a.quickRunSourceSnapshot(quick), SourceID: entry.ID, Variables: variables, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
+	// 外部触发无交互填参，全部走默认值；必填且无默认值时拒绝启动。
+	// 取值同时并入启动参数模板变量（{{PARAM_<大写名>}}）。
+	paramDefs, err := quickrun.ParseParamDefs(quick.ParamsJSON)
+	if err != nil {
+		return externalFailure(http.StatusConflict, "target_unavailable")
+	}
+	resolvedParams, err := quickrun.ResolveParamValues(paramDefs, nil)
+	if err != nil {
+		return externalFailure(http.StatusConflict, "target_unavailable")
+	}
+	paramEnv := quickrun.ParamEnvEntries(resolvedParams)
+	for name, value := range quickrun.ParamVariableEntries(resolvedParams) {
+		variables[name] = value
+	}
+	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: config.ScriptSHA256, DisallowOverlap: true, ArgumentsTemplate: quick.ArgumentsTemplate, MemoryLimit: quick.MemoryLimit, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label + " / " + a.quickRunSourceSnapshot(quick), SourceID: entry.ID, Variables: variables, ExtraEnv: paramEnv, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
 	if err != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}

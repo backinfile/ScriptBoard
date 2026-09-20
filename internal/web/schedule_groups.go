@@ -7,12 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/recordnote"
 	"scriptboard/internal/scheduler"
 )
 
 type scheduleGroup struct {
 	ID            string
 	Name          string
+	Note          string
 	SortOrder     int
 	ScheduleCount int
 	Items         []scheduler.Schedule
@@ -20,10 +22,10 @@ type scheduleGroup struct {
 }
 
 func (a *App) loadScheduleGroups() ([]scheduleGroup, error) {
-	rows, err := a.db.Query(`SELECT g.id, g.name, g.sort_order, COUNT(s.id)
+	rows, err := a.db.Query(`SELECT g.id, g.name, g.note, g.sort_order, COUNT(s.id)
 		FROM quick_run_groups g
 		LEFT JOIN schedules s ON s.group_id = g.id AND s.deleted = 0
-		GROUP BY g.id, g.name, g.sort_order, g.created_at
+		GROUP BY g.id, g.name, g.note, g.sort_order, g.created_at
 		ORDER BY g.sort_order, g.created_at`)
 	if err != nil {
 		return nil, err
@@ -32,7 +34,7 @@ func (a *App) loadScheduleGroups() ([]scheduleGroup, error) {
 	var groups []scheduleGroup
 	for rows.Next() {
 		var group scheduleGroup
-		if err := rows.Scan(&group.ID, &group.Name, &group.SortOrder, &group.ScheduleCount); err != nil {
+		if err := rows.Scan(&group.ID, &group.Name, &group.Note, &group.SortOrder, &group.ScheduleCount); err != nil {
 			return nil, err
 		}
 		groups = append(groups, group)
@@ -85,9 +87,9 @@ func (a *App) newScheduleGroupTask(response http.ResponseWriter, request *http.R
 }
 
 func (a *App) editScheduleGroupTask(response http.ResponseWriter, request *http.Request) {
-	var name string
+	var name, note string
 	id := request.PathValue("id")
-	if err := a.db.QueryRow("SELECT name FROM schedule_groups WHERE id = ?", id).Scan(&name); err != nil {
+	if err := a.db.QueryRow("SELECT name, note FROM schedule_groups WHERE id = ?", id).Scan(&name, &note); err != nil {
 		http.Error(response, "计划分组不存在", http.StatusNotFound)
 		return
 	}
@@ -98,6 +100,7 @@ func (a *App) editScheduleGroupTask(response http.ResponseWriter, request *http.
 		BackURL:     "/config/schedules",
 		Action:      "/config/schedules/groups/" + id + "/update",
 		Name:        name,
+		Note:        note,
 	})
 }
 
@@ -109,6 +112,11 @@ func (a *App) createScheduleGroup(response http.ResponseWriter, request *http.Re
 	name := strings.TrimSpace(request.FormValue("name"))
 	if name == "" || len([]byte(name)) > 256 {
 		http.Error(response, "计划分组名称无效", http.StatusBadRequest)
+		return
+	}
+	note, err := recordnote.Normalize(request.FormValue("note"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
 	id, err := randomToken(18)
@@ -125,8 +133,8 @@ func (a *App) createScheduleGroup(response http.ResponseWriter, request *http.Re
 	var sortOrder int
 	if err = transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM schedule_groups").Scan(&sortOrder); err == nil {
 		now := time.Now().UTC().Unix()
-		_, err = transaction.Exec(`INSERT INTO schedule_groups (id, name, sort_order, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?)`, id, name, sortOrder, now, now)
+		_, err = transaction.Exec(`INSERT INTO schedule_groups (id, name, note, sort_order, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)`, id, name, note, sortOrder, now, now)
 	}
 	if err == nil {
 		err = transaction.Commit()
@@ -153,6 +161,11 @@ func (a *App) updateScheduleGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, "计划分组名称无效", http.StatusBadRequest)
 		return
 	}
+	note, err := recordnote.Normalize(request.FormValue("note"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
 	id := request.PathValue("id")
 	transaction, err := a.db.Begin()
 	if err != nil {
@@ -160,8 +173,8 @@ func (a *App) updateScheduleGroup(response http.ResponseWriter, request *http.Re
 		return
 	}
 	defer transaction.Rollback()
-	result, err := transaction.Exec(`UPDATE schedule_groups SET name = ?, updated_at = ? WHERE id = ?`,
-		name, time.Now().UTC().Unix(), id)
+	result, err := transaction.Exec(`UPDATE schedule_groups SET name = ?, note = ?, updated_at = ? WHERE id = ?`,
+		name, note, time.Now().UTC().Unix(), id)
 	count := int64(0)
 	if err == nil {
 		count, _ = result.RowsAffected()

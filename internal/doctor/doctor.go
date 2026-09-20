@@ -353,9 +353,9 @@ func checkDisk(report *Report, name, path string) {
 }
 
 func checkExecutors(report *Report) {
-	names := []string{"bash", "sh", "python3", "python", "pwsh"}
+	names := []string{"bash", "sh", "python3", "python", "pwsh", "node"}
 	if runtime.GOOS == "windows" {
-		names = []string{"cmd.exe", "pwsh.exe", "powershell.exe", "py.exe", "python.exe", "bash.exe"}
+		names = []string{"cmd.exe", "pwsh.exe", "powershell.exe", "py.exe", "python.exe", "bash.exe", "node.exe"}
 	}
 	var available []string
 	for _, name := range names {

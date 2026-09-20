@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"scriptboard/internal/identity"
+	"scriptboard/internal/recordnote"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -13,6 +14,7 @@ import (
 type userView struct {
 	ID        string
 	Username  string
+	Note      string
 	Role      identity.Role
 	Enabled   bool
 	CreatedAt time.Time
@@ -35,7 +37,7 @@ func validUsername(username string) bool {
 }
 
 func (a *App) listUsers() ([]userView, error) {
-	rows, err := a.db.Query(`SELECT id, username, role, enabled, created_at
+	rows, err := a.db.Query(`SELECT id, username, note, role, enabled, created_at
 		FROM users ORDER BY CASE role WHEN 'administrator' THEN 0 ELSE 1 END, LOWER(username)`)
 	if err != nil {
 		return nil, err
@@ -45,7 +47,7 @@ func (a *App) listUsers() ([]userView, error) {
 	for rows.Next() {
 		var user userView
 		var createdAt int64
-		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &user.Enabled, &createdAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &user.Note, &user.Role, &user.Enabled, &createdAt); err != nil {
 			return nil, err
 		}
 		user.CreatedAt = time.Unix(createdAt, 0).UTC()
@@ -122,6 +124,11 @@ func (a *App) createUser(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "用户角色无效", http.StatusBadRequest)
 		return
 	}
+	note, err := recordnote.Normalize(request.FormValue("note"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
 	id, err := randomToken(18)
 	if err != nil {
 		http.Error(response, "无法创建用户", http.StatusInternalServerError)
@@ -139,9 +146,9 @@ func (a *App) createUser(response http.ResponseWriter, request *http.Request) {
 	}
 	now := time.Now().UTC().Unix()
 	_, err = a.db.Exec(`INSERT INTO users
-		(id, username, password_hash, role, enabled, auth_version, created_at, updated_at)
-		VALUES (?, ?, ?, ?, 1, 1, ?, ?)`,
-		id, username, passwordHash, role, now, now)
+		(id, username, note, password_hash, role, enabled, auth_version, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)`,
+		id, username, note, passwordHash, role, now, now)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			http.Error(response, "用户名已存在", http.StatusConflict)
@@ -237,6 +244,11 @@ func (a *App) updateUser(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "用户角色无效", http.StatusBadRequest)
 		return
 	}
+	note, err := recordnote.Normalize(request.FormValue("note"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
 	transaction, err := a.db.Begin()
 	if err != nil {
 		http.Error(response, "无法更新用户", http.StatusInternalServerError)
@@ -244,8 +256,8 @@ func (a *App) updateUser(response http.ResponseWriter, request *http.Request) {
 	}
 	defer transaction.Rollback()
 	_, err = transaction.Exec(`UPDATE users
-		SET username = ?, role = ?, auth_version = auth_version + 1, updated_at = ?
-		WHERE id = ?`, username, role, time.Now().UTC().Unix(), user.ID)
+		SET username = ?, note = ?, role = ?, auth_version = auth_version + 1, updated_at = ?
+		WHERE id = ?`, username, note, role, time.Now().UTC().Unix(), user.ID)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			http.Error(response, "用户名已存在", http.StatusConflict)
@@ -339,8 +351,8 @@ func (a *App) resetUserPassword(response http.ResponseWriter, request *http.Requ
 func (a *App) userByID(id string) (userView, error) {
 	var user userView
 	var createdAt int64
-	err := a.db.QueryRow(`SELECT id, username, role, enabled, created_at FROM users WHERE id = ?`, id).
-		Scan(&user.ID, &user.Username, &user.Role, &user.Enabled, &createdAt)
+	err := a.db.QueryRow(`SELECT id, username, note, role, enabled, created_at FROM users WHERE id = ?`, id).
+		Scan(&user.ID, &user.Username, &user.Note, &user.Role, &user.Enabled, &createdAt)
 	if err != nil {
 		return userView{}, err
 	}

@@ -16,6 +16,7 @@ import (
 
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/quickrun"
+	"scriptboard/internal/recordnote"
 	"scriptboard/internal/runmanager"
 )
 
@@ -190,6 +191,16 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		return
 	}
 	argumentsTemplate := request.FormValue("arguments")
+	// 先解析执行参数定义，模板校验时把 {{PARAM_<大写名>}} 占位并入变量表。
+	paramsJSON := request.FormValue("params_json")
+	paramDefs, err := quickrun.ParseParamDefs(paramsJSON)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for name, value := range quickrun.ParamValidationVariables(paramDefs) {
+		variables[name] = value
+	}
 	if err := runmanager.ValidateArgumentsTemplate(argumentsTemplate, variables); err != nil {
 		http.Error(response, "Arguments are invalid: "+err.Error(), http.StatusBadRequest)
 		return
@@ -226,8 +237,8 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		}
 		a.renderQuickCreateConflict(response, request, quickCreateValues{
 			WorkingDirectory: workingDirectory, Language: language.ID, FileName: quickrun.FileStem(fileName, language.Extension),
-			Source: source, Name: name, Arguments: argumentsTemplate, MemoryLimit: request.FormValue("memory_limit"), TimeoutSeconds: timeoutSeconds, GroupID: request.FormValue("group_id"),
-			RequireConfirmation: request.FormValue("require_confirmation") == "1",
+			Source: source, Name: name, Note: request.FormValue("note"), Arguments: argumentsTemplate, MemoryLimit: request.FormValue("memory_limit"), TimeoutSeconds: timeoutSeconds, GroupID: request.FormValue("group_id"),
+			RequireConfirmation: request.FormValue("require_confirmation") == "1", ParamsJSON: paramsJSON,
 		}, targetPath, quickrun.FileStem(suggested, language.Extension), targetInfo.Mode().IsRegular() && !a.runs.ConflictsPath(targetPath))
 		return
 	}
@@ -297,6 +308,12 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		http.Error(response, "Unable to publish created script: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	note, err := recordnote.Normalize(request.FormValue("note"))
+	if err != nil {
+		rollbackFile()
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	transaction, err := a.db.Begin()
 	if err != nil {
@@ -326,9 +343,9 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 	now := time.Now().UTC().Unix()
 	if err == nil {
 		_, err = transaction.Exec(`INSERT INTO quick_runs
-			(id, name, script_path, script_path_key, arguments_template, memory_limit, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 1, ?)`,
-			id, name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), argumentsTemplate, request.FormValue("memory_limit"), timeoutSeconds, sortOrder, now, groupID, request.FormValue("require_confirmation") == "1", prepared.Digest, now)
+			(id, name, note, script_path, script_path_key, arguments_template, memory_limit, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at, params_json)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 1, ?, ?)`,
+			id, name, note, prepared.Path, hostfiles.ComparisonKey(prepared.Path), argumentsTemplate, request.FormValue("memory_limit"), timeoutSeconds, sortOrder, now, groupID, request.FormValue("require_confirmation") == "1", prepared.Digest, now, paramsJSON)
 	}
 	if err == nil {
 		err = transaction.Commit()
@@ -348,11 +365,14 @@ type quickCreateValues struct {
 	FileName            string
 	Source              string
 	Name                string
+	Note                string
 	Arguments           string
 	MemoryLimit         string
 	TimeoutSeconds      int
 	GroupID             string
 	RequireConfirmation bool
+	// ParamsJSON 保留冲突重渲染前已填的执行参数定义。
+	ParamsJSON string
 }
 
 func (a *App) renderQuickCreateConflict(response http.ResponseWriter, request *http.Request, values quickCreateValues, targetPath, suggestedName string, canOverwrite bool) {
@@ -374,10 +394,10 @@ func (a *App) renderQuickCreateConflict(response http.ResponseWriter, request *h
 		Kind: "quick-create", Title: webText(resolveWebLocale(request), "task.quick_create.title"),
 		Description: webText(resolveWebLocale(request), "task.quick_create.description"),
 		BackURL:     "/config/quick-runs", Action: "/config/quick-runs/from-source", Languages: quickrun.PlatformLanguages(runtime.GOOS),
-		WorkingDirectory: values.WorkingDirectory, FileName: values.FileName, Source: values.Source, Name: values.Name,
+		WorkingDirectory: values.WorkingDirectory, FileName: values.FileName, Source: values.Source, Name: values.Name, Note: values.Note,
 		Arguments: values.Arguments, MemoryLimit: values.MemoryLimit, TimeoutSeconds: values.TimeoutSeconds, GroupID: values.GroupID, Groups: groups, Language: values.Language,
-		RequireConfirmation: values.RequireConfirmation,
-		Conflict:            true, ConflictPath: targetPath, SuggestedName: suggestedName, CanOverwrite: canOverwrite,
+		RequireConfirmation: values.RequireConfirmation, ParamsJSON: values.ParamsJSON,
+		Conflict: true, ConflictPath: targetPath, SuggestedName: suggestedName, CanOverwrite: canOverwrite,
 		QuickReferences: quickReferences, ScheduleReferences: scheduleReferences,
 	})
 }

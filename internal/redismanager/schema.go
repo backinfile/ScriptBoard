@@ -4,6 +4,7 @@ var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS redis_instances (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+		note TEXT NOT NULL DEFAULT '',
 		environment TEXT NOT NULL DEFAULT 'unspecified' CHECK(environment IN ('production','development','unspecified')),
 		host TEXT NOT NULL,
 		port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),

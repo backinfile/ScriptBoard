@@ -19,9 +19,9 @@ type fleetNodeSettingsView struct {
 }
 
 type fleetNodeFormView struct {
-	Locale                               webLocale
-	CSRFToken, ID, Name, Endpoint, Error string
-	Editing                              bool
+	Locale                                     webLocale
+	CSRFToken, ID, Name, Note, Endpoint, Error string
+	Editing                                    bool
 }
 
 type fleetTokenFormView struct {
@@ -113,7 +113,7 @@ func (a *App) editFleetNodeTask(response http.ResponseWriter, request *http.Requ
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = fleetNodeFormTemplate.Execute(response, fleetNodeFormView{
 		Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, ID: peer.ID,
-		Name: peer.Name, Endpoint: peer.Endpoint, Editing: true,
+		Name: peer.Name, Note: peer.Note, Endpoint: peer.Endpoint, Editing: true,
 	})
 }
 
@@ -124,13 +124,13 @@ func (a *App) createFleetNode(response http.ResponseWriter, request *http.Reques
 		http.Error(response, webText(locale, "error.csrf"), http.StatusForbidden)
 		return
 	}
-	input := fleetstatus.AddPeerInput{Name: request.FormValue("name"), Endpoint: request.FormValue("endpoint"), AccessToken: request.FormValue("access_token")}
+	input := fleetstatus.AddPeerInput{Name: request.FormValue("name"), Note: request.FormValue("note"), Endpoint: request.FormValue("endpoint"), AccessToken: request.FormValue("access_token")}
 	peer, err := a.fleetStatus.AddPeer(request.Context(), input)
 	if err != nil {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		response.WriteHeader(http.StatusUnprocessableEntity)
-		_ = fleetNodeFormTemplate.Execute(response, fleetNodeFormView{Locale: locale, CSRFToken: current.csrfToken, Name: input.Name, Endpoint: input.Endpoint, Error: err.Error()})
+		_ = fleetNodeFormTemplate.Execute(response, fleetNodeFormView{Locale: locale, CSRFToken: current.csrfToken, Name: input.Name, Note: input.Note, Endpoint: input.Endpoint, Error: err.Error()})
 		return
 	}
 	a.recordAuditForRequest(request, "fleet_node_added", peer.ID+" "+peer.Name, "succeeded")
@@ -145,7 +145,7 @@ func (a *App) updateFleetNode(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	id := request.PathValue("id")
-	input := fleetstatus.UpdatePeerInput{Name: request.FormValue("name"), Endpoint: request.FormValue("endpoint"), AccessToken: request.FormValue("access_token")}
+	input := fleetstatus.UpdatePeerInput{Name: request.FormValue("name"), Note: request.FormValue("note"), Endpoint: request.FormValue("endpoint"), AccessToken: request.FormValue("access_token")}
 	peer, err := a.fleetStatus.UpdatePeer(request.Context(), id, input)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -156,7 +156,7 @@ func (a *App) updateFleetNode(response http.ResponseWriter, request *http.Reques
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		response.WriteHeader(http.StatusUnprocessableEntity)
 		_ = fleetNodeFormTemplate.Execute(response, fleetNodeFormView{
-			Locale: locale, CSRFToken: current.csrfToken, ID: id, Name: input.Name,
+			Locale: locale, CSRFToken: current.csrfToken, ID: id, Name: input.Name, Note: input.Note,
 			Endpoint: input.Endpoint, Error: err.Error(), Editing: true,
 		})
 		return

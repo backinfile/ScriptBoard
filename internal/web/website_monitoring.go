@@ -920,6 +920,7 @@ func websiteMonitorConfigFromRequest(request *http.Request) (websitemonitor.Conf
 	locale := resolveWebLocale(request)
 	config := websitemonitor.Config{
 		Name:                strings.TrimSpace(request.FormValue("name")),
+		Note:                request.FormValue("note"),
 		Scope:               websitemonitor.Scope(request.FormValue("scope")),
 		Kind:                websitemonitor.Kind(request.FormValue("kind")),
 		URL:                 strings.TrimSpace(request.FormValue("url")),

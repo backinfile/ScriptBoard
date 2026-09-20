@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
@@ -13,6 +15,32 @@ import (
 
 	"scriptboard/internal/registrymonitor"
 )
+
+var ErrReadOnly = errors.New("registry connection is read-only")
+
+var ErrDuplicateEndpoint = errors.New("registry URL already exists")
+
+// Compare equivalent URL spellings while preserving protocol and path boundaries.
+func endpointKey(raw string) string {
+	u, err := url.Parse(strings.TrimRight(strings.TrimSpace(raw), "/"))
+	if err != nil {
+		return raw
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if (u.Scheme == "http" && port == "80") || (u.Scheme == "https" && port == "443") {
+		port = ""
+	}
+	if port != "" {
+		u.Host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		u.Host = "[" + host + "]"
+	} else {
+		u.Host = host
+	}
+	return u.String()
+}
 
 func managementID() string {
 	var b [16]byte
@@ -54,7 +82,12 @@ func (service *Service) writeManagement(state persistedState) error {
 // Broker-owned sealed store. Plans expire and are consumed before remote writes.
 func (service *Service) Manage(ctx context.Context, req registrymonitor.ManagementRequest) (registrymonitor.ManagementResponse, error) {
 	service.managementMu.Lock()
-	defer service.managementMu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			service.managementMu.Unlock()
+		}
+	}()
 	// Management history has its own store and lock so cleanup cannot block or
 	// overwrite dashboard connection transactions.
 	store := &Service{path: service.path + ".management", vault: service.vault, inspector: service.inspector}
@@ -81,7 +114,7 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 		sort.Slice(out.Connections, func(i, j int) bool { return out.Connections[i].Name < out.Connections[j].Name })
 		return out, nil
 	}
-	if req.Command == "save" {
+	if req.Command == "save" || req.Command == "test" {
 		req.Name = strings.TrimSpace(req.Name)
 		if req.Name == "" || len(req.Name) > 100 {
 			return out, ErrInvalidConnection
@@ -94,6 +127,13 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 		if registrymonitor.ValidateConfig(config) != nil || !validCredential(req.Password, true) {
 			return out, ErrInvalidConnection
 		}
+		// Enforce uniqueness under the management lock for both create and edit.
+		for id, existing := range state.Active {
+			if req.Command == "save" && id != req.ID && existing.Managed && endpointKey(existing.Config.Endpoint) == endpointKey(config.Endpoint) {
+				out.ID = id
+				return out, ErrDuplicateEndpoint
+			}
+		}
 		password := req.Password
 		if req.Preserve && password == "" {
 			password = record.Password
@@ -104,6 +144,13 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 		}
 		if config.AuthMode == "basic" && password == "" {
 			return out, ErrInvalidConnection
+		}
+		if req.Command == "test" {
+			config.Password = password
+			service.managementMu.Unlock()
+			locked = false
+			_, err = service.inspector.Repositories(ctx, config)
+			return out, err
 		}
 		if req.ID == "" {
 			if len(state.Active) >= maxConnections {
@@ -123,9 +170,9 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 	if !exists || !record.Managed {
 		return out, ErrNotFound
 	}
-	// Enforce the saved access mode before preview retrieval or remote deletion.
+	// Enforce the persisted mode, including requests from stale pages and old previews.
 	if record.Config.ReadOnly && (req.Command == "preview" || req.Command == "plan" || req.Command == "execute") {
-		return out, errors.New("Registry connection is read-only")
+		return out, ErrReadOnly
 	}
 	config := record.Config
 	config.Password = record.Password
@@ -153,8 +200,12 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 		config.Images = req.Repositories
 		out.Images, err = service.inspector.Inspect(ctx, config)
 	case "catalog":
+		service.managementMu.Unlock()
+		locked = false
 		out.Repositories, err = service.inspector.Repositories(ctx, config)
 	case "detail":
+		service.managementMu.Unlock()
+		locked = false
 		out.Artifacts, err = service.inspector.Artifacts(ctx, config, req.Repository)
 	case "history":
 		for _, event := range state.Events {
@@ -190,7 +241,7 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 		if len(repos) > 100 {
 			return out, errors.New("select at most 100 repositories per cleanup")
 		}
-		plan := registrymonitor.DeletePlan{ID: managementID(), ConnectionID: req.ID, Revision: record.Revision, Created: time.Now().UTC(), Confirmation: record.Name, Revisions: map[string]string{}}
+		plan := registrymonitor.DeletePlan{Selection: registrymonitor.CleanupSelection{Repositories: req.Repositories, Repository: req.Repository, Tag: req.Tag, Rule: req.Rule}, Skipped: map[string]int{}, ID: managementID(), ConnectionID: req.ID, Revision: record.Revision, Created: time.Now().UTC(), Confirmation: record.Name, Revisions: map[string]string{}}
 		seen := map[string]bool{}
 		for _, repo := range repos {
 			if seen[repo] {
@@ -214,15 +265,22 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 			for index, digest := range order {
 				group := groups[digest]
 				match := false
+				reason := ""
 				protected := index < req.Rule.Keep
+				if protected {
+					reason = "keep"
+				}
 				for _, item := range group {
 					if req.Rule.Keep > 0 && item.Created.IsZero() {
+						reason = "unknown_date"
 						protected = true
 					}
 					if req.Rule.Protect && (item.Tag == "latest" || item.Tag == "stable" || strings.HasPrefix(item.Tag, "release-")) {
+						reason = "protected"
 						protected = true
 					}
 					if req.Rule.OlderDays > 0 && (item.Created.IsZero() || item.Created.After(time.Now().AddDate(0, 0, -req.Rule.OlderDays))) {
+						reason = "age"
 						protected = true
 					}
 					ok := true
@@ -239,8 +297,14 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 					if ok {
 						match = true
 					} else if req.Rule.Pattern != "" {
+						reason = "associated_tag"
 						protected = true
 					}
+				}
+				if !match {
+					plan.Skipped["no_match"]++
+				} else if protected {
+					plan.Skipped[reason]++
 				}
 				if match && !protected {
 					target := registrymonitor.DeleteTarget{Repository: repo, Digest: digest}
@@ -256,7 +320,8 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 			}
 		}
 		if len(plan.Targets) == 0 {
-			return out, errors.New("no matching deletable manifests")
+			out.Plan = &plan
+			return out, nil
 		}
 		sort.Slice(plan.Targets, func(i, j int) bool {
 			a, b := plan.Targets[i], plan.Targets[j]
@@ -276,8 +341,12 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 		out.Plan = &p
 	case "execute":
 		p, ok := state.Plans[req.PlanID]
-		if !ok || p.ConnectionID != req.ID || p.Revision != record.Revision || req.Confirmation != p.Confirmation {
-			return out, errors.New("preview expired, connection changed, or confirmation mismatch")
+		if !ok || p.ConnectionID != req.ID || p.Revision != record.Revision {
+			return out, errors.New("preview expired; create a new preview")
+		}
+		// Keep a valid preview available when only the confirmation text needs correction.
+		if req.Confirmation != p.Confirmation {
+			return out, errors.New("confirmation mismatch")
 		}
 		// Recheck every repository before the first deletion, then consume the plan.
 		for repo, revision := range p.Revisions {
@@ -290,7 +359,16 @@ func (service *Service) Manage(ctx context.Context, req registrymonitor.Manageme
 			}
 		}
 		delete(state.Plans, req.PlanID)
-		event := registrymonitor.ManagementEvent{Time: time.Now().UTC(), ConnectionID: req.ID, Summary: "Deletion started; inspect results before retrying"}
+		kind := "rule"
+		if p.Selection.Repository != "" {
+			kind = "repository"
+			if p.Selection.Tag != "" {
+				kind = "tag"
+			}
+		} else if len(p.Selection.Repositories) > 0 {
+			kind = "selection"
+		}
+		event := registrymonitor.ManagementEvent{Actor: req.Actor, Kind: kind, Time: time.Now().UTC(), ConnectionID: req.ID, Summary: "Deletion started; inspect results before retrying"}
 		state.Events = append([]registrymonitor.ManagementEvent{event}, state.Events...)
 		if len(state.Events) > 100 {
 			state.Events = state.Events[:100]

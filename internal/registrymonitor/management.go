@@ -26,6 +26,7 @@ type Artifact struct {
 	Digest     string
 	Created    time.Time
 	MediaType  string
+	Platforms  []string
 	Size       int64
 }
 type DeleteTarget struct {
@@ -40,7 +41,14 @@ type CleanupRule struct {
 	Keep      int
 	Protect   bool
 }
+type CleanupSelection struct {
+	Repositories []string
+	Repository   string
+	Tag          string
+	Rule         CleanupRule
+}
 type ManagementRequest struct {
+	Actor        string
 	Command      string
 	ID           string
 	Name         string
@@ -55,6 +63,9 @@ type ManagementRequest struct {
 	Confirmation string
 }
 type DeletePlan struct {
+	Selection CleanupSelection
+	Skipped   map[string]int
+
 	ID           string
 	ConnectionID string
 	Revision     string
@@ -64,6 +75,9 @@ type DeletePlan struct {
 	Revisions    map[string]string
 }
 type ManagementEvent struct {
+	Actor string
+	Kind  string
+
 	Time         time.Time
 	ConnectionID string
 	Summary      string
@@ -115,7 +129,14 @@ func (client *Client) Artifacts(ctx context.Context, config Config, repository s
 		}
 		var doc struct {
 			MediaType string `json:"mediaType"`
-			Config    struct {
+			Manifests []struct {
+				Platform struct {
+					OS           string `json:"os"`
+					Architecture string `json:"architecture"`
+					Variant      string `json:"variant"`
+				} `json:"platform"`
+			} `json:"manifests"`
+			Config struct {
 				Digest string `json:"digest"`
 				Size   int64  `json:"size"`
 			} `json:"config"`
@@ -133,11 +154,35 @@ func (client *Client) Artifacts(ctx context.Context, config Config, repository s
 			return nil, errors.New("Registry did not return a valid manifest digest")
 		}
 		item := Artifact{Repository: repository, Tag: tag, Digest: digest, MediaType: doc.MediaType, Size: doc.Config.Size}
+		for _, manifest := range doc.Manifests {
+			platform := manifest.Platform
+			if platform.OS == "" || platform.OS == "unknown" || platform.Architecture == "" || platform.Architecture == "unknown" {
+				continue
+			}
+			name := platform.OS + "/" + platform.Architecture
+			if platform.Variant != "" {
+				name += "/" + platform.Variant
+			}
+			if !containsPlatform(item.Platforms, name) {
+				item.Platforms = append(item.Platforms, name)
+			}
+		}
 		for _, layer := range doc.Layers {
 			item.Size += layer.Size
 		}
 		if doc.Config.Digest != "" {
-			item.Created, _ = client.registryImageCreatedTime(ctx, config, repository, doc.Config.Digest)
+			// Single-platform manifests declare their platform in the configuration blob.
+			metadata, ok := client.registryImageConfig(ctx, config, repository, doc.Config.Digest)
+			if ok {
+				item.Created = metadata.Created
+				if metadata.OS != "" && metadata.OS != "unknown" && metadata.Architecture != "" && metadata.Architecture != "unknown" {
+					platform := metadata.OS + "/" + metadata.Architecture
+					if metadata.Variant != "" {
+						platform += "/" + metadata.Variant
+					}
+					item.Platforms = append(item.Platforms, platform)
+				}
+			}
 		}
 		artifacts = append(artifacts, item)
 	}
@@ -216,4 +261,13 @@ func ArtifactRevision(items []Artifact) string {
 		fmt.Fprintf(h, "%s\x00%s\x00%s\n", a.Repository, a.Tag, a.Digest)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func containsPlatform(platforms []string, value string) bool {
+	for _, platform := range platforms {
+		if platform == value {
+			return true
+		}
+	}
+	return false
 }

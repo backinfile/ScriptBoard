@@ -4,6 +4,7 @@ var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS kubernetes_connection (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
+		note TEXT NOT NULL DEFAULT '',
 		kubeconfig_path TEXT NOT NULL,
 		context_name TEXT NOT NULL DEFAULT '',
 		operation_mode TEXT NOT NULL CHECK (operation_mode IN ('observe', 'limited')),

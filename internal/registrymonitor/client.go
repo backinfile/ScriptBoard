@@ -226,7 +226,8 @@ func (client *Client) inspectTags(ctx context.Context, config Config, image stri
 func (client *Client) inspectTag(ctx context.Context, config Config, image, tag string) TagResult {
 	result := TagResult{Tag: tag}
 	metadata, _ := client.registryManifestMetadata(ctx, config, image, tag, 2)
-	if len(metadata.CompressedSizes) > 0 {
+	// Only publish a size range when every platform supplied complete metadata.
+	if metadata.CompressedSizesComplete && len(metadata.CompressedSizes) > 0 {
 		result.CompressedSizeMinBytes = metadata.CompressedSizes[0]
 		result.CompressedSizeMaxBytes = metadata.CompressedSizes[0]
 		for _, size := range metadata.CompressedSizes[1:] {
@@ -596,31 +597,41 @@ func (client *Client) harborPushTime(ctx context.Context, config Config, image, 
 	return document.PushTime, true
 }
 
-func (client *Client) registryImageCreatedTime(ctx context.Context, config Config, image, configDigest string) (time.Time, bool) {
+type registryConfigMetadata struct {
+	Created      time.Time `json:"created"`
+	OS           string    `json:"os"`
+	Architecture string    `json:"architecture"`
+	Variant      string    `json:"variant"`
+}
+
+func (client *Client) registryImageCreatedTime(ctx context.Context, config Config, image, digest string) (time.Time, bool) {
+	metadata, ok := client.registryImageConfig(ctx, config, image, digest)
+	return metadata.Created, ok && !metadata.Created.IsZero()
+}
+func (client *Client) registryImageConfig(ctx context.Context, config Config, image, configDigest string) (registryConfigMetadata, bool) {
 	if !digestPattern.MatchString(configDigest) {
-		return time.Time{}, false
+		return registryConfigMetadata{}, false
 	}
 	blobURL := config.Endpoint + "/v2/" + escapeRepository(image) + "/blobs/" + configDigest
 	response, err := client.doAuthenticated(ctx, blobURL, config)
 	if err != nil {
-		return time.Time{}, false
+		return registryConfigMetadata{}, false
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return time.Time{}, false
+		return registryConfigMetadata{}, false
 	}
-	var imageConfig struct {
-		Created time.Time `json:"created"`
+	var imageConfig registryConfigMetadata
+	if decodeJSON(response.Body, &imageConfig) != nil {
+		return registryConfigMetadata{}, false
 	}
-	if decodeJSON(response.Body, &imageConfig) != nil || imageConfig.Created.IsZero() {
-		return time.Time{}, false
-	}
-	return imageConfig.Created, true
+	return imageConfig, true
 }
 
 type registryManifestMetadata struct {
-	ConfigDigest    string
-	CompressedSizes []int64
+	ConfigDigest            string
+	CompressedSizes         []int64
+	CompressedSizesComplete bool
 }
 
 func (client *Client) registryManifestMetadata(ctx context.Context, config Config, image, reference string, remainingDepth int) (registryManifestMetadata, bool) {
@@ -678,10 +689,13 @@ func (client *Client) registryManifestMetadata(ctx context.Context, config Confi
 			}
 			if complete {
 				metadata.CompressedSizes = append(metadata.CompressedSizes, total)
+				metadata.CompressedSizesComplete = true
 			}
 		}
 		return metadata, true
 	}
+	allSizesComplete := true
+	foundChild := false
 	for _, child := range manifest.Manifests {
 		if child.Annotations["vnd.docker.reference.type"] == "attestation-manifest" {
 			continue
@@ -689,13 +703,22 @@ func (client *Client) registryManifestMetadata(ctx context.Context, config Confi
 		if !digestPattern.MatchString(child.Digest) {
 			continue
 		}
+		foundChild = true
 		if childMetadata, ok := client.registryManifestMetadata(ctx, config, image, child.Digest, remainingDepth-1); ok {
 			if metadata.ConfigDigest == "" {
 				metadata.ConfigDigest = childMetadata.ConfigDigest
 			}
-			metadata.CompressedSizes = append(metadata.CompressedSizes, childMetadata.CompressedSizes...)
+			if childMetadata.CompressedSizesComplete {
+				metadata.CompressedSizes = append(metadata.CompressedSizes, childMetadata.CompressedSizes...)
+			} else {
+				allSizesComplete = false
+			}
+		} else {
+			// A platform failure makes the range incomplete; do not present the remaining sizes as authoritative.
+			allSizesComplete = false
 		}
 	}
+	metadata.CompressedSizesComplete = foundChild && allSizesComplete && len(metadata.CompressedSizes) > 0
 	return metadata, metadata.ConfigDigest != "" || len(metadata.CompressedSizes) > 0
 }
 

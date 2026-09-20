@@ -10,9 +10,15 @@ func TestPlatformLanguagesAreExplicit(t *testing.T) {
 	if windows[0].ID != "powershell" || windows[1].ID != "batch" {
 		t.Fatalf("unexpected Windows languages: %+v", windows)
 	}
+	if windows[len(windows)-1].ID != "nodejs" {
+		t.Fatalf("expected Node.js on Windows: %+v", windows)
+	}
 	linux := PlatformLanguages("linux")
 	if linux[0].ID != "shell" {
 		t.Fatalf("unexpected Unix languages: %+v", linux)
+	}
+	if linux[len(linux)-1].ID != "nodejs" {
+		t.Fatalf("expected Node.js on Unix: %+v", linux)
 	}
 }
 

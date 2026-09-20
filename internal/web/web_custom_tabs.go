@@ -56,7 +56,7 @@ func customTabInput(request *http.Request, enabled bool) customtab.Input {
 	mode := customtab.CredentialMode(request.FormValue("credential_mode"))
 	key := request.FormValue("key")
 	roles := append([]string{}, request.Form["visible_role"]...)
-	return customtab.Input{Name: request.FormValue("name"), TargetURL: request.FormValue("target_url"), CredentialMode: mode, VisibilityRoles: roles, KeyName: request.FormValue("key_name"), Key: key, Enabled: enabled, PreserveKey: mode == customtab.ModeKey && key == ""}
+	return customtab.Input{Name: request.FormValue("name"), Note: request.FormValue("note"), TargetURL: request.FormValue("target_url"), CredentialMode: mode, VisibilityRoles: roles, KeyName: request.FormValue("key_name"), Key: key, Enabled: enabled, PreserveKey: mode == customtab.ModeKey && key == ""}
 }
 
 func (a *App) createCustomTab(response http.ResponseWriter, request *http.Request) {

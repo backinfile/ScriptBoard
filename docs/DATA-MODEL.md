@@ -494,6 +494,14 @@ Custom Dashboard 的 HTTP 数据源继续允许保存 `Authorization`、`Cookie`
 共享出站策略固定经校验的公网目标，不读取环境代理、不跟随重定向，并限制请求头、响应
 大小和超时；默认不能访问回环、私网、链路本地或云元数据服务。
 
+schema 74 为 `custom_dashboards` 增加 `visibility`（private/public_read/public_operate/
+anonymous_operate 四档，由 `is_public` 回填）、`access_key_ciphertext` 与 `access_key_hint`；
+访问 Key 明文不入库，密封密文保存于独立凭据存储，表内只留 `dk_` 前缀的随机提示。卡片
+`type` CHECK 第三次重建加入 `flow`。卡片操作按钮与 flow 规范化定义都保存在 `config_json`
+中，不新增表；操作引用的快捷执行项 ID 与 flow 节点的 runId 是本机引用，导出文件附带名称，
+导入时按名称重映射，未匹配的操作降级丢弃、未匹配的 flow 节点使整个导入被拒绝。流程运行
+状态只在内存，不持久化历史序列。
+
 ## 9. 一次性 Run 源码
 
 `Run.script_kind` 区分 `host_file` 与 `one_time`。一次性 Run 额外保存：
@@ -624,3 +632,5 @@ schema 65 增加 `documents`，持久化当前实例的文档收藏条目（每�
 Schema 70 的 `embedding_settings` 单例保存 `frame_ancestors` JSON 数组、更新时间和操作者。无记录时沿用启动配置；空数组表示禁止嵌入，`["*"]` 表示全部地址，其他值为精确 HTTP/HTTPS 来源。设置页保存后优先于启动配置，立即生效并随数据库备份和重启保留。每个请求使用同一份策略生成 CSP、X-Frame-Options 和 Cookie 属性。
 
 Schema 72 为 mysql_operations 增加 plan_id，独立保留备份计划执行记录（含失败和重叠跳过），不随备份文件轮换删除。旧记录通过仍保留的 scheduled 备份回填计划归属；无法确认归属的旧记录继续保留在实例操作历史中。
+
+Schema 73 为可编辑记录增加私有 `note`，上限 500 个字符；历史表重建保留此列。Schema 75 为快捷执行增加参数定义，运行时按定义校验并绑定参数。

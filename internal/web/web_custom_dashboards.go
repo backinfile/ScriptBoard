@@ -23,13 +23,62 @@ type customDashboardPageView struct {
 	Locale                                      webLocale
 	CSRFToken                                   string
 	ImportError                                 string
+	OneTimeKey                                  string
 	Dashboards                                  []customdashboard.Dashboard
 	Dashboard                                   customdashboard.Dashboard
 	Cards                                       []customDashboardCardView
 	WebsiteMonitors                             []websitemonitor.Monitor
+	QuickRuns                                   []customDashboardQuickRunOption
 	CanManage, PublicView, MonitorView, Reorder bool
+	CanExecute                                  bool
 	CanConfigureDockerEngine                    bool
 	RegistryNotice                              string
+}
+
+type customDashboardQuickRunOption struct {
+	ID, Name string
+}
+
+type customDashboardFlowNodeView struct {
+	ID, Name, NeedsText string
+	Kind, KindIcon      string
+}
+
+// flowNodeKind 与图标：run/script/uses 互斥；uses 按内置节点区分图标。
+func flowNodeKind(runID, script, uses string) (kind, icon string) {
+	switch {
+	case runID != "":
+		return "run", "zap"
+	case strings.TrimSpace(script) != "":
+		return "script", "code"
+	}
+	switch uses {
+	case "git-sync":
+		return "uses", "git-branch"
+	case "copy-files":
+		return "uses", "copy"
+	case "write-file":
+		return "uses", "file-plus-2"
+	case "make-dir":
+		return "uses", "folder-plus"
+	case "remove-files":
+		return "uses", "trash-2"
+	case "http-request":
+		return "uses", "globe-2"
+	case "sleep":
+		return "uses", "timer"
+	}
+	return "uses", "puzzle"
+}
+
+type customDashboardActionView struct {
+	ID, Label, Kind, Style         string
+	Confirm                        bool
+	ConfirmText                    string
+	Method, URL, VisitorCredential string
+	PublicAllowed                  bool
+	QuickRunID                     string
+	IsQuickRun                     bool
 }
 
 type customDashboardCardView struct {
@@ -50,6 +99,14 @@ type customDashboardCardView struct {
 	RegistryImageCount                            int
 	RegistryImages                                []customDashboardRegistryImageView
 	RegistryInsecureConfigured                    bool
+	Actions                                       []customDashboardActionView
+	ActionCount, PublicActionCount                int
+	ActionsJSON                                   string
+	FlowYAML                                      string
+	FlowNodes                                     []customDashboardFlowNodeView
+	FlowNodeCount                                 int
+	FlowCustomCount                               int
+	FlowConfirm                                   bool
 }
 
 type customDashboardRegistryImageView struct {
@@ -78,6 +135,12 @@ func (a *App) legacyCustomDashboardPage(response http.ResponseWriter, request *h
 }
 
 func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Request) {
+	a.renderCustomDashboardPage(response, request, strings.TrimSpace(request.URL.Query().Get("dashboard")), "")
+}
+
+// renderCustomDashboardPage 渲染管理页；oneTimeKey 仅在可见性/Key 变更生成
+// 新 Key 的本次响应中非空（一次性横幅，不经重定向以免进入 URL）。
+func (a *App) renderCustomDashboardPage(response http.ResponseWriter, request *http.Request, dashboardID, oneTimeKey string) {
 	current := request.Context().Value(sessionContextKey).(session)
 	dashboards, err := a.customDashboards.ListDashboards(request.Context())
 	if err != nil {
@@ -90,8 +153,8 @@ func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Re
 		}
 	}
 	var dashboard customdashboard.Dashboard
-	if id := strings.TrimSpace(request.URL.Query().Get("dashboard")); id != "" {
-		dashboard, err = a.customDashboards.GetDashboard(request.Context(), id)
+	if dashboardID != "" {
+		dashboard, err = a.customDashboards.GetDashboard(request.Context(), dashboardID)
 	} else if len(dashboards) > 0 {
 		dashboard, err = a.customDashboards.GetDashboard(request.Context(), dashboards[0].ID)
 	}
@@ -103,10 +166,15 @@ func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Re
 	view.Dashboards = dashboards
 	view.CSRFToken = current.csrfToken
 	view.CanManage = identity.Allows(current.role, identity.PermissionManageOperations)
+	view.CanExecute = identity.Allows(current.role, identity.PermissionExecute)
+	view.OneTimeKey = oneTimeKey
 	view.CanConfigureDockerEngine = identity.Allows(current.role, identity.PermissionConfigureDockerEngine)
 	view.RegistryNotice = request.URL.Query().Get("registry_notice")
 	view.Reorder = view.CanManage && request.URL.Query().Get("reorder") == "1"
 	view.ImportError = customDashboardImportError(request.URL.Query().Get("import_error"))
+	if view.CanManage {
+		view.QuickRuns = a.customDashboardQuickRunOptions(request)
+	}
 	for index := range view.Cards {
 		view.Cards[index].DisplayIndex = index + 1
 		view.Cards[index].CanMoveUp = index > 0
@@ -115,6 +183,23 @@ func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Re
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = customDashboardTemplate.Execute(response, view)
+}
+
+// customDashboardQuickRunOptions 为卡片操作编辑器提供快捷执行项下拉。
+func (a *App) customDashboardQuickRunOptions(request *http.Request) []customDashboardQuickRunOption {
+	rows, err := a.db.QueryContext(request.Context(), `SELECT id,name FROM quick_runs ORDER BY sort_order, created_at`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var options []customDashboardQuickRunOption
+	for rows.Next() {
+		var option customDashboardQuickRunOption
+		if rows.Scan(&option.ID, &option.Name) == nil {
+			options = append(options, option)
+		}
+	}
+	return options
 }
 
 func (a *App) publicCustomDashboard(response http.ResponseWriter, request *http.Request) {
@@ -144,6 +229,7 @@ func (a *App) customDashboardMonitorPage(response http.ResponseWriter, request *
 	view.MonitorView = true
 	current := request.Context().Value(sessionContextKey).(session)
 	view.CSRFToken = current.csrfToken
+	view.CanExecute = identity.Allows(current.role, identity.PermissionExecute)
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = customDashboardTemplate.Execute(response, view)
@@ -158,6 +244,40 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 	for _, card := range dashboard.Cards {
 		item := customDashboardCardView{Card: card, SelectedMonitorIDs: map[string]bool{}}
 		item.LastSuccessLabel = dashboardLastSuccessLabel(locale, card.LastSuccessAt)
+		for _, action := range customdashboard.CardActions(card.Config) {
+			item.Actions = append(item.Actions, customDashboardActionView{
+				ID: action.ID, Label: action.Label, Kind: action.Kind, Style: action.Style,
+				Confirm: action.Confirm, ConfirmText: action.ConfirmText,
+				Method: action.Method, URL: action.URL, VisitorCredential: action.VisitorCredential,
+				PublicAllowed: action.PublicAllowed, QuickRunID: action.QuickRunID,
+				IsQuickRun: action.Kind == string(customdashboard.ActionQuickRun),
+			})
+			item.ActionCount++
+			if action.PublicAllowed {
+				item.PublicActionCount++
+			}
+		}
+		if encoded, err := json.Marshal(customdashboard.CardActions(card.Config)); err == nil && item.ActionCount > 0 {
+			item.ActionsJSON = string(encoded)
+		}
+		if card.Type == customdashboard.CardFlow {
+			if definition, ok := customdashboard.FlowDefinitionOf(card); ok {
+				for _, node := range definition.Nodes {
+					kind, icon := flowNodeKind(node.RunID, node.Script, node.Uses)
+					item.FlowNodes = append(item.FlowNodes, customDashboardFlowNodeView{ID: node.ID, Name: node.Name, NeedsText: strings.Join(node.Needs, ", "), Kind: kind, KindIcon: icon})
+					item.FlowConfirm = item.FlowConfirm || node.Confirm
+					if kind != "run" {
+						item.FlowCustomCount++
+					}
+				}
+				item.FlowNodeCount = len(definition.Nodes)
+			}
+			if !public {
+				if yamlText, err := customdashboard.FlowYAML(card); err == nil {
+					item.FlowYAML = yamlText
+				}
+			}
+		}
 		var cardConfig struct {
 			MonitorIDs []string `json:"monitorIds"`
 			Unit       string   `json:"unit"`
@@ -365,7 +485,7 @@ func (a *App) createCustomDashboard(response http.ResponseWriter, request *http.
 		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
 		return
 	}
-	dashboard, err := a.customDashboards.CreateDashboard(request.Context(), customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: false, ShowAsTab: request.FormValue("show_as_tab") == "1"})
+	dashboard, err := a.customDashboards.CreateDashboard(request.Context(), customdashboard.DashboardInput{Name: request.FormValue("name"), Note: request.FormValue("note"), Slug: request.FormValue("slug"), Public: false, ShowAsTab: request.FormValue("show_as_tab") == "1"})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -393,7 +513,7 @@ func (a *App) updateCustomDashboard(response http.ResponseWriter, request *http.
 	if _, provided := request.Form["show_as_tab"]; provided {
 		showAsTab = request.FormValue("show_as_tab") == "1"
 	}
-	_, err = a.customDashboards.UpdateDashboard(request.Context(), id, customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: public, ShowAsTab: showAsTab})
+	_, err = a.customDashboards.UpdateDashboard(request.Context(), id, customdashboard.DashboardInput{Name: request.FormValue("name"), Note: request.FormValue("note"), Slug: request.FormValue("slug"), Public: public, ShowAsTab: showAsTab})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -442,6 +562,14 @@ func (a *App) createCustomDashboardCard(response http.ResponseWriter, request *h
 	}
 	if input.Type == customdashboard.CardKeyValue {
 		http.Error(response, "不支持的卡片类型", http.StatusUnprocessableEntity)
+		return
+	}
+	if err := a.applyDashboardFlowYAML(request, &input); err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	if err := a.enforceFlowExecutionPermission(request, input); err != nil {
+		http.Error(response, err.Error(), http.StatusForbidden)
 		return
 	}
 	card, err := a.customDashboards.CreateCard(request.Context(), id, input)
@@ -533,6 +661,10 @@ func (a *App) testCustomDashboardCard(response http.ResponseWriter, request *htt
 		http.Error(response, "网站状态卡片使用已有监控结果，无需测试请求", http.StatusUnprocessableEntity)
 		return
 	}
+	if input.Type == customdashboard.CardFlow {
+		http.Error(response, "流程卡片在监控页运行，无需测试请求", http.StatusUnprocessableEntity)
+		return
+	}
 	result, err := a.customDashboards.TestCard(request.Context(), input, existingID)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
@@ -575,6 +707,14 @@ func (a *App) updateCustomDashboardCard(response http.ResponseWriter, request *h
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	if err := a.applyDashboardFlowYAML(request, &input); err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	if err := a.enforceFlowExecutionPermission(request, input); err != nil {
+		http.Error(response, err.Error(), http.StatusForbidden)
+		return
+	}
 	card, err := a.customDashboards.UpdateCard(request.Context(), id, input)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
@@ -585,6 +725,45 @@ func (a *App) updateCustomDashboardCard(response http.ResponseWriter, request *h
 	}
 	a.recordAuditForRequest(request, "update_custom_dashboard_card", id, "succeeded")
 	http.Redirect(response, request, "/config/dashboards?dashboard="+card.DashboardID, http.StatusSeeOther)
+}
+
+// applyDashboardFlowYAML 把卡片抽屉提交的流程 YAML 解析为规范化 config；
+// 校验问题（FlowConfigError）逐条拼进错误信息，由调用方返回 422。
+func (a *App) applyDashboardFlowYAML(request *http.Request, input *customdashboard.CardInput) error {
+	if input.Type != customdashboard.CardFlow {
+		return nil
+	}
+	config, err := a.customDashboards.NormalizeFlowYAML(request.Context(), request.FormValue("flow_yaml"))
+	if err != nil {
+		return err
+	}
+	// Replace only the flow definition so saving YAML retains sibling action buttons.
+	var fields, normalized map[string]json.RawMessage
+	if err := json.Unmarshal(input.Config, &fields); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(config, &normalized); err != nil {
+		return err
+	}
+	if fields == nil {
+		fields = map[string]json.RawMessage{}
+	}
+	fields["flow"] = normalized["flow"]
+	input.Config, err = json.Marshal(fields)
+	return err
+}
+
+// enforceFlowExecutionPermission 要求含 script/uses 节点的流程卡片由具备
+// 执行管理权限的操作者保存或导入；纯 run 节点卡片维持原权限不变。
+func (a *App) enforceFlowExecutionPermission(request *http.Request, input customdashboard.CardInput) error {
+	if input.Type != customdashboard.CardFlow || !customdashboard.FlowNeedsManageExecution(input.Config) {
+		return nil
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	if identity.Allows(current.role, identity.PermissionManageExecution) {
+		return nil
+	}
+	return errors.New("包含自定义脚本或内置节点的流程需要执行管理权限")
 }
 
 func customDashboardCardInput(request *http.Request, preserveRegistryPassword bool) (customdashboard.CardInput, error) {
@@ -637,7 +816,34 @@ func customDashboardCardInput(request *http.Request, preserveRegistryPassword bo
 		}
 		config = encoded
 	}
-	return customdashboard.CardInput{Name: request.FormValue("name"), Type: cardType, SourceURL: request.FormValue("source_url"), Headers: headers, ValuePath: request.FormValue("value_path"), SecondaryPath: request.FormValue("secondary_path"), Config: config, RefreshSeconds: refresh, RegistryPassword: request.FormValue("registry_password"), PreserveRegistryPassword: preservePassword}, nil
+	// 操作按钮随卡片表单以 JSON 提交；仅在表单包含该字段时合并，
+	// 避免未含操作段的请求清掉既有配置。合法性由 Manager 校验。
+	if rawActions, provided := request.Form["actions_json"]; provided {
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(config, &object); err != nil {
+			return customdashboard.CardInput{}, errors.New("卡片配置无效")
+		}
+		trimmed := strings.TrimSpace(rawActions[0])
+		if trimmed == "" || trimmed == "[]" || trimmed == "null" {
+			delete(object, "actions")
+		} else {
+			var actions []json.RawMessage
+			if err := json.Unmarshal([]byte(trimmed), &actions); err != nil {
+				return customdashboard.CardInput{}, errors.New("操作按钮配置无效")
+			}
+			encoded, err := json.Marshal(actions)
+			if err != nil {
+				return customdashboard.CardInput{}, err
+			}
+			object["actions"] = encoded
+		}
+		encoded, err := json.Marshal(object)
+		if err != nil {
+			return customdashboard.CardInput{}, err
+		}
+		config = encoded
+	}
+	return customdashboard.CardInput{Name: request.FormValue("name"), Note: request.FormValue("note"), Type: cardType, SourceURL: request.FormValue("source_url"), Headers: headers, ValuePath: request.FormValue("value_path"), SecondaryPath: request.FormValue("secondary_path"), Config: config, RefreshSeconds: refresh, RegistryPassword: request.FormValue("registry_password"), PreserveRegistryPassword: preservePassword}, nil
 }
 
 func formatDashboardValue(value any) string {

@@ -344,3 +344,70 @@ func TestManagementAccessModeAndTransport(t *testing.T) {
 		})
 	}
 }
+
+func TestManagedEndpointUniqueness(t *testing.T) {
+	service, err := New(Options{StateRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	save := func(id, endpoint string) (registrymonitor.ManagementResponse, error) {
+		return service.Manage(context.Background(), registrymonitor.ManagementRequest{Command: "save", ID: id, Name: "Registry", Config: registrymonitor.Config{Endpoint: endpoint, AuthMode: "anonymous"}})
+	}
+	first, err := save("", "https://Example.COM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, endpoint := range []string{"https://example.com/", "https://EXAMPLE.com:443", " https://example.com/// "} {
+		if _, err := save("", endpoint); err != ErrDuplicateEndpoint {
+			t.Fatalf("duplicate %s: %v", endpoint, err)
+		}
+	}
+	if _, err := save(first.ID, "https://example.com:443/"); err != nil {
+		t.Fatal(err)
+	}
+	other, err := save("", "http://example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := save(other.ID, "https://example.com"); err != ErrDuplicateEndpoint {
+		t.Fatalf("edit collision: %v", err)
+	}
+	if _, err := save("", "http://example.com:80/"); err != ErrDuplicateEndpoint {
+		t.Fatalf("http default port: %v", err)
+	}
+	if _, err := save("", "https://example.com/path"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := service.Manage(context.Background(), registrymonitor.ManagementRequest{Command: "list"})
+	if err != nil || len(out.Connections) != 3 {
+		t.Fatalf("unexpected state: %+v %v", out, err)
+	}
+}
+
+func TestManagementEmptyPreviewRetainsExplanationAndNoExecutablePlan(t *testing.T) {
+	service, id := setupManagement(t, fixtureRegistry())
+	out, err := service.Manage(context.Background(), registrymonitor.ManagementRequest{Command: "preview", ID: id, Repository: "team-a/api", Rule: registrymonitor.CleanupRule{Protect: true}})
+	if err != nil || out.Plan == nil || len(out.Plan.Targets) != 0 || out.Plan.Skipped["protected"] != 1 {
+		t.Fatalf("empty preview: %+v %v", out, err)
+	}
+	if _, err := service.Manage(context.Background(), registrymonitor.ManagementRequest{Command: "execute", ID: id, PlanID: out.Plan.ID, Confirmation: "Test registry"}); err == nil {
+		t.Fatal("empty preview became executable")
+	}
+}
+
+func TestManagementConnectionTestDoesNotSave(t *testing.T) {
+	server := httptest.NewServer(fixtureRegistry())
+	defer server.Close()
+	service, err := New(Options{StateRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Manage(context.Background(), registrymonitor.ManagementRequest{Command: "test", Name: "Unsaved", Config: registrymonitor.Config{Endpoint: server.URL}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := service.Manage(context.Background(), registrymonitor.ManagementRequest{Command: "list"})
+	if err != nil || len(out.Connections) != 0 {
+		t.Fatal("test saved a connection")
+	}
+}

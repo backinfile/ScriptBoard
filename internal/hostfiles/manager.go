@@ -565,6 +565,19 @@ func (m *Manager) ensureMutationAllowed(path string) error {
 	return nil
 }
 
+// ValidateMutablePath 校验绝对路径是否允许按集中保护策略变更，目标可尚不存在；
+// 已存在的路径先解符号链接再判定。供面板内置节点等不进文件管理界面的写操作复用保护规则。
+func (m *Manager) ValidateMutablePath(path string) error {
+	if strings.TrimSpace(path) == "" || !filepath.IsAbs(path) {
+		return fmt.Errorf("host path must be absolute")
+	}
+	target := filepath.Clean(path)
+	if evaluated, err := filepath.EvalSymlinks(target); err == nil {
+		target = evaluated
+	}
+	return m.ensureMutationAllowed(target)
+}
+
 func pathContains(parent, child string) bool {
 	parent = canonicalComparisonPath(parent)
 	child = canonicalComparisonPath(child)

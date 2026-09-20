@@ -24,6 +24,10 @@
 <input name="name" value="{{.Config.Name}}" maxlength="80" autocomplete="off" placeholder="{{t .Locale "website.form.name_placeholder"}}" required>
 {{with index .Errors "name"}}<span class="field-error">{{.}}</span>{{end}}
 </label>
+<label>{{t .Locale "common.note"}}
+<textarea name="note" maxlength="500">{{.Config.Note}}</textarea>
+<span class="field-hint">{{t .Locale "common.note_hint"}}</span>
+</label>
 <label>{{t .Locale "groups.label"}}
 <select name="group_id">
 <option value="" {{if not .Config.GroupID}}selected{{end}}>{{t .Locale "groups.ungrouped"}}</option>

@@ -551,3 +551,28 @@ func TestLexicalProtectedPathStillProtectsItsAncestorWhenItIsASymlink(t *testing
 		t.Fatalf("moving ancestor of lexical protected path returned %v", err)
 	}
 }
+
+func TestValidateMutablePathAppliesProtection(t *testing.T) {
+	root := t.TempDir()
+	protected := filepath.Join(root, "private")
+	if err := os.Mkdir(protected, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{InstanceID: "validate-mutable-test", Topology: fixedTopology{root: root}, ProtectedPaths: []string{protected}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 保护路径及其子路径拒绝；普通路径（含尚不存在的）放行；相对路径拒绝。
+	if err := manager.ValidateMutablePath(filepath.Join(protected, "new.txt")); !errors.Is(err, hostfiles.ErrProtected) {
+		t.Fatalf("protected path error=%v", err)
+	}
+	if err := manager.ValidateMutablePath(protected); !errors.Is(err, hostfiles.ErrProtected) {
+		t.Fatalf("protected dir error=%v", err)
+	}
+	if err := manager.ValidateMutablePath(filepath.Join(root, "plain", "new.txt")); err != nil {
+		t.Fatalf("plain path error=%v", err)
+	}
+	if err := manager.ValidateMutablePath("relative.txt"); err == nil {
+		t.Fatal("relative path accepted")
+	}
+}

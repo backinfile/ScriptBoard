@@ -41,7 +41,8 @@ func TestNativePostFormsAreLimitedToNonStepUpTransfers(t *testing.T) {
 			if !strings.Contains(strings.ToLower(form), `method="post"`) || !strings.Contains(form, "data-native") {
 				continue
 			}
-			approved := false
+			// The standalone reauthentication page must submit its password natively.
+			approved := path == "ui/templates/task-page.html" && strings.Contains(form, "data-step-up-fallback")
 			for _, marker := range allowed {
 				approved = approved || strings.Contains(form, marker)
 			}

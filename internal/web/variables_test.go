@@ -65,9 +65,11 @@ func TestPasswordVariableIsStoredNormallyAndMaskedByDefault(t *testing.T) {
 		t.Fatalf("read variables after create: %v", err)
 	}
 	html := string(page)
+	if strings.Contains(html, "Token used by the deployment API") {
+		t.Fatalf("variable note leaked into the item list: %s", html)
+	}
 	for _, marker := range []string{
 		`<small>Password type</small>`,
-		`<p class="variable-note">Token used by the deployment API</p>`,
 		`id="variable-name-0">API_TOKEN</code>`,
 		`data-copy-text data-copy-name data-copy-target="variable-name-0"`,
 		`aria-label="Copy variable name API_TOKEN"`,
@@ -138,13 +140,15 @@ func TestPasswordVariableIsStoredNormallyAndMaskedByDefault(t *testing.T) {
 		t.Fatalf("read normal variable page: %v", err)
 	}
 	html = string(page)
+	if strings.Contains(html, "Updated deployment token note") {
+		t.Fatalf("updated variable note leaked into the item list: %s", html)
+	}
 	for _, marker := range []string{
 		`id="variable-name-0">API_TOKEN</code>`,
 		`data-copy-text data-copy-name data-copy-target="variable-name-0"`,
 		`id="variable-value-0" class="value-preview">updated-plain-value</pre>`,
 		`data-copy-text data-copy-value data-copy-target="variable-value-0"`,
 		`aria-label="Copy variable value API_TOKEN"`,
-		`<p class="variable-note">Updated deployment token note</p>`,
 	} {
 		if !strings.Contains(html, marker) {
 			t.Fatalf("normal variable page is missing %q: %s", marker, html)

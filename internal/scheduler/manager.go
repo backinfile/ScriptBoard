@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/recordnote"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/secretredaction"
 )
@@ -21,6 +22,7 @@ type ScriptPreparer func(scheduleID string) (hostfiles.Script, hostfiles.Prepare
 
 type CreateRequest struct {
 	Name              string
+	Note              string
 	GroupID           string
 	GroupName         string
 	ScriptPath        string
@@ -34,6 +36,7 @@ type CreateRequest struct {
 type Schedule struct {
 	ID                string
 	Name              string
+	Note              string
 	GroupID           string
 	GroupName         string
 	SortOrder         int
@@ -184,6 +187,10 @@ func (m *Manager) Update(id string, request CreateRequest) error {
 		return err
 	}
 	request.MemoryLimit = memory
+	request.Note, err = recordnote.Normalize(request.Note)
+	if err != nil {
+		return err
+	}
 	now := m.now()
 	preview, err := PreviewExpression(request.Expression, now)
 	if err != nil {
@@ -205,8 +212,8 @@ func (m *Manager) Update(id string, request CreateRequest) error {
 			return err
 		}
 	}
-	result, err := transaction.Exec(`UPDATE schedules SET name = ?, group_id = ?, group_name = ?, sort_order = ?, script_path = ?, script_path_key = ?, arguments_template = ?, expression = ?, memory_limit = ?, timeout_seconds = ?, allow_overlap = ?, next_fire_at = ?, updated_at = ? WHERE id = ? AND deleted = 0`,
-		request.Name, groupID, request.GroupName, sortOrder, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.MemoryLimit, request.TimeoutSeconds, request.AllowOverlap,
+	result, err := transaction.Exec(`UPDATE schedules SET name = ?, note = ?, group_id = ?, group_name = ?, sort_order = ?, script_path = ?, script_path_key = ?, arguments_template = ?, expression = ?, memory_limit = ?, timeout_seconds = ?, allow_overlap = ?, next_fire_at = ?, updated_at = ? WHERE id = ? AND deleted = 0`,
+		request.Name, request.Note, groupID, request.GroupName, sortOrder, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.MemoryLimit, request.TimeoutSeconds, request.AllowOverlap,
 		preview.NextFive[0].UnixNano(), now.UnixNano(), id)
 	if err != nil {
 		return err
@@ -299,6 +306,10 @@ func (m *Manager) Create(request CreateRequest) (string, error) {
 		return "", err
 	}
 	request.MemoryLimit = memory
+	request.Note, err = recordnote.Normalize(request.Note)
+	if err != nil {
+		return "", err
+	}
 	now := m.now()
 	preview, err := PreviewExpression(request.Expression, now)
 	if err != nil {
@@ -314,9 +325,9 @@ func (m *Manager) Create(request CreateRequest) (string, error) {
 		return "", err
 	}
 	_, err = m.db.Exec(`INSERT INTO schedules
-		(id, name, group_id, group_name, sort_order, script_path, script_path_key, arguments_template, expression, memory_limit, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-		id, request.Name, groupID, request.GroupName, sortOrder, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.MemoryLimit, request.TimeoutSeconds,
+		(id, name, note, group_id, group_name, sort_order, script_path, script_path_key, arguments_template, expression, memory_limit, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+		id, request.Name, request.Note, groupID, request.GroupName, sortOrder, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.MemoryLimit, request.TimeoutSeconds,
 		request.AllowOverlap, preview.NextFive[0].UnixNano(), now.UnixNano(), now.UnixNano(),
 	)
 	if err != nil {
@@ -403,7 +414,7 @@ func (m *Manager) ListPage(limit, offset int) ([]Schedule, error) {
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := m.db.Query(`SELECT s.id, s.name, COALESCE(s.group_id, ''), COALESCE(g.name, ''), s.sort_order, s.script_path, s.arguments_template, s.expression, s.memory_limit, s.timeout_seconds,
+	rows, err := m.db.Query(`SELECT s.id, s.name, s.note, COALESCE(s.group_id, ''), COALESCE(g.name, ''), s.sort_order, s.script_path, s.arguments_template, s.expression, s.memory_limit, s.timeout_seconds,
 		s.enabled, s.allow_overlap, s.next_fire_at,
 		COALESCE((SELECT result FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), ''),
 		COALESCE((SELECT run_id FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), ''),
@@ -419,7 +430,7 @@ func (m *Manager) ListPage(limit, offset int) ([]Schedule, error) {
 	for rows.Next() {
 		var schedule Schedule
 		var next int64
-		if err := rows.Scan(&schedule.ID, &schedule.Name, &schedule.GroupID, &schedule.GroupName, &schedule.SortOrder, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.Expression,
+		if err := rows.Scan(&schedule.ID, &schedule.Name, &schedule.Note, &schedule.GroupID, &schedule.GroupName, &schedule.SortOrder, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.Expression,
 			&schedule.MemoryLimit, &schedule.TimeoutSeconds, &schedule.Enabled, &schedule.AllowOverlap, &next, &schedule.LastResult, &schedule.LastRunID, &schedule.LastError); err != nil {
 			return nil, err
 		}

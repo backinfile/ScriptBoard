@@ -51,3 +51,47 @@ func TestManagementTagPaginationAndDeleteBearerScope(t *testing.T) {
 		t.Fatalf("delete %v, called=%v", err, deleted)
 	}
 }
+
+func TestArtifactsIndexPlatformSummary(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/tags/list") {
+			fmt.Fprint(w, `{"tags":["latest"]}`)
+			return
+		}
+		w.Header().Set("Docker-Content-Digest", "sha256:"+strings.Repeat("a", 64))
+		fmt.Fprint(w, `{"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"platform":{"os":"linux","architecture":"arm64","variant":"v8"}},{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"unknown","architecture":"unknown"}},{"platform":{"os":"linux","architecture":"amd64"}}]}`)
+	}))
+	defer server.Close()
+	client := New(server.Client())
+	items, err := client.Artifacts(context.Background(), Config{Endpoint: server.URL}, "team/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !reflect.DeepEqual(items[0].Platforms, []string{"linux/arm64/v8", "linux/amd64"}) || items[0].Size != 0 || !items[0].Created.IsZero() {
+		t.Fatalf("incorrect index summary: %+v", items)
+	}
+}
+
+func TestManagementSingleManifestIncludesPlatform(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "tags/list") {
+			fmt.Fprint(w, "{\"tags\":[\"latest\"]}")
+			return
+		}
+		if strings.Contains(r.URL.Path, "blobs/") {
+			fmt.Fprint(w, "{\"os\":\"linux\",\"architecture\":\"arm64\",\"variant\":\"v8\",\"created\":\"2026-09-20T00:00:00Z\"}")
+			return
+		}
+		w.Header().Set("Docker-Content-Digest", "sha256:"+strings.Repeat("b", 64))
+		fmt.Fprintf(w, "{\"config\":{\"digest\":\"sha256:%s\",\"size\":100},\"layers\":[{\"size\":900}]}", strings.Repeat("a", 64))
+	}))
+	defer server.Close()
+	client := New(server.Client())
+	items, err := client.Artifacts(context.Background(), Config{Endpoint: server.URL}, "team/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !reflect.DeepEqual(items[0].Platforms, []string{"linux/arm64/v8"}) || items[0].Size != 1000 || items[0].Created.IsZero() {
+		t.Fatalf("items=%+v", items)
+	}
+}

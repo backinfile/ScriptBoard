@@ -67,6 +67,9 @@ func (launcher *localProcessLauncher) Launch(_ context.Context, request LaunchRe
 	if err != nil || !working.IsDir() || working.Mode()&os.ModeSymlink != 0 {
 		return nil, "", errors.New("Runner working directory is unsafe")
 	}
+	if filepath.Ext(request.ScriptPath) == ".sbflow" {
+		return launchBuiltin(request, memory)
+	}
 	executors, err := resolveExecutors(filepath.Ext(request.ScriptPath), launcher.executorChains)
 	if err != nil {
 		return nil, "", err
@@ -79,7 +82,7 @@ func (launcher *localProcessLauncher) Launch(_ context.Context, request LaunchRe
 			continue
 		}
 		command.Dir = request.WorkingDirectory
-		command.Env = runEnvironment(request.RunID, request.ScriptPath)
+		command.Env = runEnvironment(request.RunID, request.ScriptPath, request.ExtraEnv)
 		configureProcess(command)
 		resourceCleanup, resourceErr := prepareMemory(command, memory, request.RunID)
 		if resourceErr != nil {

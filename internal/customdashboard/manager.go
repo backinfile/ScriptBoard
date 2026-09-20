@@ -17,8 +17,10 @@ import (
 	"time"
 
 	"scriptboard/internal/outboundpolicy"
+	"scriptboard/internal/recordnote"
 	"scriptboard/internal/registrymonitor"
 	"scriptboard/internal/secretredaction"
+	"scriptboard/internal/secretstore"
 )
 
 const (
@@ -31,14 +33,16 @@ var ErrCredentialUnavailable = errors.New("Registry 凭据未配置")
 
 var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS custom_dashboards (
-		id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE,
+		id TEXT PRIMARY KEY, name TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', slug TEXT NOT NULL UNIQUE,
 		is_public INTEGER NOT NULL CHECK (is_public IN (0,1)),
+		visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private','public_read','public_operate','anonymous_operate')),
+		access_key_ciphertext BLOB NOT NULL DEFAULT X'', access_key_hint TEXT NOT NULL DEFAULT '',
 		show_as_tab INTEGER NOT NULL DEFAULT 0 CHECK (show_as_tab IN (0,1)), sort_order INTEGER NOT NULL,
 		created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS custom_dashboard_cards (
 		id TEXT PRIMARY KEY, dashboard_id TEXT NOT NULL REFERENCES custom_dashboards(id) ON DELETE CASCADE,
-		name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('number','percentage','quota','key_value','website','registry')),
+		name TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', type TEXT NOT NULL CHECK(type IN ('number','percentage','quota','key_value','website','registry','flow')),
 		source_url TEXT NOT NULL DEFAULT '', headers_json TEXT NOT NULL DEFAULT '{}',
 		value_path TEXT NOT NULL DEFAULT '', secondary_path TEXT NOT NULL DEFAULT '', formula TEXT NOT NULL DEFAULT '',
 		config_json TEXT NOT NULL DEFAULT '{}', refresh_seconds INTEGER NOT NULL DEFAULT 60,
@@ -64,14 +68,15 @@ const (
 	CardKeyValue   CardType = "key_value"
 	CardWebsite    CardType = "website"
 	CardRegistry   CardType = "registry"
+	CardFlow       CardType = "flow"
 )
 
 type DashboardInput struct {
-	Name, Slug        string
+	Name, Note, Slug  string
 	Public, ShowAsTab bool
 }
 type CardInput struct {
-	Name                              string
+	Name, Note                        string
 	Type                              CardType
 	SourceURL                         string
 	Headers                           map[string]string
@@ -89,7 +94,7 @@ type Snapshot struct {
 	Diagnostic *RequestDiagnostic            `json:"diagnostic,omitempty"`
 }
 type Card struct {
-	ID, DashboardID, Name             string
+	ID, DashboardID, Name, Note       string
 	Type                              CardType
 	SourceURL                         string
 	Headers                           map[string]string
@@ -103,8 +108,10 @@ type Card struct {
 	CredentialConfigured              bool
 }
 type Dashboard struct {
-	ID, Name, Slug       string
+	ID, Name, Note, Slug string
 	Public, ShowAsTab    bool
+	Visibility           Visibility
+	AccessKeyHint        string
 	SortOrder            int
 	Cards                []Card
 	CreatedAt, UpdatedAt time.Time
@@ -114,9 +121,16 @@ type Options struct {
 	DB                  *sql.DB
 	Client              *http.Client
 	RegistryConnections RegistryConnections
-	Now                 func() time.Time
-	Tick                time.Duration
-	Paused              bool
+	SecretStore         *secretstore.Store
+	// QuickRunExists 校验 quick_run 操作绑定的快捷执行项是否存在；
+	// 由调用方注入以保持包依赖单向。
+	QuickRunExists func(ctx context.Context, id string) (bool, error)
+	// QuickRunByName 按名称解析快捷执行项（flow 卡片 YAML 中的 run 字段）；
+	// 同样由调用方注入。
+	QuickRunByName func(ctx context.Context, name string) (id string, ok bool, err error)
+	Now            func() time.Time
+	Tick           time.Duration
+	Paused         bool
 }
 
 type RegistryConnections interface {
@@ -136,6 +150,9 @@ type Manager struct {
 	db                 *sql.DB
 	client             *http.Client
 	registry           RegistryConnections
+	vault              *secretstore.Store
+	quickRunExists     func(ctx context.Context, id string) (bool, error)
+	quickRunByName     func(ctx context.Context, name string) (id string, ok bool, err error)
 	now                func() time.Time
 	ctx                context.Context
 	cancel             context.CancelFunc
@@ -143,6 +160,8 @@ type Manager struct {
 	tick               time.Duration
 	start              sync.Once
 	registryMutationMu sync.Mutex
+	accessKeyMu        sync.Mutex
+	accessKeyFailures  map[string]*accessKeyAttempt
 }
 
 func New(options Options) (*Manager, error) {
@@ -151,6 +170,9 @@ func New(options Options) (*Manager, error) {
 	}
 	if options.RegistryConnections == nil {
 		return nil, errors.New("custom dashboard Registry connection module is required")
+	}
+	if options.SecretStore == nil {
+		return nil, errors.New("custom dashboard credential store is required")
 	}
 	if options.Client == nil {
 		options.Client = &http.Client{
@@ -169,7 +191,7 @@ func New(options Options) (*Manager, error) {
 		options.Now = time.Now
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{db: options.DB, client: &client, registry: options.RegistryConnections, now: options.Now, ctx: ctx, cancel: cancel}
+	m := &Manager{db: options.DB, client: &client, registry: options.RegistryConnections, vault: options.SecretStore, quickRunExists: options.QuickRunExists, quickRunByName: options.QuickRunByName, now: options.Now, ctx: ctx, cancel: cancel, accessKeyFailures: map[string]*accessKeyAttempt{}}
 	if options.Tick <= 0 {
 		options.Tick = time.Minute
 	}
@@ -221,6 +243,11 @@ func (m *Manager) refreshDue() {
 
 func (m *Manager) CreateDashboard(ctx context.Context, input DashboardInput) (Dashboard, error) {
 	input.Name = strings.TrimSpace(input.Name)
+	var err error
+	input.Note, err = recordnote.Normalize(input.Note)
+	if err != nil {
+		return Dashboard{}, err
+	}
 	input.Slug = strings.TrimSpace(strings.ToLower(input.Slug))
 	if input.Name == "" {
 		return Dashboard{}, errors.New("面板名称不能为空")
@@ -237,7 +264,12 @@ func (m *Manager) CreateDashboard(ctx context.Context, input DashboardInput) (Da
 	if err = m.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order),0)+1 FROM custom_dashboards`).Scan(&order); err != nil {
 		return Dashboard{}, err
 	}
-	_, err = m.db.ExecContext(ctx, `INSERT INTO custom_dashboards(id,name,slug,is_public,show_as_tab,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, input.Name, input.Slug, boolInt(input.Public), boolInt(input.ShowAsTab), order, now.UnixNano(), now.UnixNano())
+	// 旧的 Public 开关只能表达 private/public_read 两档。
+	visibility := VisibilityPrivate
+	if input.Public {
+		visibility = VisibilityPublicRead
+	}
+	_, err = m.db.ExecContext(ctx, `INSERT INTO custom_dashboards(id,name,note,slug,is_public,visibility,show_as_tab,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, input.Name, input.Note, input.Slug, boolInt(input.Public), string(visibility), boolInt(input.ShowAsTab), order, now.UnixNano(), now.UnixNano())
 	if err != nil {
 		return Dashboard{}, friendlyUnique(err)
 	}
@@ -245,11 +277,35 @@ func (m *Manager) CreateDashboard(ctx context.Context, input DashboardInput) (Da
 }
 func (m *Manager) UpdateDashboard(ctx context.Context, id string, input DashboardInput) (Dashboard, error) {
 	input.Name = strings.TrimSpace(input.Name)
+	var err error
+	input.Note, err = recordnote.Normalize(input.Note)
+	if err != nil {
+		return Dashboard{}, err
+	}
 	input.Slug = strings.TrimSpace(strings.ToLower(input.Slug))
 	if input.Name == "" || !validSlug(input.Slug) {
 		return Dashboard{}, errors.New("面板名称或公开地址标识无效")
 	}
-	result, err := m.db.ExecContext(ctx, `UPDATE custom_dashboards SET name=?,slug=?,is_public=?,show_as_tab=?,updated_at=? WHERE id=?`, input.Name, input.Slug, boolInt(input.Public), boolInt(input.ShowAsTab), m.now().UnixNano(), id)
+	// 可见性以四档为准：旧 Public 开关只区分 private/public_read，
+	// 这里保留已有的可操作档位；转为不公开时同时撤销访问 Key。
+	var current string
+	if err := m.db.QueryRowContext(ctx, `SELECT visibility FROM custom_dashboards WHERE id=?`, id).Scan(&current); err != nil {
+		return Dashboard{}, err
+	}
+	visibility := Visibility(current)
+	if !visibility.valid() {
+		visibility = VisibilityPrivate
+	}
+	if !input.Public {
+		visibility = VisibilityPrivate
+	} else if !visibility.published() {
+		visibility = VisibilityPublicRead
+	}
+	clearKey := visibility != VisibilityPublicOperate
+	result, err := m.db.ExecContext(ctx, `UPDATE custom_dashboards SET name=?,note=?,slug=?,is_public=?,visibility=?,show_as_tab=?,updated_at=?,
+		access_key_ciphertext=CASE WHEN ? THEN X'' ELSE access_key_ciphertext END,
+		access_key_hint=CASE WHEN ? THEN '' ELSE access_key_hint END WHERE id=?`,
+		input.Name, input.Note, input.Slug, boolInt(visibility.published()), string(visibility), boolInt(input.ShowAsTab), m.now().UnixNano(), boolInt(clearKey), boolInt(clearKey), id)
 	if err != nil {
 		return Dashboard{}, friendlyUnique(err)
 	}
@@ -308,7 +364,7 @@ func (m *Manager) DeleteDashboard(ctx context.Context, id string) error {
 	return m.completeRegistryOperations(ctx, operations)
 }
 func (m *Manager) ListDashboards(ctx context.Context) ([]Dashboard, error) {
-	rows, err := m.db.QueryContext(ctx, `SELECT id,name,slug,is_public,show_as_tab,sort_order,created_at,updated_at FROM custom_dashboards ORDER BY sort_order,created_at`)
+	rows, err := m.db.QueryContext(ctx, dashboardSelect+` ORDER BY sort_order,created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +380,7 @@ func (m *Manager) ListDashboards(ctx context.Context) ([]Dashboard, error) {
 	return result, rows.Err()
 }
 func (m *Manager) GetDashboard(ctx context.Context, id string) (Dashboard, error) {
-	row := m.db.QueryRowContext(ctx, `SELECT id,name,slug,is_public,show_as_tab,sort_order,created_at,updated_at FROM custom_dashboards WHERE id=?`, id)
+	row := m.db.QueryRowContext(ctx, dashboardSelect+` WHERE id=?`, id)
 	d, err := scanDashboard(row)
 	if err != nil {
 		return Dashboard{}, err
@@ -334,13 +390,15 @@ func (m *Manager) GetDashboard(ctx context.Context, id string) (Dashboard, error
 }
 func (m *Manager) GetPublicDashboard(ctx context.Context, slug string) (Dashboard, error) {
 	slug = strings.TrimSpace(strings.ToLower(slug))
-	row := m.db.QueryRowContext(ctx, `SELECT id,name,slug,is_public,show_as_tab,sort_order,created_at,updated_at FROM custom_dashboards WHERE slug=? AND is_public=1`, slug)
+	row := m.db.QueryRowContext(ctx, dashboardSelect+` WHERE slug=? AND visibility IN ('public_read','public_operate','anonymous_operate')`, slug)
 	d, err := scanDashboard(row)
 	if err != nil {
 		return Dashboard{}, err
 	}
 	d.Cards, err = m.listCards(ctx, d.ID)
+	d.Note = ""
 	for i := range d.Cards {
+		d.Cards[i].Note = ""
 		d.Cards[i].Snapshot.Diagnostic = nil
 		d.Cards[i].SourceURL = ""
 		d.Cards[i].Headers = nil
@@ -351,18 +409,31 @@ func (m *Manager) GetPublicDashboard(ctx context.Context, slug string) (Dashboar
 			d.Cards[i].Config = json.RawMessage(`{}`)
 			d.Cards[i].CredentialConfigured = false
 		}
+		// 按可见性档位净化卡片操作：只读档不下发，可操作档仅保留公开安全字段。
+		d.Cards[i].Config = sanitizePublicActions(d.Cards[i].Config, d.Visibility)
 	}
 	return d, err
 }
 
 type scanner interface{ Scan(...any) error }
 
+const dashboardSelect = `SELECT id,name,note,slug,is_public,visibility,access_key_hint,show_as_tab,sort_order,created_at,updated_at FROM custom_dashboards`
+
 func scanDashboard(row scanner) (Dashboard, error) {
 	var d Dashboard
 	var public, showAsTab int
+	var visibility string
 	var created, updated int64
-	err := row.Scan(&d.ID, &d.Name, &d.Slug, &public, &showAsTab, &d.SortOrder, &created, &updated)
-	d.Public = public == 1
+	err := row.Scan(&d.ID, &d.Name, &d.Note, &d.Slug, &public, &visibility, &d.AccessKeyHint, &showAsTab, &d.SortOrder, &created, &updated)
+	d.Visibility = Visibility(visibility)
+	if !d.Visibility.valid() {
+		// 防御性回退：visibility 缺失时沿用旧 is_public 标记。
+		d.Visibility = VisibilityPrivate
+		if public == 1 {
+			d.Visibility = VisibilityPublicRead
+		}
+	}
+	d.Public = d.Visibility.published()
 	d.ShowAsTab = showAsTab == 1
 	d.CreatedAt = time.Unix(0, created).UTC()
 	d.UpdatedAt = time.Unix(0, updated).UTC()
@@ -375,7 +446,7 @@ func (m *Manager) CreateCard(ctx context.Context, dashboardID string, input Card
 	if _, err := m.GetDashboard(ctx, dashboardID); err != nil {
 		return Card{}, err
 	}
-	if err := validateCard(&input); err != nil {
+	if err := m.validateCard(ctx, &input); err != nil {
 		return Card{}, err
 	}
 	id, err := randomID()
@@ -411,7 +482,7 @@ func (m *Manager) CreateCard(ctx context.Context, dashboardID string, input Card
 	if len(config) == 0 {
 		config = []byte(`{}`)
 	}
-	_, err = transaction.ExecContext(ctx, `INSERT INTO custom_dashboard_cards(id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, dashboardID, input.Name, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, order, now.UnixNano(), now.UnixNano())
+	_, err = transaction.ExecContext(ctx, `INSERT INTO custom_dashboard_cards(id,dashboard_id,name,note,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, dashboardID, input.Name, input.Note, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, order, now.UnixNano(), now.UnixNano())
 	if err != nil {
 		m.abortRegistryOperations(operations)
 		return Card{}, err
@@ -440,7 +511,7 @@ func (m *Manager) ImportCards(ctx context.Context, dashboardID string, inputs []
 		return errors.New("at least one card is required")
 	}
 	for index := range inputs {
-		if err := validateCard(&inputs[index]); err != nil {
+		if err := m.validateCard(ctx, &inputs[index]); err != nil {
 			return err
 		}
 	}
@@ -485,7 +556,7 @@ func (m *Manager) ImportCards(ctx context.Context, dashboardID string, inputs []
 			config = []byte(`{}`)
 		}
 		order++
-		if _, err := transaction.ExecContext(ctx, `INSERT INTO custom_dashboard_cards(id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ids[index], dashboardID, input.Name, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, order, now, now); err != nil {
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO custom_dashboard_cards(id,dashboard_id,name,note,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ids[index], dashboardID, input.Name, input.Note, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, order, now, now); err != nil {
 			m.abortRegistryOperations(operations)
 			return err
 		}
@@ -503,7 +574,7 @@ func (m *Manager) ImportCards(ctx context.Context, dashboardID string, inputs []
 func (m *Manager) UpdateCard(ctx context.Context, id string, input CardInput) (Card, error) {
 	m.registryMutationMu.Lock()
 	defer m.registryMutationMu.Unlock()
-	if err := validateCard(&input); err != nil {
+	if err := m.validateCard(ctx, &input); err != nil {
 		return Card{}, err
 	}
 	current, err := m.getCard(ctx, id)
@@ -545,7 +616,7 @@ func (m *Manager) UpdateCard(ctx context.Context, id string, input CardInput) (C
 		return Card{}, err
 	}
 	defer transaction.Rollback()
-	result, err := transaction.ExecContext(ctx, `UPDATE custom_dashboard_cards SET name=?,type=?,source_url=?,headers_json=?,value_path=?,secondary_path=?,formula=?,config_json=?,refresh_seconds=?,updated_at=? WHERE id=?`, input.Name, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, m.now().UnixNano(), id)
+	result, err := transaction.ExecContext(ctx, `UPDATE custom_dashboard_cards SET name=?,note=?,type=?,source_url=?,headers_json=?,value_path=?,secondary_path=?,formula=?,config_json=?,refresh_seconds=?,updated_at=? WHERE id=?`, input.Name, input.Note, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, m.now().UnixNano(), id)
 	if err != nil {
 		m.abortRegistryOperations(operations)
 		return Card{}, err
@@ -701,13 +772,13 @@ func (m *Manager) GetCard(ctx context.Context, id string) (Card, error) {
 	return m.getCard(ctx, id)
 }
 
-const cardSelect = `SELECT id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,snapshot_json,last_error,last_success_at,last_attempt_at FROM custom_dashboard_cards`
+const cardSelect = `SELECT id,dashboard_id,name,note,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,snapshot_json,last_error,last_success_at,last_attempt_at FROM custom_dashboard_cards`
 
 func scanCard(row scanner) (Card, error) {
 	var c Card
 	var headers, config, snapshot string
 	var success, attempt int64
-	if err := row.Scan(&c.ID, &c.DashboardID, &c.Name, &c.Type, &c.SourceURL, &headers, &c.ValuePath, &c.SecondaryPath, &c.Formula, &config, &c.RefreshSeconds, &c.SortOrder, &snapshot, &c.LastError, &success, &attempt); err != nil {
+	if err := row.Scan(&c.ID, &c.DashboardID, &c.Name, &c.Note, &c.Type, &c.SourceURL, &headers, &c.ValuePath, &c.SecondaryPath, &c.Formula, &config, &c.RefreshSeconds, &c.SortOrder, &snapshot, &c.LastError, &success, &attempt); err != nil {
 		return Card{}, err
 	}
 	c.Config = json.RawMessage(config)
@@ -730,6 +801,9 @@ func (m *Manager) RefreshCard(ctx context.Context, id string) (Card, error) {
 	}
 	if card.Type == CardWebsite {
 		return card, errors.New("网站状态卡片引用现有网站监控结果")
+	}
+	if card.Type == CardFlow {
+		return card, errors.New("流程卡片通过运行流程推进而非数据刷新")
 	}
 	if card.Type == CardRegistry {
 		return m.refreshRegistryCard(ctx, card)
@@ -759,7 +833,7 @@ func (m *Manager) RefreshDashboard(ctx context.Context, id string) error {
 	}
 	var refreshErrors []error
 	for _, card := range dashboard.Cards {
-		if card.Type == CardWebsite {
+		if card.Type == CardWebsite || card.Type == CardFlow {
 			continue
 		}
 		if _, err := m.RefreshCard(ctx, card.ID); err != nil {
@@ -983,6 +1057,11 @@ func (m *Manager) recordFailureDiagnostic(ctx context.Context, card Card, refres
 
 func validateCard(input *CardInput) error {
 	input.Name = strings.TrimSpace(input.Name)
+	var err error
+	input.Note, err = recordnote.Normalize(input.Note)
+	if err != nil {
+		return err
+	}
 	input.SourceURL = strings.TrimSpace(input.SourceURL)
 	input.ValuePath = strings.TrimSpace(input.ValuePath)
 	input.SecondaryPath = strings.TrimSpace(input.SecondaryPath)
@@ -1008,6 +1087,17 @@ func validateCard(input *CardInput) error {
 	case CardWebsite:
 		if len(input.Config) == 0 {
 			input.Config = []byte(`{"monitorIds":[]}`)
+		}
+	case CardFlow:
+		// 完整校验（DAG、限额、runId 存在性）在 Manager.validateCard 中进行；
+		// 这里仅保证配置是 JSON 对象，供测试请求等无 Manager 路径使用。
+		if len(input.Config) == 0 {
+			input.Config = []byte(`{}`)
+		} else {
+			var object map[string]json.RawMessage
+			if err := json.Unmarshal(input.Config, &object); err != nil {
+				return errors.New("流程卡片配置无效")
+			}
 		}
 	case CardRegistry:
 		var config registrymonitor.Config

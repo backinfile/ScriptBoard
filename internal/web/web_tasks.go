@@ -13,20 +13,25 @@ import (
 )
 
 type taskPageData struct {
-	Locale              webLocale
-	Kind                string
-	Title               string
-	Description         string
-	BackURL             string
-	Action              string
-	CSRFToken           string
-	Path                string
-	Name                string
-	Value               string
-	Note                string
-	ValueType           variables.Kind
-	Script              string
-	Arguments           string
+	Locale      webLocale
+	Kind        string
+	Title       string
+	Description string
+	BackURL     string
+	Action      string
+	CSRFToken   string
+	ID          string
+	Path        string
+	Name        string
+	Value       string
+	Note        string
+	ValueType   variables.Kind
+	Script      string
+	Arguments   string
+	// ParamsJSON 是快捷执行执行参数定义的原始 JSON，供编辑表单预填。
+	ParamsJSON string
+	// Params 是解析后的执行参数定义，供运行参数页渲染输入控件。
+	Params              []quickrun.ParamDef
 	Expression          string
 	MemoryLimit         string
 	TimeoutSeconds      int
@@ -326,7 +331,7 @@ func (a *App) editScheduleTask(response http.ResponseWriter, request *http.Reque
 		Description: webText(resolveWebLocale(request), "task.schedule_description"),
 		BackURL:     "/config/schedules", Action: "/config/schedules/" + url.PathEscape(selected.ID) + "/update",
 		PreviewAction: "/config/schedules/" + url.PathEscape(selected.ID) + "/preview",
-		Name:          selected.Name, Script: selected.ScriptPath, Arguments: selected.ArgumentsTemplate,
+		Name:          selected.Name, Note: selected.Note, Script: selected.ScriptPath, Arguments: selected.ArgumentsTemplate,
 		Expression: selected.Expression, MemoryLimit: selected.MemoryLimit, TimeoutSeconds: selected.TimeoutSeconds, DisallowOverlap: !selected.AllowOverlap,
 		ScheduleGroupID: selected.GroupID, ScheduleGroups: groups,
 	})

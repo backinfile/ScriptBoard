@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"scriptboard/internal/recordnote"
 	"unicode"
 	"unicode/utf8"
 
@@ -48,6 +50,7 @@ var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS fleet_peers (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL UNIQUE,
+		note TEXT NOT NULL DEFAULT '',
 		endpoint TEXT NOT NULL UNIQUE,
 		access_token_cipher BLOB NOT NULL,
 		enabled INTEGER NOT NULL DEFAULT 1,
@@ -72,21 +75,21 @@ type AccessToken struct {
 }
 
 type AddPeerInput struct {
-	Name, Endpoint, AccessToken string
+	Name, Note, Endpoint, AccessToken string
 }
 
 type UpdatePeerInput struct {
-	Name, Endpoint, AccessToken string
+	Name, Note, Endpoint, AccessToken string
 }
 
 type Peer struct {
-	ID, Name, Endpoint   string
-	Enabled              bool
-	Overview             hoststatus.Overview
-	LastSeenAt           time.Time
-	LastAttemptAt        time.Time
-	LastError            string
-	CreatedAt, UpdatedAt time.Time
+	ID, Name, Note, Endpoint string
+	Enabled                  bool
+	Overview                 hoststatus.Overview
+	LastSeenAt               time.Time
+	LastAttemptAt            time.Time
+	LastError                string
+	CreatedAt, UpdatedAt     time.Time
 }
 
 func (peer Peer) Online(now time.Time) bool {
@@ -255,8 +258,9 @@ func (manager *Manager) RevokeAccessToken(ctx context.Context, id string) error 
 
 func (manager *Manager) AddPeer(ctx context.Context, input AddPeerInput) (Peer, error) {
 	name := strings.TrimSpace(input.Name)
+	note, noteErr := recordnote.Normalize(input.Note)
 	endpoint, err := normalizeEndpoint(input.Endpoint)
-	if !validLabel(name, 64) || err != nil || !validSecret(input.AccessToken) {
+	if !validLabel(name, 64) || err != nil || noteErr != nil || !validSecret(input.AccessToken) {
 		return Peer{}, errors.New("ScriptBoard node configuration is invalid")
 	}
 	var count int
@@ -284,12 +288,12 @@ func (manager *Manager) AddPeer(ctx context.Context, input AddPeerInput) (Peer, 
 	}
 	now := manager.now().UTC()
 	_, err = manager.db.ExecContext(ctx, `INSERT INTO fleet_peers
-		(id, name, endpoint, access_token_cipher, overview_json, last_seen_at, last_attempt_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, name, endpoint, ciphertext, string(encoded), now.Unix(), now.Unix(), now.Unix(), now.Unix())
+		(id, name, note, endpoint, access_token_cipher, overview_json, last_seen_at, last_attempt_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, name, note, endpoint, ciphertext, string(encoded), now.Unix(), now.Unix(), now.Unix(), now.Unix())
 	if err != nil {
 		return Peer{}, err
 	}
-	return Peer{ID: id, Name: name, Endpoint: endpoint, Enabled: true, Overview: overview, LastSeenAt: now, LastAttemptAt: now, CreatedAt: now, UpdatedAt: now}, nil
+	return Peer{ID: id, Name: name, Note: note, Endpoint: endpoint, Enabled: true, Overview: overview, LastSeenAt: now, LastAttemptAt: now, CreatedAt: now, UpdatedAt: now}, nil
 }
 
 // UpdatePeer validates the replacement connection before committing it. A
@@ -297,8 +301,9 @@ func (manager *Manager) AddPeer(ctx context.Context, input AddPeerInput) (Peer, 
 func (manager *Manager) UpdatePeer(ctx context.Context, id string, input UpdatePeerInput) (Peer, error) {
 	id = strings.TrimSpace(id)
 	name := strings.TrimSpace(input.Name)
+	note, noteErr := recordnote.Normalize(input.Note)
 	endpoint, err := normalizeEndpoint(input.Endpoint)
-	if id == "" || !validLabel(name, 64) || err != nil {
+	if id == "" || !validLabel(name, 64) || err != nil || noteErr != nil {
 		return Peer{}, errors.New("ScriptBoard node configuration is invalid")
 	}
 
@@ -342,8 +347,8 @@ func (manager *Manager) UpdatePeer(ctx context.Context, id string, input UpdateP
 		return Peer{}, err
 	}
 	now := manager.now().UTC().Unix()
-	result, err := manager.db.ExecContext(ctx, `UPDATE fleet_peers SET name = ?, endpoint = ?, access_token_cipher = ?, overview_json = ?, last_seen_at = ?, last_attempt_at = ?, last_error = '', updated_at = ? WHERE id = ?`,
-		name, endpoint, ciphertext, string(encoded), now, now, now, id)
+	result, err := manager.db.ExecContext(ctx, `UPDATE fleet_peers SET name = ?, note = ?, endpoint = ?, access_token_cipher = ?, overview_json = ?, last_seen_at = ?, last_attempt_at = ?, last_error = '', updated_at = ? WHERE id = ?`,
+		name, note, endpoint, ciphertext, string(encoded), now, now, now, id)
 	if err != nil {
 		return Peer{}, err
 	}
@@ -365,7 +370,7 @@ func (manager *Manager) DeletePeer(ctx context.Context, id string) error {
 }
 
 func (manager *Manager) ListPeers(ctx context.Context) ([]Peer, error) {
-	rows, err := manager.db.QueryContext(ctx, `SELECT id, name, endpoint, enabled, overview_json, last_seen_at, last_attempt_at, last_error, created_at, updated_at FROM fleet_peers ORDER BY name COLLATE NOCASE, id`)
+	rows, err := manager.db.QueryContext(ctx, `SELECT id, name, note, endpoint, enabled, overview_json, last_seen_at, last_attempt_at, last_error, created_at, updated_at FROM fleet_peers ORDER BY name COLLATE NOCASE, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +381,7 @@ func (manager *Manager) ListPeers(ctx context.Context) ([]Peer, error) {
 		var enabled int
 		var encoded string
 		var seen, attempted, created, updated int64
-		if err := rows.Scan(&peer.ID, &peer.Name, &peer.Endpoint, &enabled, &encoded, &seen, &attempted, &peer.LastError, &created, &updated); err != nil {
+		if err := rows.Scan(&peer.ID, &peer.Name, &peer.Note, &peer.Endpoint, &enabled, &encoded, &seen, &attempted, &peer.LastError, &created, &updated); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(encoded), &peer.Overview); err != nil {

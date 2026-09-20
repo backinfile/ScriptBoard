@@ -19,6 +19,7 @@
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <section><header><div><h2>{{t .Locale "kubernetes.identity"}}</h2></div></header>
         <label><span>{{t .Locale "kubernetes.connection_name"}}</span><input name="name" value="{{.Connection.Name}}" required autocomplete="off" placeholder="Home cluster"></label>
+        <label><span>{{t .Locale "common.note"}}</span><textarea name="note" maxlength="500">{{.Connection.Note}}</textarea><small>{{t .Locale "common.note_hint"}}</small></label>
       </section>
       <section><header><div><h2>kubeconfig</h2><p>{{t .Locale "kubernetes.kubeconfig_description"}}</p></div></header>
         <label><span>{{t .Locale "kubernetes.kubeconfig_path"}}</span><input name="kubeconfig_path" value="{{.Connection.KubeconfigPath}}" required autocomplete="off" spellcheck="false" placeholder="C:\Users\admin\.kube\config"></label>

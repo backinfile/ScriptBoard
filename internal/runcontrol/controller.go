@@ -11,6 +11,7 @@ import (
 
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/identity"
+	"scriptboard/internal/quickrun"
 	"scriptboard/internal/runmanager"
 )
 
@@ -19,6 +20,7 @@ var (
 	ErrPublicationChanged   = errors.New("quick run publication has changed")
 	ErrWorkingDirectory     = errors.New("quick run working directory unavailable")
 	ErrVariablesUnavailable = errors.New("quick run variables unavailable")
+	ErrParamsInvalid        = errors.New("quick run params invalid")
 	ErrRunNotFound          = errors.New("run not found")
 	ErrForbidden            = errors.New("forbidden")
 )
@@ -30,7 +32,9 @@ type Actor struct {
 type StartRequest struct {
 	QuickRunID     string
 	ConfirmOverlap bool
-	Actor          Actor
+	// ParamValues 是交互路径收集的执行参数取值；nil 表示非交互启动，全部走默认值。
+	ParamValues map[string]string
+	Actor       Actor
 }
 type ActiveRun struct {
 	ID     string `json:"run_id"`
@@ -60,7 +64,7 @@ func New(options Options) *Controller { return &Controller{options: options} }
 
 type quickRun struct {
 	ID, Name, ScriptPath, ArgumentsTemplate, ScriptSHA256 string
-	MemoryLimit                                           string
+	MemoryLimit, ParamsJSON                               string
 	TimeoutSeconds                                        int
 	Revision                                              int64
 	GroupID                                               sql.NullString
@@ -68,7 +72,7 @@ type quickRun struct {
 
 func (controller *Controller) load(ctx context.Context, id string) (quickRun, error) {
 	var q quickRun
-	err := controller.options.DB.QueryRowContext(ctx, `SELECT id,name,script_path,arguments_template,memory_limit,timeout_seconds,script_sha256,revision,group_id FROM quick_runs WHERE id=?`, id).Scan(&q.ID, &q.Name, &q.ScriptPath, &q.ArgumentsTemplate, &q.MemoryLimit, &q.TimeoutSeconds, &q.ScriptSHA256, &q.Revision, &q.GroupID)
+	err := controller.options.DB.QueryRowContext(ctx, `SELECT id,name,script_path,arguments_template,memory_limit,timeout_seconds,script_sha256,revision,group_id,params_json FROM quick_runs WHERE id=?`, id).Scan(&q.ID, &q.Name, &q.ScriptPath, &q.ArgumentsTemplate, &q.MemoryLimit, &q.TimeoutSeconds, &q.ScriptSHA256, &q.Revision, &q.GroupID, &q.ParamsJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return q, ErrNotFound
 	}
@@ -115,7 +119,28 @@ func (controller *Controller) Start(ctx context.Context, request StartRequest) (
 	if err != nil {
 		return StartResult{}, fmt.Errorf("%w: %v", ErrVariablesUnavailable, err)
 	}
-	runID, err := controller.options.Runs.Start(runmanager.StartRequest{ScriptPath: q.ScriptPath, ExpectedDigest: q.ScriptSHA256, ArgumentsTemplate: q.ArgumentsTemplate, MemoryLimit: q.MemoryLimit, TimeoutSeconds: q.TimeoutSeconds, SourceType: "admin/quick-run", SourceName: controller.snapshot(ctx, q), SourceID: q.ID, Variables: variables, InitiatorUserID: request.Actor.UserID, InitiatorUsername: request.Actor.Username, PreparedScript: &prepared, PreparedDirectory: &directory})
+	// 解析并强类型校验执行参数：产出注入进程的环境变量，同时以 {{PARAM_<大写名>}}
+	// 变量并入启动参数模板的取值表（同名变量以执行参数为准）。
+	defs, err := quickrun.ParseParamDefs(q.ParamsJSON)
+	if err != nil {
+		return StartResult{}, fmt.Errorf("%w: %v", ErrParamsInvalid, err)
+	}
+	resolvedParams, err := quickrun.ResolveParamValues(defs, request.ParamValues)
+	if err != nil {
+		return StartResult{}, fmt.Errorf("%w: %v", ErrParamsInvalid, err)
+	}
+	paramEnv := quickrun.ParamEnvEntries(resolvedParams)
+	if len(resolvedParams) > 0 {
+		merged := make(map[string]string, len(variables)+len(resolvedParams))
+		for name, value := range variables {
+			merged[name] = value
+		}
+		for name, value := range quickrun.ParamVariableEntries(resolvedParams) {
+			merged[name] = value
+		}
+		variables = merged
+	}
+	runID, err := controller.options.Runs.Start(runmanager.StartRequest{ScriptPath: q.ScriptPath, ExpectedDigest: q.ScriptSHA256, ArgumentsTemplate: q.ArgumentsTemplate, MemoryLimit: q.MemoryLimit, TimeoutSeconds: q.TimeoutSeconds, SourceType: "admin/quick-run", SourceName: controller.snapshot(ctx, q), SourceID: q.ID, Variables: variables, ExtraEnv: paramEnv, InitiatorUserID: request.Actor.UserID, InitiatorUsername: request.Actor.Username, PreparedScript: &prepared, PreparedDirectory: &directory})
 	if err != nil {
 		return StartResult{}, err
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"scriptboard/internal/recordnote"
 	"scriptboard/internal/secretstore"
 )
 
@@ -20,6 +21,7 @@ var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS custom_tabs (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
+		note TEXT NOT NULL DEFAULT '',
 		target_url TEXT NOT NULL,
 		enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0,1)),
 		credential_mode TEXT NOT NULL DEFAULT 'isolated' CHECK (credential_mode IN ('isolated','target_state','key')),
@@ -42,19 +44,19 @@ const (
 )
 
 type Tab struct {
-	ID, Name, TargetURL, Origin, KeyName string
-	CredentialMode                       CredentialMode
-	VisibilityRoles                      []string
-	Enabled, KeyConfigured               bool
-	SortOrder                            int
-	CreatedAt, UpdatedAt                 time.Time
+	ID, Name, Note, TargetURL, Origin, KeyName string
+	CredentialMode                             CredentialMode
+	VisibilityRoles                            []string
+	Enabled, KeyConfigured                     bool
+	SortOrder                                  int
+	CreatedAt, UpdatedAt                       time.Time
 }
 
 type Input struct {
-	Name, TargetURL, KeyName, Key string
-	CredentialMode                CredentialMode
-	VisibilityRoles               []string
-	Enabled, PreserveKey          bool
+	Name, Note, TargetURL, KeyName, Key string
+	CredentialMode                      CredentialMode
+	VisibilityRoles                     []string
+	Enabled, PreserveKey                bool
 }
 
 type Options struct {
@@ -97,11 +99,11 @@ func (m *Manager) Create(ctx context.Context, input Input) (Tab, error) {
 		return Tab{}, err
 	}
 	now := m.now().UTC().UnixNano()
-	_, err = m.db.ExecContext(ctx, `INSERT INTO custom_tabs(id,name,target_url,enabled,credential_mode,visibility_roles,key_name,key_ciphertext,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, input.Name, input.TargetURL, boolInt(input.Enabled), input.CredentialMode, strings.Join(input.VisibilityRoles, ","), input.KeyName, ciphertext, order, now, now)
+	_, err = m.db.ExecContext(ctx, `INSERT INTO custom_tabs(id,name,note,target_url,enabled,credential_mode,visibility_roles,key_name,key_ciphertext,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, input.Name, input.Note, input.TargetURL, boolInt(input.Enabled), input.CredentialMode, strings.Join(input.VisibilityRoles, ","), input.KeyName, ciphertext, order, now, now)
 	if err != nil {
 		return Tab{}, err
 	}
-	return Tab{ID: id, Name: input.Name, TargetURL: input.TargetURL, Origin: origin, CredentialMode: input.CredentialMode, VisibilityRoles: input.VisibilityRoles, KeyName: input.KeyName, Enabled: input.Enabled, KeyConfigured: len(ciphertext) > 0, SortOrder: order, CreatedAt: time.Unix(0, now).UTC(), UpdatedAt: time.Unix(0, now).UTC()}, nil
+	return Tab{ID: id, Name: input.Name, Note: input.Note, TargetURL: input.TargetURL, Origin: origin, CredentialMode: input.CredentialMode, VisibilityRoles: input.VisibilityRoles, KeyName: input.KeyName, Enabled: input.Enabled, KeyConfigured: len(ciphertext) > 0, SortOrder: order, CreatedAt: time.Unix(0, now).UTC(), UpdatedAt: time.Unix(0, now).UTC()}, nil
 }
 
 func (m *Manager) Update(ctx context.Context, id string, input Input) (Tab, error) {
@@ -127,7 +129,7 @@ func (m *Manager) Update(ctx context.Context, id string, input Input) (Tab, erro
 		}
 	}
 	now := m.now().UTC().UnixNano()
-	result, err := m.db.ExecContext(ctx, `UPDATE custom_tabs SET name=?,target_url=?,enabled=?,credential_mode=?,visibility_roles=?,key_name=?,key_ciphertext=?,updated_at=? WHERE id=?`, input.Name, input.TargetURL, boolInt(input.Enabled), input.CredentialMode, strings.Join(input.VisibilityRoles, ","), input.KeyName, ciphertext, now, id)
+	result, err := m.db.ExecContext(ctx, `UPDATE custom_tabs SET name=?,note=?,target_url=?,enabled=?,credential_mode=?,visibility_roles=?,key_name=?,key_ciphertext=?,updated_at=? WHERE id=?`, input.Name, input.Note, input.TargetURL, boolInt(input.Enabled), input.CredentialMode, strings.Join(input.VisibilityRoles, ","), input.KeyName, ciphertext, now, id)
 	if err != nil {
 		return Tab{}, err
 	}
@@ -149,7 +151,7 @@ func (m *Manager) SetEnabled(ctx context.Context, id string, enabled bool) (Tab,
 }
 
 func (m *Manager) List(ctx context.Context) ([]Tab, error) {
-	rows, err := m.db.QueryContext(ctx, `SELECT id,name,target_url,enabled,credential_mode,visibility_roles,key_name,LENGTH(key_ciphertext),sort_order,created_at,updated_at FROM custom_tabs ORDER BY sort_order,created_at`)
+	rows, err := m.db.QueryContext(ctx, `SELECT id,name,note,target_url,enabled,credential_mode,visibility_roles,key_name,LENGTH(key_ciphertext),sort_order,created_at,updated_at FROM custom_tabs ORDER BY sort_order,created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +162,7 @@ func (m *Manager) List(ctx context.Context) ([]Tab, error) {
 		var enabled, keyLength int
 		var created, updated int64
 		var visibility string
-		if err := rows.Scan(&tab.ID, &tab.Name, &tab.TargetURL, &enabled, &tab.CredentialMode, &visibility, &tab.KeyName, &keyLength, &tab.SortOrder, &created, &updated); err != nil {
+		if err := rows.Scan(&tab.ID, &tab.Name, &tab.Note, &tab.TargetURL, &enabled, &tab.CredentialMode, &visibility, &tab.KeyName, &keyLength, &tab.SortOrder, &created, &updated); err != nil {
 			return nil, err
 		}
 		tab.Enabled, tab.KeyConfigured = enabled == 1, keyLength > 0
@@ -183,7 +185,7 @@ func (m *Manager) get(ctx context.Context, id string) (Tab, []byte, error) {
 	var ciphertext []byte
 	var created, updated int64
 	var visibility string
-	err := m.db.QueryRowContext(ctx, `SELECT id,name,target_url,enabled,credential_mode,visibility_roles,key_name,key_ciphertext,sort_order,created_at,updated_at FROM custom_tabs WHERE id=?`, id).Scan(&tab.ID, &tab.Name, &tab.TargetURL, &enabled, &tab.CredentialMode, &visibility, &tab.KeyName, &ciphertext, &tab.SortOrder, &created, &updated)
+	err := m.db.QueryRowContext(ctx, `SELECT id,name,note,target_url,enabled,credential_mode,visibility_roles,key_name,key_ciphertext,sort_order,created_at,updated_at FROM custom_tabs WHERE id=?`, id).Scan(&tab.ID, &tab.Name, &tab.Note, &tab.TargetURL, &enabled, &tab.CredentialMode, &visibility, &tab.KeyName, &ciphertext, &tab.SortOrder, &created, &updated)
 	if err != nil {
 		return Tab{}, nil, err
 	}
@@ -276,6 +278,11 @@ func (m *Manager) sealKey(id, origin string, input Input) ([]byte, error) {
 
 func validateInput(input Input, existingKey bool) (Input, string, error) {
 	input.Name = strings.TrimSpace(input.Name)
+	var err error
+	input.Note, err = recordnote.Normalize(input.Note)
+	if err != nil {
+		return Input{}, "", err
+	}
 	input.TargetURL = strings.TrimSpace(input.TargetURL)
 	input.KeyName = strings.TrimSpace(input.KeyName)
 	roles, err := normalizeVisibilityRoles(input.VisibilityRoles)

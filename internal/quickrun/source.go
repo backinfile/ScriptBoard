@@ -24,12 +24,14 @@ func PlatformLanguages(goos string) []Language {
 			{ID: "powershell", Label: "PowerShell", Extension: ".ps1"},
 			{ID: "batch", Label: "Batch", Extension: ".cmd"},
 			{ID: "python", Label: "Python", Extension: ".py"},
+			{ID: "nodejs", Label: "Node.js", Extension: ".js"},
 		}
 	}
 	return []Language{
 		{ID: "shell", Label: "Shell", Extension: ".sh"},
 		{ID: "python", Label: "Python", Extension: ".py"},
 		{ID: "powershell", Label: "PowerShell", Extension: ".ps1"},
+		{ID: "nodejs", Label: "Node.js", Extension: ".js"},
 	}
 }
 

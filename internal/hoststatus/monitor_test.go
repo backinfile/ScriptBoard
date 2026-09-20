@@ -333,6 +333,48 @@ func TestOverviewHistoryUsesRangeSpecificBoundedSummarySeries(t *testing.T) {
 	}
 }
 
+func TestOverviewHistoryWeightsEachMetricByItsAvailableSamples(t *testing.T) {
+	base := time.Unix(1_700_000_040, 0).UTC().Truncate(2 * time.Minute)
+	now := base.Add(6 * time.Hour)
+	samples := make([]RawSample, 0, 21)
+	for second := range 10 {
+		sample := RawSample{At: base.Add(time.Duration(second) * time.Second)}
+		if second == 0 {
+			sample.Memory = &Memory{UsedPercent: 100}
+		}
+		samples = append(samples, sample)
+	}
+	for second := range 10 {
+		samples = append(samples, RawSample{
+			At:     base.Add(time.Minute + time.Duration(second)*time.Second),
+			Memory: &Memory{UsedPercent: 0},
+		})
+	}
+	samples = append(samples, RawSample{At: base.Add(2 * time.Minute)})
+
+	monitor, err := New(openMonitorDB(t), &sequenceProbe{samples: samples}, Options{
+		Interval: time.Hour, Retention: 24 * time.Hour, Now: func() time.Time { return now }, SkipInitialCleanup: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(monitor.Close)
+	for range samples {
+		monitor.Collect(context.Background())
+	}
+
+	overview, err := monitor.Overview(context.Background(), Range6Hours)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Series) != 1 {
+		t.Fatalf("series points = %d, want 1", len(overview.Series))
+	}
+	if got := overview.Series[0].Average.Values["memory.usedPercent"]; got < 9.09 || got > 9.10 {
+		t.Fatalf("memory average = %v, want 100/11 available samples", got)
+	}
+}
+
 func TestMonitorMarksDataStaleAfterFifteenSeconds(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0).UTC()
 	now := base

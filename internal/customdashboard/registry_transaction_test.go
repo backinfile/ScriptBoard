@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"scriptboard/internal/registrymonitor"
+	"scriptboard/internal/secretstore"
 )
 
 func TestRegistryPrepareFailureLeavesSQLiteCardUnchanged(t *testing.T) {
@@ -175,7 +176,11 @@ func testManagerWithRegistry(t *testing.T, connections RegistryConnections) *Man
 			t.Fatal(err)
 		}
 	}
-	manager, err := New(Options{DB: database, Client: &http.Client{}, RegistryConnections: connections, Paused: true})
+	vault, err := secretstore.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := New(Options{DB: database, Client: &http.Client{}, RegistryConnections: connections, SecretStore: vault, Paused: true})
 	if err != nil {
 		t.Fatal(err)
 	}

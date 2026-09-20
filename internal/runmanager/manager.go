@@ -42,6 +42,8 @@ type StartRequest struct {
 	MemoryLimit       string
 	TimeoutSeconds    int
 	Variables         map[string]string
+	// ExtraEnv 是注入进程的额外环境变量（KEY=VALUE），后写覆盖同名变量。
+	ExtraEnv          []string
 	InitiatorUserID   string
 	InitiatorUsername string
 	PreparedScript    *hostfiles.Script
@@ -59,6 +61,8 @@ type OneTimeStartRequest struct {
 	MemoryLimit       string
 	TimeoutSeconds    int
 	Variables         map[string]string
+	// ExtraEnv 是注入进程的额外环境变量（KEY=VALUE），与 StartRequest 同义。
+	ExtraEnv          []string
 	AuditSource       string
 	InitiatorUserID   string
 	InitiatorUsername string
@@ -292,6 +296,7 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 		scriptKind: "host_file", executors: executors, templateArguments: templateArguments, arguments: arguments,
 		argumentsTemplate: request.ArgumentsTemplate, sourceType: request.SourceType, sourceName: request.SourceName,
 		sourceID: request.SourceID, memoryLimit: request.MemoryLimit, timeoutSeconds: request.TimeoutSeconds,
+		extraEnv:        request.ExtraEnv,
 		initiatorUserID: request.InitiatorUserID, initiatorUsername: request.InitiatorUsername,
 	})
 }
@@ -312,6 +317,7 @@ type preparedStart struct {
 	sourceID          string
 	memoryLimit       string
 	timeoutSeconds    int
+	extraEnv          []string
 	auditSource       string
 	initiatorUserID   string
 	initiatorUsername string
@@ -337,7 +343,7 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 	}
 	extension := strings.ToLower(request.Extension)
 	switch extension {
-	case ".cmd", ".ps1", ".py", ".sh":
+	case ".cmd", ".ps1", ".py", ".sh", ".js", ".sbflow":
 	default:
 		return "", errors.New("one-time source extension is not supported")
 	}
@@ -414,6 +420,7 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 		executors: executors, templateArguments: templateArguments, arguments: arguments,
 		argumentsTemplate: request.ArgumentsTemplate, sourceType: sourceType, sourceName: sourceName, sourceID: request.SourceID,
 		memoryLimit: request.MemoryLimit, timeoutSeconds: request.TimeoutSeconds, auditSource: request.AuditSource,
+		extraEnv:        request.ExtraEnv,
 		initiatorUserID: request.InitiatorUserID, initiatorUsername: request.InitiatorUsername, initiatorRole: request.InitiatorRole,
 	})
 	if err != nil {
@@ -539,7 +546,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	}
 	process, executorPath, err := m.launcher.Launch(context.Background(), LaunchRequest{
 		MemoryLimit: prepared.memoryLimit, RunID: id, ScriptPath: prepared.script.Path, ScriptDigest: prepared.script.Digest,
-		WorkingDirectory: prepared.workingDirectory.Path, Arguments: prepared.arguments,
+		WorkingDirectory: prepared.workingDirectory.Path, Arguments: prepared.arguments, ExtraEnv: prepared.extraEnv,
 	})
 	if err != nil {
 		_ = logFile.Close()
@@ -1465,6 +1472,9 @@ func randomID() (string, error) {
 
 func resolveExecutors(extension string, overrides map[string][]string) ([]executorCandidate, error) {
 	extension = strings.ToLower(extension)
+	if extension == ".sbflow" {
+		return []executorCandidate{{path: "scriptboard-builtin"}}, nil
+	}
 	type configuredCandidate struct {
 		name   string
 		prefix []string
@@ -1489,6 +1499,9 @@ func resolveExecutors(extension string, overrides map[string][]string) ([]execut
 			candidates = []configuredCandidate{{name: "py.exe", prefix: []string{"-3"}}, {name: "python.exe"}}
 		case ".sh":
 			candidates = []configuredCandidate{{name: "bash.exe"}}
+		case ".js":
+			// 新增 .js 类型：默认使用 Node.js 执行器
+			candidates = []configuredCandidate{{name: "node.exe"}}
 		}
 	} else if len(candidates) == 0 {
 		switch extension {
@@ -1498,6 +1511,9 @@ func resolveExecutors(extension string, overrides map[string][]string) ([]execut
 			candidates = []configuredCandidate{{name: "python3"}, {name: "python"}}
 		case ".ps1":
 			candidates = []configuredCandidate{{name: "pwsh", prefix: []string{"-File"}}}
+		case ".js":
+			// 新增 .js 类型：默认使用 Node.js 执行器
+			candidates = []configuredCandidate{{name: "node"}}
 		}
 	}
 	resolved := make([]executorCandidate, 0, len(candidates))

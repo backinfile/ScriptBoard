@@ -6,6 +6,7 @@ var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS mysql_instances (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+		note TEXT NOT NULL DEFAULT '',
 		host TEXT NOT NULL,
 		port INTEGER NOT NULL,
 		username TEXT NOT NULL,
@@ -19,6 +20,7 @@ var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS mysql_backup_plans (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
+		note TEXT NOT NULL DEFAULT '',
 		instance_id TEXT NOT NULL REFERENCES mysql_instances(id),
 		databases_json TEXT NOT NULL,
 		expression TEXT NOT NULL,

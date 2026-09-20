@@ -284,6 +284,47 @@ func TestInspectReportsCompressedDownloadSizeRangeForRegistryIndex(t *testing.T)
 	}
 }
 
+func TestInspectOmitsCompressedDownloadSizeWhenARegistryIndexPlatformFails(t *testing.T) {
+	amd64Manifest := "sha256:" + strings.Repeat("7", 64)
+	arm64Manifest := "sha256:" + strings.Repeat("8", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v2/team/api/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"3.2.0"}})
+		case "/api/v2.0/projects/team/repositories/api/artifacts/3.2.0":
+			http.NotFound(response, request)
+		case "/v2/team/api/manifests/3.2.0":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"mediaType":     "application/vnd.oci.image.index.v1+json",
+				"manifests": []map[string]any{
+					{"digest": amd64Manifest, "platform": map[string]any{"os": "linux", "architecture": "amd64"}},
+					{"digest": arm64Manifest, "platform": map[string]any{"os": "linux", "architecture": "arm64"}},
+				},
+			})
+		case "/v2/team/api/manifests/" + amd64Manifest:
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"config":        map[string]any{"digest": "sha256:" + strings.Repeat("9", 64), "size": 100},
+				"layers":        []map[string]any{{"size": 900}},
+			})
+		case "/v2/team/api/manifests/" + arm64Manifest:
+			http.Error(response, "temporary failure", http.StatusServiceUnavailable)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	results, err := New(server.Client()).Inspect(context.Background(), Config{Endpoint: server.URL, Images: []string{"team/api"}})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("results=%#v err=%v", results, err)
+	}
+	if results[0].CompressedSizeAvailable {
+		t.Fatalf("partial multi-platform size was reported as complete: %#v", results[0])
+	}
+}
+
 func TestInspectReadsImageCreatedTimeFromRegistryIndex(t *testing.T) {
 	wantTime := time.Date(2026, 8, 16, 8, 15, 0, 0, time.UTC)
 	manifestDigest := "sha256:" + strings.Repeat("b", 64)

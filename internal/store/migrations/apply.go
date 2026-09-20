@@ -374,6 +374,59 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if err := addRecordNotes(migration); err != nil {
+		return err
+	}
+	if schemaVersion >= 20 && schemaVersion <= 73 {
+		exists, err := storesqlite.ColumnExists(migration, "custom_dashboards", "visibility")
+		if err != nil {
+			return fmt.Errorf("inspect custom dashboard visibility migration: %w", err)
+		}
+		if !exists {
+			// 四档可见性取代 is_public；旧公开面板映射为公开只读。
+			if _, err := migration.Exec(`ALTER TABLE custom_dashboards ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private','public_read','public_operate','anonymous_operate'));
+			UPDATE custom_dashboards SET visibility = CASE WHEN is_public = 1 THEN 'public_read' ELSE 'private' END`); err != nil {
+				return fmt.Errorf("add custom dashboard visibility: %w", err)
+			}
+		}
+		for _, column := range []struct{ name, definition string }{
+			{"access_key_ciphertext", "access_key_ciphertext BLOB NOT NULL DEFAULT X''"},
+			{"access_key_hint", "access_key_hint TEXT NOT NULL DEFAULT ''"},
+		} {
+			exists, err := storesqlite.ColumnExists(migration, "custom_dashboards", column.name)
+			if err != nil {
+				return fmt.Errorf("inspect custom dashboard access key migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE custom_dashboards ADD COLUMN " + column.definition); err != nil {
+					return fmt.Errorf("add custom dashboard access key column: %w", err)
+				}
+			}
+		}
+		for _, statement := range []string{
+			`ALTER TABLE custom_dashboard_cards RENAME TO custom_dashboard_cards_schema73`,
+			`CREATE TABLE custom_dashboard_cards (
+				id TEXT PRIMARY KEY, dashboard_id TEXT NOT NULL REFERENCES custom_dashboards(id) ON DELETE CASCADE,
+				name TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', type TEXT NOT NULL CHECK(type IN ('number','percentage','quota','key_value','website','registry','flow')),
+				source_url TEXT NOT NULL DEFAULT '', headers_json TEXT NOT NULL DEFAULT '{}',
+				value_path TEXT NOT NULL DEFAULT '', secondary_path TEXT NOT NULL DEFAULT '', formula TEXT NOT NULL DEFAULT '',
+				config_json TEXT NOT NULL DEFAULT '{}', refresh_seconds INTEGER NOT NULL DEFAULT 60,
+				sort_order INTEGER NOT NULL, snapshot_json TEXT NOT NULL DEFAULT '{}', last_error TEXT NOT NULL DEFAULT '',
+				last_success_at INTEGER NOT NULL DEFAULT 0, last_attempt_at INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+			)`,
+			`INSERT INTO custom_dashboard_cards
+				(id,dashboard_id,name,note,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,snapshot_json,last_error,last_success_at,last_attempt_at,created_at,updated_at)
+				SELECT id,dashboard_id,name,note,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,snapshot_json,last_error,last_success_at,last_attempt_at,created_at,updated_at
+				FROM custom_dashboard_cards_schema73`,
+			`DROP TABLE custom_dashboard_cards_schema73`,
+			`CREATE INDEX custom_dashboard_cards_order_idx ON custom_dashboard_cards(dashboard_id, sort_order, created_at)`,
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				return fmt.Errorf("migrate custom dashboard flow cards: %w", err)
+			}
+		}
+	}
 	if schemaVersion >= 20 && schemaVersion <= 43 {
 		for _, column := range []struct{ name, definition string }{
 			{"previous_hash", "previous_hash TEXT NOT NULL DEFAULT ''"},
@@ -530,6 +583,17 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 74 {
+		exists, err := storesqlite.ColumnExists(migration, "quick_runs", "params_json")
+		if err != nil {
+			return fmt.Errorf("inspect quick run params migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE quick_runs ADD COLUMN params_json TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("add quick run params: %w", err)
+			}
+		}
+	}
 	if err := migrateExternalInterfaceGroups(migration, schemaVersion); err != nil {
 		return err
 	}
@@ -588,6 +652,10 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	// Add notes after legacy table rebuilds so every supported upgrade retains the column.
+	if err := addRecordNotes(migration); err != nil {
+		return err
+	}
 	if _, err := migration.Exec(fmt.Sprintf("PRAGMA user_version=%d", options.CurrentVersion)); err != nil {
 		return fmt.Errorf("record SQLite schema version: %w", err)
 	}
@@ -596,6 +664,31 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 	}
 	if err := migration.Commit(); err != nil {
 		return fmt.Errorf("commit SQLite migration: %w", err)
+	}
+	return nil
+}
+
+var recordNoteTables = []string{
+	"users", "quick_run_groups", "quick_runs", "schedule_groups", "schedules",
+	"file_quick_access_pins", "website_monitors", "external_trigger_groups",
+	"external_trigger_keys", "external_trigger_entries", "fleet_peers",
+	"mysql_instances", "mysql_backup_plans", "redis_instances",
+	"custom_dashboards", "custom_dashboard_cards", "custom_tabs", "kubernetes_connection",
+}
+
+func addRecordNotes(migration *sql.Tx) error {
+	for _, table := range recordNoteTables {
+		exists, err := storesqlite.ColumnExists(migration, table, "note")
+		if err != nil {
+			return fmt.Errorf("inspect operator note migration for %s: %w", table, err)
+		}
+		if exists {
+			continue
+		}
+		// Notes are optional private operator context and never change record behavior.
+		if _, err := migration.Exec("ALTER TABLE " + table + " ADD COLUMN note TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("add operator note to %s: %w", table, err)
+		}
 	}
 	return nil
 }

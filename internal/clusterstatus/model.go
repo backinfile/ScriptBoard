@@ -15,6 +15,7 @@ const (
 type Connection struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
+	Note           string `json:"note,omitempty"`
 	KubeconfigPath string `json:"kubeconfigPath"`
 	Context        string `json:"context"`
 	Mode           Mode   `json:"mode"`

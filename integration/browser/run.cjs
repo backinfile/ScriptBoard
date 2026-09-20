@@ -1813,7 +1813,7 @@ async function assertExternalInterfaces(page, fixture) {
     await quickRunRow.locator(".action-menu summary").click();
     await quickRunRow.getByRole("link", { name: "Edit", exact: true }).click();
     await page.locator('[data-task-panel] [data-task-kind="quick-edit"]').waitFor();
-    assert.equal(await page.locator('[data-task-panel] .field-readonly code').textContent(), fixtureHostPath("automation", "weekly-system-check.ps1"));
+    assert.equal(await page.locator('[data-task-panel] .field-readonly').filter({ has: page.locator('[data-lucide="file-terminal"]') }).locator('code').textContent(), fixtureHostPath("automation", "weekly-system-check.ps1"));
     await page.locator('[data-task-panel] input[name="name"]').fill("Weekly production check");
     await page.locator('[data-task-panel] button[type="submit"]').click();
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });

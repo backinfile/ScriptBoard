@@ -35,6 +35,7 @@ type websiteMonitorConfigFile struct {
 
 type websiteMonitorConfigRecord struct {
 	Name                 string                           `json:"name"`
+	Note                 string                           `json:"note,omitempty"`
 	Scope                websitemonitor.Scope             `json:"scope"`
 	Kind                 websitemonitor.Kind              `json:"kind"`
 	URL                  string                           `json:"url"`
@@ -87,7 +88,7 @@ type websiteMonitorImportPreviewFile struct {
 
 func websiteMonitorConfigRecordFromConfig(config websitemonitor.Config) websiteMonitorConfigRecord {
 	return websiteMonitorConfigRecord{
-		Name: config.Name, Scope: config.Scope, Kind: config.Kind, URL: config.URL,
+		Name: config.Name, Note: config.Note, Scope: config.Scope, Kind: config.Kind, URL: config.URL,
 		FrequencySeconds: int64(config.Frequency / time.Second),
 		TimeoutSeconds:   int64(config.Timeout / time.Second),
 		HTTPMethod:       config.HTTPMethod, HTTPContentType: config.HTTPContentType, HTTPBody: config.HTTPBody,
@@ -104,7 +105,7 @@ func websiteMonitorConfigRecordFromConfig(config websitemonitor.Config) websiteM
 
 func (record websiteMonitorConfigRecord) config() websitemonitor.Config {
 	return websitemonitor.Config{
-		Name: record.Name, Scope: record.Scope, Kind: record.Kind, URL: record.URL,
+		Name: record.Name, Note: record.Note, Scope: record.Scope, Kind: record.Kind, URL: record.URL,
 		Frequency:  time.Duration(record.FrequencySeconds) * time.Second,
 		Timeout:    time.Duration(record.TimeoutSeconds) * time.Second,
 		HTTPMethod: record.HTTPMethod, HTTPContentType: record.HTTPContentType, HTTPBody: record.HTTPBody,

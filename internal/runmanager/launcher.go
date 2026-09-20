@@ -12,6 +12,7 @@ type LaunchRequest struct {
 	ScriptDigest     string   `json:"scriptDigest"`
 	WorkingDirectory string   `json:"workingDirectory"`
 	Arguments        []string `json:"arguments"`
+	ExtraEnv         []string `json:"extraEnv,omitempty"`
 }
 
 type ManagedProcess interface {

@@ -679,7 +679,7 @@ func (a *App) saveMySQLPlan(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	retention, _ := strconv.Atoi(request.FormValue("retention_count"))
-	plan, err := a.mysql.SavePlan(request.Context(), mysqlmanager.PlanInput{Name: request.FormValue("name"), InstanceID: request.PathValue("id"),
+	plan, err := a.mysql.SavePlan(request.Context(), mysqlmanager.PlanInput{Name: request.FormValue("name"), Note: request.FormValue("note"), InstanceID: request.PathValue("id"),
 		Databases: request.Form["databases"], Expression: request.FormValue("expression"), RetentionCount: retention, Enabled: true})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
@@ -704,7 +704,7 @@ func (a *App) updateMySQLPlan(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	retention, _ := strconv.Atoi(request.FormValue("retention_count"))
-	plan, err := a.mysql.SavePlan(request.Context(), mysqlmanager.PlanInput{ID: current.ID, Name: request.FormValue("name"), InstanceID: current.InstanceID,
+	plan, err := a.mysql.SavePlan(request.Context(), mysqlmanager.PlanInput{ID: current.ID, Name: request.FormValue("name"), Note: request.FormValue("note"), InstanceID: current.InstanceID,
 		Databases: request.Form["databases"], Expression: request.FormValue("expression"), RetentionCount: retention, Enabled: current.Enabled})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
@@ -823,7 +823,7 @@ func (a *App) saveMySQLInstance(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	instance, err := a.mysql.SaveInstance(request.Context(), mysqlmanager.InstanceInput{
-		ID: request.FormValue("id"), Name: request.FormValue("name"), Host: request.FormValue("host"), Port: port,
+		ID: request.FormValue("id"), Name: request.FormValue("name"), Note: request.FormValue("note"), Host: request.FormValue("host"), Port: port,
 		Username: request.FormValue("username"), Password: request.FormValue("password"),
 		TLSMode: mysqlmanager.TLSMode(request.FormValue("tls_mode")), CAPath: request.FormValue("ca_path"),
 	})

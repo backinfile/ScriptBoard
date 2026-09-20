@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"scriptboard/internal/recordnote"
 )
 
 // recordGroup is the shared organization seam used by every grouped page.
@@ -15,6 +17,7 @@ import (
 type recordGroup struct {
 	ID        string
 	Name      string
+	Note      string
 	SortOrder int
 }
 
@@ -26,7 +29,7 @@ func valueOrEmpty(value *string) string {
 }
 
 func (a *App) loadRecordGroups() ([]recordGroup, error) {
-	rows, err := a.db.Query(`SELECT id, name, sort_order FROM quick_run_groups ORDER BY sort_order, created_at`)
+	rows, err := a.db.Query(`SELECT id, name, note, sort_order FROM quick_run_groups ORDER BY sort_order, created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +37,7 @@ func (a *App) loadRecordGroups() ([]recordGroup, error) {
 	var groups []recordGroup
 	for rows.Next() {
 		var group recordGroup
-		if err := rows.Scan(&group.ID, &group.Name, &group.SortOrder); err != nil {
+		if err := rows.Scan(&group.ID, &group.Name, &group.Note, &group.SortOrder); err != nil {
 			return nil, err
 		}
 		groups = append(groups, group)
@@ -153,9 +156,9 @@ func (a *App) newRecordGroupTask(response http.ResponseWriter, request *http.Req
 }
 
 func (a *App) editRecordGroupTask(response http.ResponseWriter, request *http.Request) {
-	var name string
+	var name, note string
 	id := request.PathValue("id")
-	if err := a.db.QueryRow(`SELECT name FROM quick_run_groups WHERE id=?`, id).Scan(&name); err != nil {
+	if err := a.db.QueryRow(`SELECT name, note FROM quick_run_groups WHERE id=?`, id).Scan(&name, &note); err != nil {
 		http.Error(response, webText(resolveWebLocale(request), "groups.not_found"), http.StatusNotFound)
 		return
 	}
@@ -170,7 +173,7 @@ func (a *App) editRecordGroupTask(response http.ResponseWriter, request *http.Re
 	a.renderTaskPage(response, request, taskPageData{
 		Kind: kind, Title: title,
 		Description: webText(locale, "task.record_group.description"), BackURL: backURL,
-		Action: action, Name: name,
+		Action: action, Name: name, Note: note,
 	})
 }
 
@@ -182,6 +185,11 @@ func (a *App) createRecordGroup(response http.ResponseWriter, request *http.Requ
 	name := strings.TrimSpace(request.FormValue("name"))
 	if name == "" || len([]byte(name)) > 256 {
 		http.Error(response, webText(resolveWebLocale(request), "groups.invalid_name"), http.StatusBadRequest)
+		return
+	}
+	note, err := recordnote.Normalize(request.FormValue("note"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
 	id, err := randomToken(18)
@@ -198,9 +206,9 @@ func (a *App) createRecordGroup(response http.ResponseWriter, request *http.Requ
 	var order int
 	if err = tx.QueryRow(`SELECT COALESCE(MAX(sort_order),0)+1 FROM quick_run_groups`).Scan(&order); err == nil {
 		now := time.Now().UTC().Unix()
-		_, err = tx.Exec(`INSERT INTO quick_run_groups(id,name,sort_order,created_at,updated_at) VALUES(?,?,?,?,?)`, id, name, order, now, now)
+		_, err = tx.Exec(`INSERT INTO quick_run_groups(id,name,note,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?)`, id, name, note, order, now, now)
 		if err == nil {
-			_, err = tx.Exec(`INSERT INTO schedule_groups(id,name,sort_order,created_at,updated_at) VALUES(?,?,?,?,?)`, id, name, order, now, now)
+			_, err = tx.Exec(`INSERT INTO schedule_groups(id,name,note,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?)`, id, name, note, order, now, now)
 		}
 	}
 	if err == nil {
@@ -229,6 +237,11 @@ func (a *App) updateRecordGroup(response http.ResponseWriter, request *http.Requ
 		http.Error(response, webText(resolveWebLocale(request), "groups.invalid_name"), http.StatusBadRequest)
 		return
 	}
+	note, err := recordnote.Normalize(request.FormValue("note"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
 	id := request.PathValue("id")
 	tx, err := a.db.Begin()
 	if err != nil {
@@ -237,13 +250,13 @@ func (a *App) updateRecordGroup(response http.ResponseWriter, request *http.Requ
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC().Unix()
-	result, err := tx.Exec(`UPDATE quick_run_groups SET name=?,updated_at=? WHERE id=?`, name, now, id)
+	result, err := tx.Exec(`UPDATE quick_run_groups SET name=?,note=?,updated_at=? WHERE id=?`, name, note, now, id)
 	changed := int64(0)
 	if err == nil {
 		changed, _ = result.RowsAffected()
 	}
 	if err == nil && changed > 0 {
-		_, err = tx.Exec(`UPDATE schedule_groups SET name=?,updated_at=? WHERE id=?`, name, now, id)
+		_, err = tx.Exec(`UPDATE schedule_groups SET name=?,note=?,updated_at=? WHERE id=?`, name, note, now, id)
 	}
 	if err == nil && changed > 0 {
 		_, err = tx.Exec(`UPDATE schedules SET group_name=? WHERE group_id=? AND deleted=0`, name, id)

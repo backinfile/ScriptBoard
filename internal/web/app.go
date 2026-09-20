@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"scriptboard/internal/identity"
 	"scriptboard/internal/resourcelimits"
 	"scriptboard/internal/store/memorysettings"
@@ -62,6 +63,8 @@ import (
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/quickrun"
+	"scriptboard/internal/recordnote"
 	"scriptboard/internal/redismanager"
 	"scriptboard/internal/registryconnection"
 	"scriptboard/internal/runcontrol"
@@ -133,6 +136,7 @@ func mustWebTemplate(name string) *template.Template {
 
 func webTemplateFunctions() template.FuncMap {
 	return template.FuncMap{
+		"registryBytes":      registryBytes,
 		"assetVersion":       func() string { return webAssetVersion },
 		"brandNameSizeClass": brandNameSizeClass,
 		"join":               strings.Join,
@@ -160,6 +164,7 @@ func webTemplateFunctions() template.FuncMap {
 		},
 		"stringSlice": func(values ...string) []string { return values },
 		"addInt":      func(value, delta int) int { return value + delta },
+		"upper":       strings.ToUpper,
 		"pathEscape":  url.PathEscape,
 		"queryEscape": url.QueryEscape,
 		"shortDigest": func(value string) string {
@@ -556,6 +561,7 @@ type App struct {
 	shellStatusCache          *shellStatusCache
 	websiteMonitor            *websitemonitor.Manager
 	customDashboards          *customdashboard.Manager
+	dashboardFlowRunner       *customdashboard.FlowRunner
 	customTabs                *customtab.Manager
 	customTabChallengeMu      sync.Mutex
 	customTabChallenges       map[string]customTabChallenge
@@ -1000,7 +1006,23 @@ func Open(config Config) (*App, error) {
 		}
 	}
 	application.registryConnections = registryConnections
-	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Client: config.CustomDashboardClient, RegistryConnections: registryConnections, Paused: validating})
+	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Client: config.CustomDashboardClient, RegistryConnections: registryConnections, Paused: validating, SecretStore: credentialStore, QuickRunExists: func(ctx context.Context, id string) (bool, error) {
+		var exists bool
+		if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM quick_runs WHERE id=?)`, id).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	}, QuickRunByName: func(ctx context.Context, name string) (string, bool, error) {
+		var id string
+		err := db.QueryRowContext(ctx, `SELECT id FROM quick_runs WHERE name=? ORDER BY sort_order, created_at LIMIT 1`, name).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		return id, true, nil
+	}})
 	if err != nil {
 		application.websiteMonitor.Close()
 		application.applicationStatus.Close()
@@ -1010,6 +1032,77 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize custom dashboards: %w", err)
 	}
+	// flow 卡片编排器：run 节点经 runcontrol 启动、script 节点经 runmanager 一次性执行、
+	// uses 节点经认证的 Runner 通道执行；轮询 runmanager 状态。节点重叠冲突视为失败
+	// （ConfirmOverlap 固定为 true，流程是用户显式编排的）。
+	// 卡片工作区在 stateRoot/flow-workspaces/<cardID> 下，属应用自管目录：
+	// 路径由服务端生成而非用户输入，故直接构造 PreparedDirectory，不走 hostfiles 准入。
+	flowWorkspaceRoot := filepath.Join(stateRoot, "flow-workspaces")
+	application.dashboardFlowRunner = customdashboard.NewFlowRunner(customdashboard.FlowRunnerOptions{
+		HistoryPath: filepath.Join(stateRoot, "flow-history.json"),
+		Start: func(ctx context.Context, cardID string, node customdashboard.FlowNode, actor customdashboard.FlowActor) (string, error) {
+			if node.RunID != "" {
+				started, startErr := application.runControl.Start(ctx, runcontrol.StartRequest{QuickRunID: node.RunID, ParamValues: node.With, ConfirmOverlap: true, Actor: runcontrol.Actor{UserID: actor.UserID, Username: actor.Username, Role: identity.Role(actor.Role)}})
+				if startErr != nil {
+					return "", startErr
+				}
+				if started.Conflict != "" {
+					return "", errors.New("快捷执行项已有活动运行")
+				}
+				return started.RunID, nil
+			}
+			// script 节点：一次性执行，工作目录即卡片工作区；with 以 SCRIPTBOARD_PARAM_<大写KEY> 注入，
+			// 另注入 SCRIPTBOARD_FLOW_WORKSPACE 便于脚本拼绝对路径。
+			extension, source := ".sbflow", ""
+			if node.Uses != "" {
+				encoded, err := json.Marshal(runmanager.BuiltinJob{Uses: node.Uses, With: node.With})
+				if err != nil {
+					return "", err
+				}
+				source = string(encoded)
+			} else {
+				language, err := quickrun.PlatformLanguage(runtime.GOOS, node.Language)
+				if err != nil {
+					return "", err
+				}
+				extension, source = language.Extension, node.Script
+			}
+			workspace, err := runmanager.PrepareFlowWorkspace(flowWorkspaceRoot, cardID)
+			if err != nil {
+				return "", err
+			}
+			info, statErr := os.Stat(workspace)
+			if statErr != nil {
+				return "", statErr
+			}
+			prepared := hostfiles.PreparedDirectory{Path: workspace, Info: info}
+			extraEnv := make([]string, 0, len(node.With)+1)
+			extraEnv = append(extraEnv, "SCRIPTBOARD_FLOW_WORKSPACE="+workspace)
+			for key, value := range node.With {
+				extraEnv = append(extraEnv, quickrun.ParamEnvName(key)+"="+value)
+			}
+			return application.runs.StartOneTime(runmanager.OneTimeStartRequest{
+				SourceType: "dashboard-flow", SourceName: node.Name, SourceID: cardID + "/" + node.ID,
+				WorkingDirectory: prepared.Path, Extension: extension, Source: source,
+				TimeoutSeconds: node.Timeout, ExtraEnv: extraEnv,
+				AuditSource:       "dashboard-flow:" + cardID,
+				InitiatorUserID:   actor.UserID,
+				InitiatorUsername: actor.Username,
+				InitiatorRole:     actor.Role,
+				PreparedDirectory: &prepared,
+			})
+		},
+		Status: func(_ context.Context, runID string) (string, error) {
+			run, getErr := application.runs.GetMetadata(runID)
+			if getErr != nil {
+				return "", getErr
+			}
+			return run.Status, nil
+		},
+		Stop: func(_ context.Context, runID string) error {
+			return application.runs.Stop(runID)
+		},
+	})
 	application.customTabs, err = customtab.New(customtab.Options{DB: db, SecretStore: credentialStore})
 	if err != nil {
 		application.customDashboards.Close()
@@ -1634,6 +1727,9 @@ func (a *App) Close() error {
 	}
 	if a.customDashboards != nil {
 		a.customDashboards.Close()
+	}
+	if a.dashboardFlowRunner != nil {
+		a.dashboardFlowRunner.Close()
 	}
 	if a.scheduler != nil {
 		a.scheduler.Close()
@@ -2629,7 +2725,7 @@ func (a *App) scheduleRequest(request *http.Request) (scheduler.CreateRequest, e
 		return scheduler.CreateRequest{}, errors.New("计划脚本必须是普通主机文件")
 	}
 	return scheduler.CreateRequest{
-		Name: name, GroupID: groupID, GroupName: groupName,
+		Name: name, Note: request.FormValue("note"), GroupID: groupID, GroupName: groupName,
 		ScriptPath: scriptPath, ArgumentsTemplate: request.FormValue("arguments"),
 		Expression: request.FormValue("expression"), MemoryLimit: request.FormValue("memory_limit"), TimeoutSeconds: timeoutSeconds,
 		AllowOverlap: request.FormValue("disallow_overlap") == "",
@@ -2702,6 +2798,7 @@ func (a *App) deleteSchedule(response http.ResponseWriter, request *http.Request
 type quickRunView struct {
 	ID                  string
 	Name                string
+	Note                string
 	ScriptPath          string
 	DirectoryURL        string
 	ArgumentsTemplate   string
@@ -2717,6 +2814,9 @@ type quickRunView struct {
 	HasLastDuration     bool
 	ScriptSHA256        string
 	Revision            int64
+	ParamsJSON          string
+	// Params 是解析后的执行参数定义，供模板渲染；解析失败视为无参数。
+	Params []quickrun.ParamDef
 }
 
 type quickRunHistoryView struct {
@@ -2732,10 +2832,13 @@ type overlapView struct {
 	MemoryLimit                                   string
 	Action, Script, Arguments, Timeout, CSRFToken string
 	Locale                                        webLocale
+	// Params 是本次启动携带的执行参数取值，重试表单以隐藏字段带回。
+	Params map[string]string
 }
 
 type quickRunCreateRequest struct {
 	Name                string
+	Note                string
 	ScriptPath          string
 	ArgumentsTemplate   string
 	MemoryLimit         string
@@ -2743,6 +2846,7 @@ type quickRunCreateRequest struct {
 	SourceRunID         *string
 	GroupID             *string
 	RequireConfirmation bool
+	ParamsJSON          string
 }
 
 func (a *App) createQuickRun(ctx context.Context, values quickRunCreateRequest) (string, error) {
@@ -2751,6 +2855,10 @@ func (a *App) createQuickRun(ctx context.Context, values quickRunCreateRequest) 
 		return "", err
 	}
 	values.MemoryLimit = memory
+	values.Note, err = recordnote.Normalize(values.Note)
+	if err != nil {
+		return "", err
+	}
 	prepared, err := a.hostPrepareScript(ctx, values.ScriptPath)
 	if err != nil {
 		return "", err
@@ -2770,10 +2878,10 @@ func (a *App) createQuickRun(ctx context.Context, values quickRunCreateRequest) 
 	}
 	now := time.Now().UTC().Unix()
 	if _, err := transaction.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, script_path_key, arguments_template, memory_limit, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-		id, values.Name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), values.ArgumentsTemplate, values.MemoryLimit, values.TimeoutSeconds,
-		values.SourceRunID, sortOrder, now, values.GroupID, values.RequireConfirmation, prepared.Digest, now,
+		(id, name, note, script_path, script_path_key, arguments_template, memory_limit, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at, params_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+		id, values.Name, values.Note, prepared.Path, hostfiles.ComparisonKey(prepared.Path), values.ArgumentsTemplate, values.MemoryLimit, values.TimeoutSeconds,
+		values.SourceRunID, sortOrder, now, values.GroupID, values.RequireConfirmation, prepared.Digest, now, values.ParamsJSON,
 	); err != nil {
 		return "", err
 	}
@@ -2808,7 +2916,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	id, err := a.createQuickRun(request.Context(), quickRunCreateRequest{
-		Name: name, ScriptPath: source.ScriptPath, ArgumentsTemplate: source.ArgumentsTemplate,
+		Name: name, Note: request.FormValue("note"), ScriptPath: source.ScriptPath, ArgumentsTemplate: source.ArgumentsTemplate,
 		MemoryLimit: source.MemoryLimit, TimeoutSeconds: source.TimeoutSeconds, SourceRunID: &source.ID, GroupID: groupID,
 		RequireConfirmation: request.FormValue("require_confirmation") == "1",
 	})
@@ -2863,6 +2971,16 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		return
 	}
 	argumentsTemplate := request.FormValue("arguments")
+	// 先解析执行参数定义，模板校验时把 {{PARAM_<大写名>}} 占位并入变量表。
+	paramsJSON := request.FormValue("params_json")
+	paramDefs, err := quickrun.ParseParamDefs(paramsJSON)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for name, value := range quickrun.ParamValidationVariables(paramDefs) {
+		variables[name] = value
+	}
 	if err := runmanager.ValidateArgumentsTemplate(argumentsTemplate, variables); err != nil {
 		http.Error(response, "参数无效："+err.Error(), http.StatusBadRequest)
 		return
@@ -2873,9 +2991,9 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		return
 	}
 	id, err := a.createQuickRun(request.Context(), quickRunCreateRequest{
-		Name: name, ScriptPath: scriptPath, ArgumentsTemplate: argumentsTemplate,
+		Name: name, Note: request.FormValue("note"), ScriptPath: scriptPath, ArgumentsTemplate: argumentsTemplate,
 		MemoryLimit: request.FormValue("memory_limit"), TimeoutSeconds: timeoutSeconds, SourceRunID: nil, GroupID: groupID,
-		RequireConfirmation: request.FormValue("require_confirmation") == "1",
+		RequireConfirmation: request.FormValue("require_confirmation") == "1", ParamsJSON: paramsJSON,
 	})
 	if err != nil {
 		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
@@ -2922,7 +3040,7 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "无法读取快捷执行分组", http.StatusInternalServerError)
 		return
 	}
-	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, memory_limit, timeout_seconds, group_id, locked, require_confirmation, script_sha256, revision
+	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, memory_limit, timeout_seconds, group_id, locked, require_confirmation, script_sha256, revision, params_json
 		FROM quick_runs ORDER BY sort_order, created_at`)
 	if err != nil {
 		http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
@@ -2932,11 +3050,12 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	for rows.Next() {
 		var quick quickRunView
 		var groupID sql.NullString
-		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.MemoryLimit, &quick.TimeoutSeconds, &groupID, &quick.Locked, &quick.RequireConfirmation, &quick.ScriptSHA256, &quick.Revision); err != nil {
+		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.MemoryLimit, &quick.TimeoutSeconds, &groupID, &quick.Locked, &quick.RequireConfirmation, &quick.ScriptSHA256, &quick.Revision, &quick.ParamsJSON); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 			return
 		}
+		quick.Params, _ = quickrun.ParseParamDefs(quick.ParamsJSON)
 		if prepared, prepareErr := a.hostPrepareScript(request.Context(), quick.ScriptPath); prepareErr == nil && quick.ScriptSHA256 != "" && subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) == 1 {
 			quick.Valid = true
 		}
@@ -2997,9 +3116,30 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
-	started, err := a.runControl.Start(request.Context(), runcontrol.StartRequest{QuickRunID: request.PathValue("id"), ConfirmOverlap: request.FormValue("confirm_overlap") == "yes", Actor: runcontrol.Actor{UserID: current.userID, Username: current.username, Role: current.role}})
+	// 收集 param_<name> 表单字段作为执行参数取值；无任何 param_ 字段时传 nil 走默认值。
+	var paramValues map[string]string
+	if err := request.ParseForm(); err == nil {
+		for name, values := range request.PostForm {
+			if paramName, ok := strings.CutPrefix(name, "param_"); ok && paramName != "" && len(values) > 0 {
+				if paramValues == nil {
+					paramValues = make(map[string]string)
+				}
+				paramValues[paramName] = values[0]
+			}
+		}
+	}
+	started, err := a.runControl.Start(request.Context(), runcontrol.StartRequest{QuickRunID: request.PathValue("id"), ConfirmOverlap: request.FormValue("confirm_overlap") == "yes", ParamValues: paramValues, Actor: runcontrol.Actor{UserID: current.userID, Username: current.username, Role: current.role}})
 	if errors.Is(err, runcontrol.ErrNotFound) {
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, runcontrol.ErrParamsInvalid) {
+		// 填参页提交失败时回到填参页展示错误；纯 API 调用保持 400 行为不变。
+		if request.FormValue("return_to") == "run" {
+			http.Redirect(response, request, "/config/quick-runs/"+url.PathEscape(request.PathValue("id"))+"/run?error="+url.QueryEscape("执行参数无效："+err.Error()), http.StatusSeeOther)
+			return
+		}
+		http.Error(response, "执行参数无效："+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if errors.Is(err, runcontrol.ErrPublicationChanged) {
@@ -3023,7 +3163,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		// 修复可继续的重叠确认被异步前端当成普通 409 错误：明确声明为 HTML 文档。
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		response.WriteHeader(http.StatusConflict)
-		_ = overlapTemplate.Execute(response, overlapView{Action: "/config/quick-runs/" + url.PathEscape(request.PathValue("id")) + "/start", Script: started.ScriptPath, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request)})
+		_ = overlapTemplate.Execute(response, overlapView{Action: "/config/quick-runs/" + url.PathEscape(request.PathValue("id")) + "/start", Script: started.ScriptPath, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request), Params: paramValues})
 		return
 	}
 	a.recordQuickRunAuditForRequest(request, "start_quick_run", request.PathValue("id"), "accepted")
@@ -5051,7 +5191,7 @@ func isTextPreviewExtension(path string) bool {
 
 func isScriptExtension(path string) bool {
 	switch strings.ToLower(hostfiles.Extension(path)) {
-	case ".ps1", ".cmd", ".bat", ".sh", ".py":
+	case ".ps1", ".cmd", ".bat", ".sh", ".py", ".js":
 		return true
 	default:
 		return false
@@ -5068,6 +5208,8 @@ func highlightLanguageForPath(path string) string {
 		return "bash"
 	case ".py":
 		return "python"
+	case ".js":
+		return "javascript"
 	default:
 		return ""
 	}

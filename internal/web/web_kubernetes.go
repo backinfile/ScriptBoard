@@ -604,7 +604,7 @@ func (a *App) kubernetesConnectionTask(response http.ResponseWriter, request *ht
 }
 
 func kubernetesConnectionFromRequest(request *http.Request) clusterstatus.Connection {
-	return clusterstatus.Connection{ID: request.PathValue("connection"), Name: request.FormValue("name"), KubeconfigPath: request.FormValue("kubeconfig_path"), Context: request.FormValue("context"), Mode: clusterstatus.Mode(request.FormValue("mode"))}
+	return clusterstatus.Connection{ID: request.PathValue("connection"), Name: request.FormValue("name"), Note: request.FormValue("note"), KubeconfigPath: request.FormValue("kubeconfig_path"), Context: request.FormValue("context"), Mode: clusterstatus.Mode(request.FormValue("mode"))}
 }
 
 func (a *App) saveKubernetesConnection(response http.ResponseWriter, request *http.Request) {

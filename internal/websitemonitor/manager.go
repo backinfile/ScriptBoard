@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"scriptboard/internal/recordnote"
 )
 
 type Manager struct {
@@ -118,7 +120,7 @@ func (m *Manager) Update(ctx context.Context, id string, config Config) (Monitor
 		}
 	}
 	result, err := transaction.ExecContext(ctx, `UPDATE website_monitors SET
-		name = ?, scope = ?, kind = ?, url = ?, config_json = ?,
+		name = ?, note = ?, scope = ?, kind = ?, url = ?, config_json = ?,
 		frequency_seconds = ?, timeout_seconds = ?, group_id = ?, sort_order = ?,
 		state = CASE WHEN state = 'paused' THEN 'paused' ELSE 'pending' END,
 		failure_count = 0, generation = generation + 1,
@@ -127,7 +129,7 @@ func (m *Manager) Update(ctx context.Context, id string, config Config) (Monitor
 		last_error_category = '', last_summary = '', last_technical_error = '',
 		last_certificate_json = '{}', updated_at = ?
 		WHERE id = ? AND deleted_at IS NULL`,
-		normalized.Name, normalized.Scope, normalized.Kind, normalized.URL, string(configJSON),
+		normalized.Name, normalized.Note, normalized.Scope, normalized.Kind, normalized.URL, string(configJSON),
 		int(normalized.Frequency/time.Second), int(normalized.Timeout/time.Second), nullableGroupID(normalized.GroupID), sortOrder,
 		now.UnixNano(), now.UnixNano(), id)
 	if err != nil {
@@ -196,10 +198,10 @@ func (m *Manager) createMany(ctx context.Context, configs []Config) ([]Monitor, 
 			return nil, err
 		}
 		_, err = transaction.ExecContext(ctx, `INSERT INTO website_monitors
-			(id, name, scope, kind, url, config_json, frequency_seconds, timeout_seconds, group_id, sort_order, state,
+			(id, name, note, scope, kind, url, config_json, frequency_seconds, timeout_seconds, group_id, sort_order, state,
 			 generation, next_check_at, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?, ?)`,
-			ids[index], config.Name, config.Scope, config.Kind, config.URL, string(configJSON[index]),
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?, ?)`,
+			ids[index], config.Name, config.Note, config.Scope, config.Kind, config.URL, string(configJSON[index]),
 			int(config.Frequency/time.Second), int(config.Timeout/time.Second), nullableGroupID(config.GroupID), sortOrder,
 			now.UnixNano(), now.UnixNano(), now.UnixNano())
 		if err != nil {
@@ -228,6 +230,11 @@ func normalizeConfig(config Config) (Config, error) {
 	config.Name = strings.TrimSpace(config.Name)
 	if config.Name == "" || len([]rune(config.Name)) > 80 {
 		return Config{}, errors.New("名称必须是 1 到 80 个字符")
+	}
+	var err error
+	config.Note, err = recordnote.Normalize(config.Note)
+	if err != nil {
+		return Config{}, err
 	}
 	if config.Scope == "" {
 		config.Scope = ScopeExternal

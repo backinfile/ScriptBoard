@@ -17,6 +17,7 @@ import (
 
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/identity"
+	"scriptboard/internal/recordnote"
 )
 
 const maxFileQuickAccessPins = 30
@@ -24,13 +25,14 @@ const maxFileQuickAccessPins = 30
 type fileQuickAccessPin struct {
 	Path    string `json:"path"`
 	Label   string `json:"label"`
+	Note    string `json:"note"`
 	Href    string `json:"href"`
 	Kind    string `json:"kind"`
 	GroupID string `json:"groupId"`
 }
 
 func (a *App) quickAccessPins() ([]fileQuickAccessPin, error) {
-	rows, err := a.db.Query(`SELECT p.path, p.label, p.target_kind, COALESCE(p.group_id,'')
+	rows, err := a.db.Query(`SELECT p.path, p.label, p.note, p.target_kind, COALESCE(p.group_id,'')
 		FROM file_quick_access_pins p LEFT JOIN quick_run_groups g ON g.id=p.group_id
 		ORDER BY CASE WHEN p.group_id IS NULL THEN 1 ELSE 0 END, g.sort_order, p.sort_order, p.created_at`)
 	if err != nil {
@@ -40,7 +42,7 @@ func (a *App) quickAccessPins() ([]fileQuickAccessPin, error) {
 	pins := make([]fileQuickAccessPin, 0, maxFileQuickAccessPins)
 	for rows.Next() {
 		var pin fileQuickAccessPin
-		if err := rows.Scan(&pin.Path, &pin.Label, &pin.Kind, &pin.GroupID); err != nil {
+		if err := rows.Scan(&pin.Path, &pin.Label, &pin.Note, &pin.Kind, &pin.GroupID); err != nil {
 			return nil, err
 		}
 		pin.Href = fileQuickAccessHref(pin.Path, pin.Kind)
@@ -122,6 +124,11 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 		}
 		renameGroupValue = request.FormValue("group_id")
 	}
+	note, noteErr := recordnote.Normalize(request.FormValue("note"))
+	if noteErr != nil {
+		http.Error(response, noteErr.Error(), http.StatusBadRequest)
+		return
+	}
 
 	transaction, err := a.db.Begin()
 	if err != nil {
@@ -139,8 +146,8 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 			label = path
 		}
 		_, err = transaction.Exec(`INSERT INTO file_quick_access_pins
-			(path, path_key, label, target_kind, group_id, sort_order, created_at)
-			VALUES (?, ?, ?, ?, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM file_quick_access_pins WHERE group_id IS NULL), 1), ?)
+			(path, path_key, label, note, target_kind, group_id, sort_order, created_at)
+			VALUES (?, ?, ?, '', ?, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM file_quick_access_pins WHERE group_id IS NULL), 1), ?)
 			ON CONFLICT(path_key) DO UPDATE SET path = excluded.path, target_kind = excluded.target_kind`,
 			path, pathKey, label, targetKind, time.Now().UTC().UnixNano())
 		if err == nil {
@@ -170,7 +177,7 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 				break
 			}
 		}
-		result, updateErr := transaction.Exec("UPDATE file_quick_access_pins SET label = ?, group_id=?, sort_order=? WHERE path_key = ?", renameLabel, renameGroupID, order, pathKey)
+		result, updateErr := transaction.Exec("UPDATE file_quick_access_pins SET label = ?, note = ?, group_id=?, sort_order=? WHERE path_key = ?", renameLabel, note, renameGroupID, order, pathKey)
 		err = updateErr
 		if err == nil {
 			if changed, _ := result.RowsAffected(); changed != 1 {

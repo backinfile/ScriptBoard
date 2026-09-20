@@ -4,6 +4,7 @@ var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS website_monitors (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
+		note TEXT NOT NULL DEFAULT '',
 		scope TEXT NOT NULL CHECK (scope IN ('local', 'external')),
 		kind TEXT NOT NULL CHECK (kind IN ('http', 'websocket')),
 		url TEXT NOT NULL,

@@ -20,10 +20,11 @@ ScriptBoard is built for personal servers, small-team utility hosts, and interna
 - **Manage files:** browse, search, preview, edit, batch-upload, and download host files; restore web-deleted files from Trash. Use **Go to** to enter a path or search the current directory, subdirectories, or all host locations and open the page containing the highlighted file.
 - **Organize documents:** bookmark and group host documents; manage frequent directories on a dedicated Quick Access page.
 - **Inspiration space:** share notes, links, tasks, timers, and freehand canvases together, with server-side saving for all signed-in users.
-- **Run scripts:** execute PowerShell, Python, Shell, Batch, and CMD scripts with live output, duration, and results.
-- **Reuse tasks:** save scripts as Quick Runs with parameters, variables, timeouts, and five-field Cron schedules.
+- **Run scripts:** execute PowerShell, Python, Shell, Batch, CMD, and Node.js scripts with live output, duration, and results.
+- **Reuse tasks:** save scripts as Quick Runs with parameters, variables, timeouts, and five-field Cron schedules. Define run parameters to fill in before each start; scripts read them as `SCRIPTBOARD_PARAM_<NAME>` environment variables or reference them as `{{PARAM_<NAME>}}` in the arguments template.
 - **Observe the host:** inspect CPU, memory, storage, applications, Docker, Kubernetes, websites, and run history. Kubernetes external access, workloads, and nodes start collapsed, with manual refresh, auto refresh, and expand/collapse controls in one row. Filtering, searching, and sorting update only the workload section.
 - Kubernetes workloads show full image references (tags or digests) and the latest associated container start time. Use Columns to save visible columns in this browser; wide tables scroll horizontally.
+- **Build custom dashboards:** number, percentage, quota, key-value, website, registry, and flow-chart cards; attach action buttons to trigger Quick Runs or send HTTP requests straight from the browser; share a dashboard as private, public read-only, access-key operated, or anonymous operated, and move cards between instances with export/import.
 - **Manage data connections:** databases and registries share a consistent connection sidebar and content layout. Back up and restore MySQL/MariaDB; inspect Redis health, key types, TTLs, and memory without mutation.
 - **Manage image registries:** browse nested namespaces beside the image list, along with tags, compressed sizes, and version times. Click a namespace to filter its images; click the selected node again to expand or collapse its children. Connections switch between read-only and allow-changes modes; new connections default to read-only. Switch connections in the left-hand list and edit the current connection at the top right of the content area. Use Cleanup rules for bulk deletion or open an image for per-tag deletion.
 - **Keep boundaries visible:** use fixed roles, audit records, host-security checks, bounded external triggers, and signed updates.
@@ -257,3 +258,7 @@ Apply global changes with elevated `scriptboard service restart`, or restart the
 ## Workflows
 
 Open **Workflows** to arrange nodes, configure execution entries, and inspect run history. Import or export JSON from the editor menu; download the AI authoring guide and example from the Guide tab. Custom scripts are stored in ScriptBoard.
+
+Editable records support private notes of up to 500 characters. Registry connections default to read-only, with connection tests, image details and bulk-operation previews.
+
+Dashboard flows support node and global cleanup steps, parameterized Quick Runs, inline scripts and built-in operations with retained history. Public action buttons report run outcomes. Built-in HTTP supports HTTP/HTTPS; explicitly skipping certificate verification creates a man-in-the-middle risk. See the [dashboard configuration format](docs/DASHBOARD-CONFIG-FORMAT.md).

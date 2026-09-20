@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"scriptboard/internal/recordnote"
 )
 
 type Options struct {
@@ -57,6 +59,11 @@ func normalizeConnection(connection Connection) (Connection, error) {
 	connection.Name = strings.TrimSpace(connection.Name)
 	connection.KubeconfigPath = strings.TrimSpace(connection.KubeconfigPath)
 	connection.Context = strings.TrimSpace(connection.Context)
+	var err error
+	connection.Note, err = recordnote.Normalize(connection.Note)
+	if err != nil {
+		return Connection{}, err
+	}
 	if connection.Name == "" {
 		return Connection{}, errors.New("connection name is required")
 	}
@@ -190,12 +197,13 @@ func (manager *Manager) SaveConnection(ctx context.Context, connection Connectio
 		}
 	}
 	_, err = transaction.ExecContext(ctx, `INSERT INTO kubernetes_connection
-		(id, name, kubeconfig_path, context_name, operation_mode, fingerprint, capabilities_json, last_tested_at, last_error, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?)
+		(id, name, note, kubeconfig_path, context_name, operation_mode, fingerprint, capabilities_json, last_tested_at, last_error, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, kubeconfig_path=excluded.kubeconfig_path,
+		note=excluded.note,
 		context_name=excluded.context_name, operation_mode=excluded.operation_mode, fingerprint=excluded.fingerprint,
 		capabilities_json=excluded.capabilities_json, last_tested_at=excluded.last_tested_at,
-		last_error='', updated_at=excluded.updated_at`, connection.ID, connection.Name, connection.KubeconfigPath, connection.Context,
+		last_error='', updated_at=excluded.updated_at`, connection.ID, connection.Name, connection.Note, connection.KubeconfigPath, connection.Context,
 		connection.Mode, client.Fingerprint(), string(encoded), now.UnixNano(), now.UnixNano())
 	if err != nil {
 		_ = client.Close()
@@ -277,7 +285,7 @@ func scanConnectionStatus(scanner rowScanner) (ConnectionStatus, error) {
 	var status ConnectionStatus
 	var encoded string
 	var testedAt int64
-	err := scanner.Scan(&status.ID, &status.Name, &status.KubeconfigPath, &status.Context, &status.Mode, &status.Fingerprint, &encoded, &testedAt, &status.Error)
+	err := scanner.Scan(&status.ID, &status.Name, &status.Note, &status.KubeconfigPath, &status.Context, &status.Mode, &status.Fingerprint, &encoded, &testedAt, &status.Error)
 	if err != nil {
 		return ConnectionStatus{}, err
 	}
@@ -289,7 +297,7 @@ func scanConnectionStatus(scanner rowScanner) (ConnectionStatus, error) {
 	return status, nil
 }
 
-const connectionStatusColumns = `id, name, kubeconfig_path, context_name, operation_mode, fingerprint, capabilities_json, last_tested_at, last_error`
+const connectionStatusColumns = `id, name, note, kubeconfig_path, context_name, operation_mode, fingerprint, capabilities_json, last_tested_at, last_error`
 
 func (manager *Manager) ConnectionStatus(ctx context.Context, id string) (ConnectionStatus, bool, error) {
 	status, err := scanConnectionStatus(manager.db.QueryRowContext(ctx, `SELECT `+connectionStatusColumns+` FROM kubernetes_connection WHERE id=?`, id))
