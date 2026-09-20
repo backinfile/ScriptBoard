@@ -354,10 +354,13 @@ func TestFlowRunnerRecordsHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFlowFinished(t, runner, card.ID)
+	// Wait for the worker's history write before starting or reloading another run.
+	runner.wg.Wait()
 	if _, err := runner.Start(card, FlowActor{Username: "admin"}); err != nil {
 		t.Fatal(err)
 	}
 	waitFlowFinished(t, runner, card.ID)
+	runner.Close()
 	entries := runner.History(card.ID)
 	if len(entries) != 2 {
 		t.Fatalf("entries=%v", entries)
