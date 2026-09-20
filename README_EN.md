@@ -1,6 +1,6 @@
 # ScriptBoard
 
-v2.13.1 fixes host sign-in type filters and adds clear custom date range validation. See the [release notes (Chinese)](./docs/RELEASE_NOTES.md).
+v2.14.0 adds dashboard flows, parameterized Quick Runs and private notes, with improved registry management and mobile editing. See the [release notes (Chinese)](./docs/RELEASE_NOTES.md).
 
 [简体中文](./README.md) | English
 
@@ -25,7 +25,7 @@ ScriptBoard is built for personal servers, small-team utility hosts, and interna
 - **Observe the host:** inspect CPU, memory, storage, applications, Docker, Kubernetes, websites, and run history. Kubernetes external access, workloads, and nodes start collapsed, with manual refresh, auto refresh, and expand/collapse controls in one row. Filtering, searching, and sorting update only the workload section.
 - Kubernetes workloads show full image references (tags or digests) and the latest associated container start time. Use Columns to save visible columns in this browser; wide tables scroll horizontally.
 - **Build custom dashboards:** number, percentage, quota, key-value, website, registry, and flow-chart cards; attach action buttons to trigger Quick Runs or send HTTP requests straight from the browser; share a dashboard as private, public read-only, access-key operated, or anonymous operated, and move cards between instances with export/import.
-- **Manage data connections:** databases and registries share a consistent connection sidebar and content layout. Back up and restore MySQL/MariaDB; inspect Redis health, key types, TTLs, and memory without mutation.
+- **Manage data connections:** back up and restore MySQL/MariaDB; inspect Redis health, key types, TTLs, and memory without mutation. Switch Registry connections at the top of the page, browse namespaces and image versions, and preview cleanup before deletion.
 - **Manage image registries:** browse nested namespaces beside the image list, along with tags, compressed sizes, and version times. Click a namespace to filter its images; click the selected node again to expand or collapse its children. Connections switch between read-only and allow-changes modes; new connections default to read-only. Switch connections in the left-hand list and edit the current connection at the top right of the content area. Use Cleanup rules for bulk deletion or open an image for per-tag deletion.
 - **Keep boundaries visible:** use fixed roles, audit records, host-security checks, bounded external triggers, and signed updates.
 - **Filter host sign-ins:** choose SSH password/public key authentication or Windows RDP/network logins.
