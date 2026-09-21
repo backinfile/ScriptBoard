@@ -2377,7 +2377,7 @@ var appCSS = mustWebAsset("ui/assets/app.css") + "\n" + mustWebAsset("ui/assets/
 
 var workbenchJS = mustWebAsset("ui/assets/workbench.js")
 
-var appJS = mustWebAsset("ui/assets/file-jump.js") + "\n" + mustWebAsset("ui/assets/app.js") + "\n" + mustWebAsset("ui/assets/registries.js")
+var appJS = mustWebAsset("ui/assets/file-jump.js") + "\n" + mustWebAsset("ui/assets/app.js") + "\n" + mustWebAsset("ui/assets/registries.js") + "\n" + mustWebAsset("ui/assets/registry-card-tree.js")
 
 var markdownItJS = mustWebAsset("ui/assets/markdown-it.min.js")
 

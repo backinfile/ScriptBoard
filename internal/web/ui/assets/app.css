@@ -9280,3 +9280,11 @@ body.custom-dashboard-public .custom-dashboard-surface{min-height:0;padding:24px
 .task-advanced{border-top:1px solid var(--rule);padding-top:12px}.task-advanced>summary{cursor:pointer;min-height:44px;align-content:center}.task-advanced>label{display:grid;gap:8px}
 
 @media(max-width:760px){.custom-dashboard-admin .custom-dashboard-card__config{display:grid;gap:8px}.custom-dashboard-admin .custom-dashboard-card__config span{display:flex;flex-wrap:wrap;gap:6px}.custom-dashboard-admin .custom-dashboard-card__action-count{margin-inline-start:0}.quick-run-group__toggle,[data-quick-run-history-entry]{min-width:44px;min-height:44px}.quick-run-history__barometer{flex-wrap:wrap}}
+
+/* Namespace disclosures retain each card's local browser state without altering image rows. */
+.custom-dashboard-registry-list{container-type:inline-size}
+/* Let collapsed registry groups reduce their row height instead of leaving an empty card shell. */
+body.custom-dashboard-public .custom-dashboard-grid:has(>.custom-dashboard-card--registry){grid-auto-rows:auto}
+.custom-dashboard-registry-group>summary small{display:inline}
+@container(max-width:680px){.custom-dashboard-registry-row{grid-template-columns:30px minmax(0,1fr);align-items:start}.custom-dashboard-registry-row__state{display:none}.custom-dashboard-registry-row__versions{grid-column:2}.custom-dashboard-registry-row__image small{white-space:normal}}
+.custom-dashboard-registry-group{min-width:0;border-bottom:1px solid var(--instrument-line)}.custom-dashboard-registry-group>summary{cursor:pointer;min-height:44px;padding:12px 4px;color:var(--instrument-ink);font:.8rem var(--font-mono);overflow-wrap:anywhere}.custom-dashboard-registry-group>summary small{margin-left:12px;color:var(--instrument-muted)}.custom-dashboard-registry-group>.custom-dashboard-registry-group{margin-left:16px}.custom-dashboard-registry-group .custom-dashboard-registry-row{border-bottom:0}.custom-dashboard-registry-group>summary:focus-visible{outline:2px solid var(--instrument-signal);outline-offset:2px}

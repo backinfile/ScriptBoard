@@ -2,6 +2,7 @@ package web
 
 func init() {
 	for key, value := range map[string]localizedMessage{
+		"history_hint":        {"执行镜像清理后，可在这里查看操作人、时间和结果。", "After image cleanup, review who performed it, when, and the results here."},
 		"cancel":              {"取消", "Cancel"},
 		"test":                {"测试连接", "Test connection"},
 		"test_ok":             {"连接测试成功，可读取镜像目录。设置尚未保存；新输入的密码请在保存前重新填写。", "Connection test succeeded. Settings are not saved; re-enter a newly supplied password before saving."},
@@ -35,7 +36,6 @@ func init() {
 		"actor":               {"操作人", "Operator"},
 		"read_failed":         {"镜像目录读取失败", "Could not read registry catalog"},
 		"read_ok":             {"镜像目录读取成功", "Catalog read successfully"},
-		"history_hint":        {"操作记录来自本地保存的执行结果", "History contains locally recorded execution results"},
 		"search_button":       {"搜索", "Search"},
 		"clear_search":        {"清除搜索", "Clear search"},
 		"selected_count":      {"已选", "Selected"},
