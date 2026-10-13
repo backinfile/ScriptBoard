@@ -7,9 +7,12 @@ on:
     branches: [dev]
   schedule:
     - cron: "17 3 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# Use Node 24 actions so scheduled scans do not need deprecated runtime fallback.
 
 concurrency:
   group: security-${{ github.workflow }}-${{ github.ref }}
@@ -19,8 +22,8 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -30,18 +33,21 @@ jobs:
   vulnerability-and-secret-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: govulncheck
         uses: golang/govulncheck-action@v1
         with:
           repo-checkout: false
+          # Clear the action's stable default so go.mod selects the toolchain.
+          go-version-input: ''
           go-version-file: go.mod
           go-package: ./...
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: false
       - uses: anchore/sbom-action@v0
         with:
           path: .
@@ -54,7 +60,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: github/codeql-action/init@v4
         with:
           languages: go

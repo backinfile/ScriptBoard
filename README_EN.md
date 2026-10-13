@@ -1,6 +1,6 @@
 # ScriptBoard
 
-v2.14.0 adds dashboard flows, parameterized Quick Runs and private notes, with improved registry management and mobile editing. See the [release notes (Chinese)](./docs/RELEASE_NOTES.md).
+v2.14.1 updates security components and release checks, with improved registry browsing and grouping. See the [release notes (Chinese)](./docs/RELEASE_NOTES.md).
 
 [简体中文](./README.md) | English
 
@@ -266,3 +266,5 @@ Dashboard flows support node and global cleanup steps, parameterized Quick Runs,
 Image versions are ordered newest first by creation time, with unknown dates last. Dashboards support localized controls, mobile editing and inline flow validation; expand the selected image scope before cleanup.
 
 Dashboard registry cards group images by path prefix. Expand or collapse each level; this browser remembers the state separately for each card.
+
+Source builds require Go 1.26.9 or later. See the [release guide (Chinese)](docs/RELEASING.md).

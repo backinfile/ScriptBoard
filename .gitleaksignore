@@ -1,0 +1,15 @@
+# Reviewed synthetic credentials in historical tests; each exception binds one
+# commit, path, rule and line so new credentials still fail the scan.
+# Remote website fixtures use a deterministic sbk_ prefix and repeated payload.
+f4c9a801b7191b9fe0524dfc46ea5fc008b826e2:internal/privilegebroker/remotewebsite_test.go:generic-api-key:31
+f4c9a801b7191b9fe0524dfc46ea5fc008b826e2:internal/app/privileged_broker_feature_test.go:generic-api-key:73
+f4c9a801b7191b9fe0524dfc46ea5fc008b826e2:internal/remotewebsite/service_test.go:generic-api-key:35
+f4c9a801b7191b9fe0524dfc46ea5fc008b826e2:internal/remotewebsite/service_test.go:generic-api-key:60
+f4c9a801b7191b9fe0524dfc46ea5fc008b826e2:internal/remotewebsite/service_test.go:generic-api-key:94
+a4cc591410b15deac7e5a140e572c11a2bed503b:internal/app/website_monitoring_test.go:generic-api-key:817
+# Redaction cases contain a sk-test value, base64 user:password and synthetic PEM.
+2243785bb63181117258c023e920f371647ce269:internal/secretredaction/redaction_test.go:generic-api-key:20
+2243785bb63181117258c023e920f371647ce269:internal/secretredaction/redaction_test.go:generic-api-key:22
+2243785bb63181117258c023e920f371647ce269:internal/secretredaction/redaction_test.go:private-key:28
+# Browser fixture login is only used by the loopback test server.
+8d3ceeabab45c7c8e7a8186ad2438e7782f338fe:integration/browser/fixture/main.go:generic-api-key:18

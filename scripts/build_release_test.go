@@ -87,6 +87,7 @@ func TestFormalReleaseDependsOnSecurityGates(t *testing.T) {
 	content := string(workflow)
 	for _, expected := range []string{
 		"release-windows:",
+		"release-linux:",
 		"go test ./... -count=1",
 		"go vet ./...",
 		"./scripts/windows-scm-security-gate.ps1",
@@ -98,10 +99,11 @@ func TestFormalReleaseDependsOnSecurityGates(t *testing.T) {
 		"pnpm test",
 		"release-security:",
 		"golang/govulncheck-action@v1",
-		"gitleaks/gitleaks-action@v2",
+		"gitleaks/gitleaks-action@v3",
+		`gitleaks git --redact --verbose --log-opts="--full-history HEAD"`,
 		"release-codeql:",
 		"github/codeql-action/analyze@v4",
-		"needs: [release-windows, release-race, release-fuzz, release-browser, release-security, release-codeql]",
+		"needs: [release-windows, release-linux, release-race, release-fuzz, release-browser, release-security, release-codeql]",
 	} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("formal release workflow does not contain %q", expected)

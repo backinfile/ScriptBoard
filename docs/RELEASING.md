@@ -42,7 +42,7 @@ go run ./cmd/scriptboard-release keygen
 
 1. 确认工作树、版本内容和文档已经完成评审。
 2. 在 Windows 与至少两个代表性 systemd Linux 环境完成服务安装、更新、验活失败回滚和人工恢复演练。
-3. 确认正式 Tag 的发布门禁将直接执行全量测试、vet/构建、关键安全包 race、安全边界 fuzz、Chromium 浏览器、`govulncheck`、gitleaks、CodeQL 和提升权限 Windows SCM 三服务矩阵；不得用早先分支上的普通 CI 结果替代 Tag commit 的结果。
+3. 确认正式 Tag 的发布门禁将直接执行 Windows/Linux 全量测试、vet/构建、关键安全包 race、安全边界 fuzz、Chromium 浏览器、`govulncheck`、完整 Tag 历史 gitleaks 扫描、CodeQL 和提升权限 Windows SCM 三服务矩阵；不得用早先分支上的普通 CI 结果替代 Tag commit 的结果。
 4. 创建严格稳定版 Tag，格式只能为 `vX.Y.Z`，并推送该 Tag：
 
    ```powershell
@@ -54,6 +54,8 @@ go run ./cmd/scriptboard-release keygen
 6. 发布后核对 Release 不是 Draft 或 Prerelease，四个平台安装器和三个验证文件齐全，并从一台已安装的上一版本主机执行“立即检查 → 下载并验证 → 安装并重启”。
 
 Tag Release 的任一安全门禁失败、缺少任何必需 Secret、私钥与公钥不匹配、安装器数量错误或清单校验失败时，工作流必须失败，不得手工发布部分产物。
+
+`security` 每周扫描完整 Git 历史，也可在 Actions 手动运行。历史模拟凭据只通过 `.gitleaksignore` 中经过核对的精确指纹豁免；新告警须逐项确认，不得跳过测试目录或缩减扫描范围。`govulncheck` 使用 `go.mod` 指定的 Go 版本。
 
 ## 本地开发构建
 
