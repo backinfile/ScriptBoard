@@ -20,6 +20,7 @@ import (
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/auditnotification"
+	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/config"
 	"scriptboard/internal/externaltrigger"
@@ -36,6 +37,7 @@ import (
 	"scriptboard/internal/securityevents"
 	"scriptboard/internal/servicelogs"
 	"scriptboard/internal/statebackup"
+	updatepkg "scriptboard/internal/update"
 )
 
 func RunBroker(ctx context.Context, arguments []string, getenv func(string) string) error {
@@ -68,6 +70,10 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		if rootErr != nil || !samePath(configuredRoot, absolute) {
 			return errors.New("Broker --state-root does not match the configured State Root")
 		}
+	}
+	absolute, err = filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return fmt.Errorf("resolve managed State Root: %w", err)
 	}
 	database, err := openBrokerDatabase(absolute)
 	if err != nil {
@@ -102,9 +108,6 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		if err != nil {
 			return fmt.Errorf("configure Broker-owned audit notification cursor: %w", err)
 		}
-		if err := emailPoller.Start(ctx); err != nil {
-			return fmt.Errorf("start Broker-owned email notifications: %w", err)
-		}
 	}
 	var vault *secretstore.Store
 	if strings.TrimSpace(*allowedIdentity) != "" {
@@ -115,7 +118,13 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 	if err != nil {
 		return err
 	}
-	checkpoint, err := auditcheckpoint.New(auditcheckpoint.Options{StateRoot: absolute, SecretStore: vault})
+	validatingUpdate := func() bool {
+		_, validating := updatepkg.PendingValidation(absolute, buildinfo.Current())
+		return validating
+	}
+	checkpoint, err := auditcheckpoint.New(auditcheckpoint.Options{
+		StateRoot: absolute, SecretStore: vault, PauseWrites: validatingUpdate,
+	})
 	if err != nil {
 		return err
 	}
@@ -162,6 +171,15 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		return fmt.Errorf("resolve privileged Broker executable: %w", err)
 	}
 	protectedPaths := []string{absolute, filepath.Dir(vault.KeyPath()), filepath.Dir(executable)}
+	if !*developmentCurrentUser {
+		installRoot, err := applicationInstallRoot(absolute)
+		if err != nil {
+			return err
+		}
+		if installRoot != "" {
+			protectedPaths = append(protectedPaths, installRoot)
+		}
+	}
 	if emailConfig.NotificationEmailRelayTokenFile != "" {
 		protectedPaths = append(protectedPaths, emailConfig.NotificationEmailRelayTokenFile)
 	}
@@ -222,8 +240,14 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 	}
 	defer transport.Close()
 	applications := appstatus.NewSystemProbe()
+	var updates *updatepkg.Manager
+	if runtime.GOOS == "windows" && !*developmentCurrentUser && *configPath != "" {
+		updates = updatepkg.NewManager(updatepkg.ManagerConfig{
+			StateRoot: absolute, RunnerIdentityMode: emailConfig.RunnerIdentityMode,
+		})
+	}
 	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
-		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
+		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer, Updates: updates,
 		Authorizer: databaseSecurity, Executor: &privilegebroker.MemorySettingsExecutor{StateRoot: absolute, Next: executor}, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
 		MFA: mfaStore, Passkeys: passkeyStore,
@@ -240,6 +264,21 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		return err
 	}
 	server.Start()
+	// The Web service needs Broker IPC during update validation. Background
+	// jobs must wait so a failed candidate cannot produce external effects.
+	for validatingUpdate() {
+		select {
+		case <-ctx.Done():
+			return server.Close()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	if emailPoller != nil {
+		if err := emailPoller.Start(ctx); err != nil {
+			_ = server.Close()
+			return fmt.Errorf("start Broker-owned email notifications: %w", err)
+		}
+	}
 	_ = mysqlExecutionManager.ReconcilePlans(context.Background())
 	var mysqlBackground sync.WaitGroup
 	mysqlBackground.Add(2)

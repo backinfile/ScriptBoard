@@ -76,6 +76,42 @@ func TestSignedCheckpointDetectsValidLookingTailDeletion(t *testing.T) {
 	}
 }
 
+func TestUpdateValidationDoesNotAdvanceCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	audit := auditlog.New(openCheckpointDB(t))
+	firstID, err := audit.Append(ctx, auditlog.Event{OccurredAt: "1", Action: "before-update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused := true
+	checkpoint, err := New(Options{
+		StateRoot: filepath.Join(t.TempDir(), "state"), PauseWrites: func() bool { return paused },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkpoint.VerifyOrBootstrap(ctx, audit, time.Unix(10, 0)); err != nil {
+		t.Fatal(err)
+	}
+	candidateID, err := audit.Append(ctx, auditlog.Event{OccurredAt: "2", Action: "candidate-migration"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkpoint.Write(ctx, audit, time.Unix(11, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if got := checkpoint.CheckpointEventID(); got != firstID {
+		t.Fatalf("pending update advanced the external checkpoint to %d", got)
+	}
+	paused = false
+	if err := checkpoint.Write(ctx, audit, time.Unix(12, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if got := checkpoint.CheckpointEventID(); got != candidateID {
+		t.Fatalf("committed update did not advance the checkpoint: got %d", got)
+	}
+}
+
 func TestCheckpointSignatureAndExternalPresenceAreRequired(t *testing.T) {
 	ctx := context.Background()
 	db := openCheckpointDB(t)

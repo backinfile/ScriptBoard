@@ -413,6 +413,7 @@ type Config struct {
 	UpdateInterval                  time.Duration
 	RunnerIdentityMode              string
 	UpdateSource                    updatepkg.ReleaseSource
+	ManagedUpdates                  updatepkg.ManagedService
 	RequestShutdown                 func()
 	RequestRestart                  func() error
 	ApplicationProbe                appstatus.Probe
@@ -608,6 +609,7 @@ type App struct {
 	restartRequested          atomic.Bool
 	updateCancel              context.CancelFunc
 	updateContext             context.Context
+	updateValidationWG        sync.WaitGroup
 	updateResultsWake         chan struct{}
 	validation                atomic.Bool
 	validationID              string
@@ -1133,60 +1135,23 @@ func Open(config Config) (*App, error) {
 	if application.kubeconfigs == nil {
 		application.kubeconfigs = kubeconfigmanager.DirectManager{}
 	}
-	if !validating {
-		application.hostStatus.Start(context.Background())
-		application.fleetStatus.Start(context.Background())
-		application.applicationStatus.Start(context.Background())
-		application.kubernetesStatus.Start(context.Background())
-		if config.MySQLBackend == nil {
-			_ = application.mysql.ReconcilePlans(context.Background())
-			application.mysqlWG.Add(2)
-			go func() {
-				defer application.mysqlWG.Done()
-				_ = application.mysql.RecoverInterrupted(application.mysqlContext)
-			}()
-			go func() {
-				defer application.mysqlWG.Done()
-				ticker := time.NewTicker(30 * time.Second)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-application.mysqlContext.Done():
-						return
-					case <-ticker.C:
-						_ = application.mysql.RunDuePlans(application.mysqlContext)
-					}
-				}
-			}()
-		}
-	}
 	application.updateContext, application.updateCancel = context.WithCancel(context.Background())
 	application.updates = updatepkg.NewManager(updatepkg.ManagerConfig{
 		StateRoot: stateRoot, CheckEnabled: config.UpdateCheck, CheckInterval: config.UpdateInterval,
 		RunnerIdentityMode: config.RunnerIdentityMode,
-		Source:             config.UpdateSource, RequestShutdown: config.RequestShutdown,
+		Source:             config.UpdateSource, RequestShutdown: config.RequestShutdown, ManagedService: config.ManagedUpdates,
 	})
-	if validating {
-		go application.monitorUpdateValidation(validationID)
-	} else {
-		application.updates.Start(application.updateContext)
-	}
-	go application.monitorUpdateResults()
 	application.shellStatusCache = newShellStatusCache(5*time.Second, time.Now, application.loadShellStatus)
 	application.handler = application.routes()
-	if !validating {
-		application.workflowEngine = &workflow.Engine{Repository: workflow.Repository{DB: application.db}, Executor: workflowExecutor{application}}
-		if err := application.workflowEngine.Start(context.Background()); err != nil {
-			_ = application.Close()
-			return nil, fmt.Errorf("initialize workflow: %w", err)
-		}
+	application.workflowEngine = &workflow.Engine{Repository: workflow.Repository{DB: application.db}, Executor: workflowExecutor{application}}
+	localMySQL := config.MySQLBackend == nil
+	if validating {
+		application.updateValidationWG.Go(func() { application.monitorUpdateValidation(validationID, localMySQL) })
+	} else if err := application.startBackgroundWork(localMySQL); err != nil {
+		_ = application.Close()
+		return nil, err
 	}
-	if !validating {
-		externalContext, externalStop := context.WithCancel(context.Background())
-		application.externalReconcileStop = externalStop
-		application.externalReconcileWG.Add(1)
-		go application.monitorExternalInvocationReconciliation(externalContext)
-	}
+	go application.monitorUpdateResults()
 	auditCheckpointContext, auditCheckpointStop := context.WithCancel(context.Background())
 	application.auditCheckpointStop = auditCheckpointStop
 	application.auditCheckpointWG.Add(1)
@@ -1301,7 +1266,45 @@ func (a *App) endUpdateMaintenance() {
 	a.scheduler.Resume()
 }
 
-func (a *App) monitorUpdateValidation(operationID string) {
+// Normal startup and a successful update must bring up the same workers.
+func (a *App) startBackgroundWork(localMySQL bool) error {
+	if err := a.workflowEngine.Start(a.updateContext); err != nil {
+		return fmt.Errorf("initialize workflow: %w", err)
+	}
+	a.hostStatus.Start(a.updateContext)
+	a.fleetStatus.Start(a.updateContext)
+	a.applicationStatus.Start(a.updateContext)
+	a.kubernetesStatus.Start(a.updateContext)
+	if localMySQL {
+		_ = a.mysql.ReconcilePlans(context.Background())
+		a.mysqlWG.Add(2)
+		go func() {
+			defer a.mysqlWG.Done()
+			_ = a.mysql.RecoverInterrupted(a.mysqlContext)
+		}()
+		go func() {
+			defer a.mysqlWG.Done()
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-a.mysqlContext.Done():
+					return
+				case <-ticker.C:
+					_ = a.mysql.RunDuePlans(a.mysqlContext)
+				}
+			}
+		}()
+	}
+	externalContext, externalStop := context.WithCancel(a.updateContext)
+	a.externalReconcileStop = externalStop
+	a.externalReconcileWG.Add(1)
+	go a.monitorExternalInvocationReconciliation(externalContext)
+	a.updates.Start(a.updateContext)
+	return nil
+}
+
+func (a *App) monitorUpdateValidation(operationID string, localMySQL bool) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -1315,13 +1318,13 @@ func (a *App) monitorUpdateValidation(operationID string) {
 			}
 			switch operation.Phase {
 			case updatepkg.PhaseCommitted, updatepkg.PhaseRolledBack, updatepkg.PhaseFailedSafe:
-				a.validation.Store(false)
+				if err := a.startBackgroundWork(localMySQL); err != nil {
+					continue
+				}
 				a.runs.LeaveMaintenance()
 				a.scheduler.Resume()
-				a.hostStatus.Start(context.Background())
-				a.applicationStatus.Start(context.Background())
 				a.customDashboards.Start()
-				a.updates.Start(a.updateContext)
+				a.validation.Store(false)
 				a.signalUpdateResults()
 				return
 			}
@@ -1688,6 +1691,10 @@ func (a *App) applyStartupCredentials(username, passwordFile string) error {
 }
 
 func (a *App) Close() error {
+	if a.updateCancel != nil {
+		a.updateCancel()
+		a.updateValidationWG.Wait()
+	}
 	if a.workflowEngine != nil {
 		a.workflowEngine.Close()
 	}
@@ -1706,9 +1713,6 @@ func (a *App) Close() error {
 	if a.fileOperationStop != nil {
 		a.fileOperationStop()
 		a.fileOperationWG.Wait()
-	}
-	if a.updateCancel != nil {
-		a.updateCancel()
 	}
 	if a.hostStatus != nil {
 		a.hostStatus.Close()

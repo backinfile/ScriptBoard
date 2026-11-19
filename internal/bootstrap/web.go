@@ -66,6 +66,7 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 		SecurityEventTokenFile: loaded.SecurityEventTokenFile, SecurityEventAllowPrivate: loaded.SecurityEventAllowPrivate,
 		NotificationEmailRelayEndpoint: loaded.NotificationEmailRelayEndpoint, NotificationEmailRecipient: loaded.NotificationEmailRecipient,
 		NotificationEmailRelayTokenFile: loaded.NotificationEmailRelayTokenFile,
+		ManagedUpdates:                  dependencies.updates,
 		UpdateCheck:                     loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
 		RunnerIdentityMode: loaded.RunnerIdentityMode,
 		RequestShutdown: func() {
@@ -142,6 +143,7 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 }
 
 type composedWebDependencies struct {
+	updates             updatepkg.ManagedService
 	runnerLauncher      runmanager.ProcessLauncher
 	auditCheckpoint     webapp.AuditCheckpoint
 	mfaStore            webapp.MFAStore
@@ -182,6 +184,9 @@ func webDependenciesWithIdentity(loaded config.Config, installRoot string, valid
 		return result, fmt.Errorf("resolve privileged Broker endpoint: %w", err)
 	}
 	client := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(result.brokerEndpoint)})
+	if runtime.GOOS == "windows" {
+		result.updates = privilegebroker.NewRemoteUpdates(client)
+	}
 	result.auditCheckpoint = privilegebroker.NewRemoteCheckpoint(client)
 	result.mfaStore = privilegebroker.NewRemoteMFA(client)
 	result.passkeyStore = privilegebroker.NewRemotePasskey(client)
