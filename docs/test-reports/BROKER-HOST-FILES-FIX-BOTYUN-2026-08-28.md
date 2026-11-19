@@ -4,7 +4,7 @@
 分支：`codex/fix-broker-files`  
 产品修复：`89b3ebf`  
 远端测试版本：`404519ffca1eb4e22901e2ffc26ffdeec581e500`（`dev-404519f`）  
-地址：`https://server-test.karen.fan`
+地址：`https://panel.example`
 
 ## 结论
 

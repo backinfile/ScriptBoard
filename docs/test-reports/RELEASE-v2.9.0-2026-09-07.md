@@ -24,9 +24,9 @@
 ## 保留本地部署
 
 - 地址：http://127.0.0.1:29890。
-- 用户名：`admin`；测试密码：`Review fixes local password 2026!`。
+- 用户名：`admin`；测试密码：`[测试密码]`。
 - 进程：63432，以 `.scratch/release-v290/pid.txt` 为准。
-- 程序、独立状态、日志、脚本、截图及结果：`D:\Github\ScriptBoard\.scratch\release-v290`。
+- 程序、独立状态、日志、脚本、截图及结果：`.scratch/release-v290`。
 - 测试创建的灵感空间、笔记、待办、链接、计时器及绘图数据保留。
 
 ## 云端发布

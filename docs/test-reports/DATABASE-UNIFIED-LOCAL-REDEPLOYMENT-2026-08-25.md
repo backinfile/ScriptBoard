@@ -8,12 +8,12 @@
 | --- | --- |
 | 分支 | `codex/database-unified` |
 | 提交 | `3670e5e feat(database): unify mysql and redis workspace` |
-| Worktree | `D:\Github\worktrees\ScriptBoard\database-unified` |
+| Worktree | `../worktrees/ScriptBoard/database-unified` |
 | 构建 | `ScriptBoard development` |
 | 地址 | `http://127.0.0.1:18788` |
 | 进程 | PID 7428，保持运行 |
 | 管理员 | `admin`；一次性密码保留在 State Root 私有文件中，未写入报告 |
-| State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
+| State Root | `../worktrees/ScriptBoard/database-unified/.scratch/database-unified-deployment/state` |
 
 ## 验收结果
 

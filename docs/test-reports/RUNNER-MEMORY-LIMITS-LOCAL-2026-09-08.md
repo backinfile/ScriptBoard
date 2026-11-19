@@ -37,11 +37,11 @@
 
 - 地址：[http://127.0.0.1:6425](http://127.0.0.1:6425)
 - 用户名：`admin`
-- 密码：`Memory-Limits-Test-2026!`
+- 密码：`[测试密码]`
 - 最终配置：总额度 512 MiB，默认任务额度 128 MiB，Windows 单进程 256 MiB。
-- 部署目录：`D:\Github\worktrees\ScriptBoard\runner-memory-limits\.scratch\memory-local`
+- 部署目录：`../worktrees/ScriptBoard/runner-memory-limits/.scratch/memory-local`
 - 测试脚本：同一 worktree 的 `.scratch/memory-scripts`；任务、计划与运行数据均保留。
-- [专项检查记录](/D:/Github/worktrees/ScriptBoard/runner-memory-limits/.scratch/memory-local/browser-results.json)
-- [桌面表单](/D:/Github/worktrees/ScriptBoard/runner-memory-limits/.scratch/memory-local/memory-form-desktop.png) · [手机表单](/D:/Github/worktrees/ScriptBoard/runner-memory-limits/.scratch/memory-local/memory-form-mobile.png)
+- [专项检查记录](../../../worktrees/ScriptBoard/runner-memory-limits/.scratch/memory-local/browser-results.json)
+- [桌面表单](../../../worktrees/ScriptBoard/runner-memory-limits/.scratch/memory-local/memory-form-desktop.png) · [手机表单](../../../worktrees/ScriptBoard/runner-memory-limits/.scratch/memory-local/memory-form-mobile.png)
 
 完整日志保存在该 worktree 的 `.scratch/memory-full-tests.log`、`memory-linux-full.log`、`memory-linux-race.log`、`memory-linux-cgroup.log`、`memory-browser-gate.log` 与 `memory-vet.log`。

@@ -13,7 +13,7 @@
 
 ## 保留的本地部署
 
-地址：http://127.0.0.1:19058。用户名：admin。测试密码：ScriptBoard-Test-2026!。
+地址：http://127.0.0.1:19058。用户名：admin。测试密码：[测试密码]。
 
 状态目录、日志、验证脚本和结果：`.scratch/local-release-v280-20260905/`。程序：`.scratch/local-dev-20260905/scriptboard-v280-test.exe`。进程编号以部署目录 `pid.txt` 为准。
 

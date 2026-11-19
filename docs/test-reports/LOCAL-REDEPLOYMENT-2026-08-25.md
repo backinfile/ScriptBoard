@@ -11,7 +11,7 @@
 | 地址 | `http://127.0.0.1:18788` |
 | PID | `27992` |
 | 二进制 | `.scratch/database-unified-dev-deployment/scriptboard-dev-redeploy-72e3be3-20260825-172600.exe` |
-| State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
+| State Root | `../worktrees/ScriptBoard/database-unified/.scratch/database-unified-deployment/state` |
 | 数据库 | 复用原 `app.db`，现有测试数据保留 |
 | 管理员 | `admin` |
 | 密码 | State Root 私有文件 `secrets/initial-admin-password` |

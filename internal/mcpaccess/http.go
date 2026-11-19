@@ -30,10 +30,15 @@ func (boundary *HTTPBoundary) externalBase(request *http.Request) string {
 	return scheme + "://" + request.Host
 }
 
+// ResourceURL returns the MCP endpoint advertised to OAuth clients.
+func (boundary *HTTPBoundary) ResourceURL(request *http.Request) string {
+	return boundary.externalBase(request) + "/mcp"
+}
+
 func (boundary *HTTPBoundary) ProtectedResourceMetadata(response http.ResponseWriter, request *http.Request) {
 	base := boundary.externalBase(request)
 	writeJSON(response, http.StatusOK, map[string]any{
-		"resource": base + "/mcp", "authorization_servers": []string{base},
+		"resource": boundary.ResourceURL(request), "authorization_servers": []string{base},
 		"scopes_supported": []string{ScopeObserve, ScopeExecute}, "bearer_methods_supported": []string{"header"},
 	})
 }

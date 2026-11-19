@@ -190,9 +190,9 @@
 | 部署模式 | Windows 隔离便携部署 |
 | 地址 | `http://127.0.0.1:5778` |
 | 进程 | PID `38792`，最终构建复验时仍在监听 |
-| Worktree | `D:\Github\worktrees\ScriptBoard\quick-run-inline-sort` |
+| Worktree | `../worktrees/ScriptBoard/quick-run-inline-sort` |
 | State Root | `.scratch/local-deploy-approval-quick-access-20260826/state` |
-| 测试数据 | `D:\Github\ScriptBoard-QA\approval-quick-access-20260826` |
+| 测试数据 | `[外部 QA 目录]/approval-quick-access-20260826` |
 | 管理员 | `admin`；密码保留在 State Root 私有文件中 |
 | 标准错误 | 0 字节 |
 | 审计校验 | 98 条事件；哈希链和外部签名 checkpoint 有效 |

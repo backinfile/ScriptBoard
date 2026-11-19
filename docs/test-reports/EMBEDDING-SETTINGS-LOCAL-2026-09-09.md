@@ -31,8 +31,8 @@
 
 - 地址：http://127.0.0.1:6436/settings/embedding
 - 用户名：`admin`
-- 密码：`Embedding-Settings-Test-2026!`
-- 目录：`C:/Users/17575/AppData/Local/Temp/scriptboard-embedding-settings-20260909`
+- 密码：`[测试密码]`
+- 目录：`[系统临时目录]/scriptboard-embedding-settings-20260909`
 - 保留管理员、测试观察员和维护员、审计及全部地址设置。
 - 目录中包含 `browser-results.json`、`restart-results.txt`、桌面和手机截图、测试脚本、Go 测试日志与服务日志。
 

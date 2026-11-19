@@ -2,7 +2,7 @@
 
 测试时间：2026-08-31（Asia/Shanghai）  
 测试分支：`codex/header-project-name`  
-worktree：`D:\Github\worktrees\ScriptBoard\header-project-name`
+worktree：`../worktrees/ScriptBoard/header-project-name`
 
 ## 结论
 

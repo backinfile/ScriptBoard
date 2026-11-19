@@ -25,7 +25,7 @@ HTTP 页面未提供 `crypto.randomUUID` 时，新建工作流报错。节点 ID
 
 - 地址：http://127.0.0.1:18935
 - 用户：`admin`
-- 密码：`calibration-ledger-2026`
+- 密码：`[测试密码]`
 - 工作流：`913d47052df945c871479bfc58eceb28`
 - 部署、数据、日志及真实接口验证脚本：`.scratch/workflow-uuid-test/`
 

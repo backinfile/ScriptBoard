@@ -39,9 +39,9 @@
 
 - 地址：http://127.0.0.1:18786/resources/workbench
 - 用户名：`admin`
-- 密码：`calibration-ledger-2026`
+- 密码：`[测试密码]`
 - 类型：本机测试实例，使用仓库 browser fixture。
-- 持久化目录：`D:/Github/ScriptBoard/.scratch/personal-workbench-deployment/data`
+- 持久化目录：`.scratch/personal-workbench-deployment/data`
 - 保留“日常工作”、自动验收面板及无 JavaScript 验收数据。
 - 该实例与原有服务分开，仅监听本机地址。
 

@@ -36,7 +36,7 @@
 
 ## 本地部署
 
-保留测试部署 `http://127.0.0.1:18931`，账号 `admin`，密码 `calibration-ledger-2026`。数据、服务日志、PID、扫描前后结果及 HTTP 检查脚本位于 `.scratch/actions-audit-20261013/`。
+保留测试部署 `http://127.0.0.1:18931`，账号 `admin`，密码 `[测试密码]`。数据、服务日志、PID、扫描前后结果及 HTTP 检查脚本位于 `.scratch/actions-audit-20261013/`。
 
 通过 HTTP 接口检查：登录页面、未登录访问重定向、缺少 CSRF 的登录拒绝、管理员登录，以及登录后的 `/monitor`、`/workflow`、`/resources/registries`、`/resources/workbench`、`/settings/instance` 和 `/assets/workflow.js`。共 10 项；测试数据保留。
 

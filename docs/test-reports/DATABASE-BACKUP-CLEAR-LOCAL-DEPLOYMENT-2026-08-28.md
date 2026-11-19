@@ -7,12 +7,12 @@
 | 项目 | 结果 |
 | --- | --- |
 | 分支 | `codex/database-backup-clear` |
-| Worktree | `D:\Github\worktrees\ScriptBoard\database-backup-clear` |
+| Worktree | `../worktrees/ScriptBoard/database-backup-clear` |
 | 构建 | `ScriptBoard development` |
 | 地址 | `http://127.0.0.1:18821` |
 | 进程 | PID 42828，保持运行 |
 | 管理员 | `admin`；初始密码保留在 State Root 私有文件中，未写入报告 |
-| State Root | `D:\Github\worktrees\ScriptBoard\database-backup-clear\.scratch\database-backup-clear-deployment\state` |
+| State Root | `../worktrees/ScriptBoard/database-backup-clear/.scratch/database-backup-clear-deployment/state` |
 
 ## 测试清单与结果
 

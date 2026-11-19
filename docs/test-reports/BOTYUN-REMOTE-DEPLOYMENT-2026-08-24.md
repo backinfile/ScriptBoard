@@ -5,7 +5,7 @@
 | 项目 | 结果 |
 | --- | --- |
 | 目标主机 | SSH `botyun` |
-| 对外地址 | `https://server-test.karen.fan` |
+| 对外地址 | `https://panel.example` |
 | 分支 | `dev` |
 | 提交 | `9adb486b4150fa6c03c457a3e03c1b468c69026a` |
 | 构建版本 | `ScriptBoard dev`，数据库 schema 53 |

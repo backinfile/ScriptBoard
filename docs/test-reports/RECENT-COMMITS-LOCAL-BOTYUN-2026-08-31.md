@@ -6,7 +6,7 @@
 远端升级前版本：`dev-404519f`  
 远端升级后版本：`dev-34db14a`  
 SSH 目标：`botyun`  
-公网地址：`https://server-test.karen.fan`
+公网地址：`https://panel.example`
 
 ## 结论
 
@@ -98,7 +98,7 @@ backgroundColor === rgb(16, 19, 32)
 | State Root | `/var/lib/scriptboard/state-v20` |
 | Schema | 62 |
 | 本地监听 | `127.0.0.1:8787` |
-| 公网入口 | `https://server-test.karen.fan` |
+| 公网入口 | `https://panel.example` |
 | State 备份 | `/root/.scriptboard-backups/state-v20-predeploy-dev-34db14a-20260831T023616Z` |
 | 二进制备份 | `/opt/scriptboard/deploy-backups/0.0.1-pre-34db14a-20260831T023616Z` |
 | 上传 staging | `/root/scriptboard-deploy-34db14a` |

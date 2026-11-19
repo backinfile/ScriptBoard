@@ -18,9 +18,9 @@
 ## 保留的测试部署
 
 - 地址：http://127.0.0.1:6427/settings/memory
-- 用户：`admin`，密码：`Memory-Settings-Test-2026!`
+- 用户：`admin`，密码：`[测试密码]`
 - 当前配置：总额度 `768MiB`、默认任务 `192MiB`、单进程 `256MiB`。
-- 部署、状态和截图保留于 `D:\Github\worktrees\ScriptBoard\memory-settings\.scratch\memory-settings-local`。
+- 部署、状态和截图保留于 `../worktrees/ScriptBoard/memory-settings/.scratch/memory-settings-local`。
 - `browser-results.json` 保存检查结果，`desktop.png` 与 `mobile.png` 保存截图；完整测试日志位于同一 worktree 的 `.scratch`。
 - 保存配置后需要重启服务；环境变量和命令行参数仍优先。为保留测试部署，此次保留任务 worktree。
 

@@ -30,7 +30,7 @@
 ## 截图和保留部署
 
 本轮保留 12 张截图及 JSON 验收证据，截图索引：
-`D:/Github/ScriptBoard/.scratch/ui-fixes-20260920/acceptance/screenshots.html`。
+`.scratch/ui-fixes-20260920/acceptance/screenshots.html`。
 
 重点截图：01 手机编辑布局、02 YAML 行内错误、05 Registry 桌面、07 版本抽屉排序、08 快捷执行、09 二次认证目的、10 英文权限、12 批量范围。
 

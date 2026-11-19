@@ -1712,13 +1712,14 @@ func TestProtectedErrorsRenderInsideTheApplicationShell(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`class="app-sidebar"`, `aria-label="Primary navigation"`, `href="/settings/account"`,
+		`class="sidebar-sign-out" method="post" action="/logout" data-native`,
 		`role="alert"`, `error-page`, "Return to workspace", `data-environment="Local"`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("account error page does not contain %q: %s", expected, page)
 		}
 	}
-	for _, removed := range []string{`class="sidebar-account"`, `action="/logout"`, `<span>admin</span>`} {
+	for _, removed := range []string{`class="sidebar-account"`, `<span>admin</span>`} {
 		if strings.Contains(page, removed) {
 			t.Fatalf("account error page still contains removed sidebar account UI %q: %s", removed, page)
 		}

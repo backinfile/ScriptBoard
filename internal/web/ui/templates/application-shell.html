@@ -66,6 +66,13 @@
         </button>
       </form>
       <a href="/settings/account" {{if .SettingsCurrent}}aria-current="page"{{end}}><span data-lucide="settings" aria-hidden="true"></span><span>{{t .Locale "shell.settings"}}</span></a>
+      {{/* Keep sign-out accessible from every workspace through the existing CSRF-protected action. */}}
+      <form class="sidebar-sign-out" method="post" action="/logout" data-native>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button type="submit" aria-label="{{t .Locale "shell.sign_out"}}" title="{{t .Locale "shell.sign_out"}}">
+          <span data-lucide="log-out" aria-hidden="true"></span><span>{{t .Locale "shell.sign_out"}}</span>
+        </button>
+      </form>
     </div>
   </footer>
 </aside>

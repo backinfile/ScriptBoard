@@ -131,7 +131,7 @@
 | 项目 | 当前状态 |
 | --- | --- |
 | ScriptBoard | `http://127.0.0.1:18788`，PID 39428，保持运行；二进制由当前 `dev` 提交构建 |
-| State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
+| State Root | `../worktrees/ScriptBoard/database-unified/.scratch/database-unified-deployment/state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
 | 测试定义与证书 | `.scratch/database-docker-matrix/` |
@@ -249,7 +249,7 @@
 ## 合并至 dev 后重新部署
 
 - 功能分支 `codex/database-unified` 已通过合并提交 `3244e17` 进入 `dev`；唯一冲突位于快捷运行模板，同时保留了 `dev` 的拖拽排序模式与统一一级标题契约。
-- 合并态执行 `go test ./... -count=1` 全部通过，并从 `dev` 构建 `D:\Github\ScriptBoard\.scratch\database-unified-dev-deployment\scriptboard-dev.exe`。
+- 合并态执行 `go test ./... -count=1` 全部通过，并从 `dev` 构建 `.scratch/database-unified-dev-deployment/scriptboard-dev.exe`。
 - 新进程 PID 为 `37008`，继续监听 `127.0.0.1:18788`；沿用原 State Root，所有数据库容器、连接、SQL 审计、Redis 键及外部日志测试数据均保留。
 - 外部 Playwright 基础矩阵、MySQL/MariaDB SQL 工作台、外部日志排版及十个一级页面标题回归全部通过，控制台错误为 0。
 
@@ -270,7 +270,7 @@
 | PW-09 | 自定义面板调整顺序 | 通过 | 在保留面板中移动卡片，等待实际 DOM 更新后刷新，顺序持久化 |
 | PW-10 | 响应式、键盘、本地化、禁用 JavaScript | 通过 | 1440×1000、390×844/430px、中英文、Escape、键盘操作及无 JavaScript 路径均通过 |
 
-新增并保留了快捷运行分组 `PW retained mt86l5kr A`、`PW retained mt86l5kr B` 及三个运行项；自定义面板卡片的新顺序、Redis 键、SQL 写模式验证数据也保持在当前 State Root。快捷运行源文件保留在 `D:\Github\ScriptBoard-QA\playwright-all-modified-qa.cmd`。
+新增并保留了快捷运行分组 `PW retained mt86l5kr A`、`PW retained mt86l5kr B` 及三个运行项；自定义面板卡片的新顺序、Redis 键、SQL 写模式验证数据也保持在当前 State Root。快捷运行源文件保留在 `[外部 QA 目录]/playwright-all-modified-qa.cmd`。
 
 测试脚本探索阶段发现四项测试夹具假设：受保护 `.scratch` 文件不能作为 Host Files 来源、默认 `dragTo` 落点不触发列表换位、面板排序需等待异步 DOM 更新、Redis 连接列表需要遍历分页。脚本分别改为仓库外 QA 文件、Playwright 页面内 DragEvent、基于名称变化等待和分页遍历后，完整复验全部通过；未发现产品回归，也未删除探索阶段创建的数据。
 

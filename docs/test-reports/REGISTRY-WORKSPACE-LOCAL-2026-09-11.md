@@ -47,9 +47,9 @@ node integration/browser/registry-management-local.cjs
 ## 保留的部署与产物
 
 - 应用：<http://127.0.0.1:19746>
-- 用户名：`admin`；测试密码：`calibration-ledger-2026`
+- 用户名：`admin`；测试密码：`[测试密码]`
 - 测试仓库：<http://127.0.0.1:18946>
-- worktree：`D:/Github/worktrees/ScriptBoard/registry-workspace`
+- worktree：`../worktrees/ScriptBoard/registry-workspace`
 - 状态、测试数据、日志、截图和 JSON 结果：worktree 下 `.scratch/registry-test/`
 - 截图：`desktop.png`、`mobile.png`、`cleanup.png`、`no-js.png`。
 - 历史流程结果：`.scratch/registry-test/legacy-flow/browser-results.json`。

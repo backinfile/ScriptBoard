@@ -7,11 +7,11 @@
 | 项目 | 结果 |
 | --- | --- |
 | 分支 | `codex/database-unified`，基于 `dev` 的 `e07bfe8` |
-| Worktree | `D:\Github\worktrees\ScriptBoard\database-unified` |
+| Worktree | `../worktrees/ScriptBoard/database-unified` |
 | 构建 | `ScriptBoard development`，数据库 schema 54 |
 | 地址 | `http://127.0.0.1:18788` |
 | 管理员 | `admin`；一次性密码保留在 State Root 私有文件中，未写入报告或版本库 |
-| State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
+| State Root | `../worktrees/ScriptBoard/database-unified/.scratch/database-unified-deployment/state` |
 | 当前进程 | PID 37256，保持运行 |
 
 ## 测试结果

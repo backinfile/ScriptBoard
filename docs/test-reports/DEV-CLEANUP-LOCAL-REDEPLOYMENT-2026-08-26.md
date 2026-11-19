@@ -16,18 +16,18 @@
 | --- | --- |
 | 遗留测试报告 | 已提交，提交为 `db3e72c docs(test): retain local deployment reports` |
 | 未合并本地分支 | 0 |
-| Git worktree | 只保留 `D:\Github\ScriptBoard` 的 `dev` worktree |
+| Git worktree | 只保留 `.` 的 `dev` worktree |
 | 已合并功能分支 | 本地 `codex/`、`feat/`、`feature/` 分支已删除 |
 | 历史归档分支 | `archive/release-v2.0.16` 无净文件差异，已删除本地分支 |
 | 旧测试部署 | 10 个 ScriptBoard 实例及配套测试 mock 已停止 |
 
 Git 已解除全部旧 worktree 注册。Windows 文件清理边界仍留下五个不受 Git 管理的旧目录；这些目录不包含未合并提交、不再关联分支，也没有运行中的进程：
 
-- `D:\Github\worktrees\codebase-restructure`
-- `D:\Github\worktrees\http-clipboard-fallback`
-- `D:\Github\worktrees\ScriptBoard\copy-tooltip-layer`
-- `D:\Github\worktrees\ScriptBoard\remove-ai-assistant`
-- `D:\Github\worktrees\ScriptBoard-security-hardening`
+- `../worktrees/codebase-restructure`
+- `../worktrees/http-clipboard-fallback`
+- `../worktrees/ScriptBoard/copy-tooltip-layer`
+- `../worktrees/ScriptBoard/remove-ai-assistant`
+- `../worktrees/ScriptBoard-security-hardening`
 
 ## 测试清单与结果
 

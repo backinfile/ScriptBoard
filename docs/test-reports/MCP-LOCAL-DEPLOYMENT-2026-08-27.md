@@ -2,8 +2,8 @@
 
 ## Retained deployments
 
-- Enabled: `D:\Github\worktrees\ScriptBoard\mcp-streamable-http\.scratch\mcp-local-2026-08-27`, `http://127.0.0.1:18787`, final PID `44028`.
-- Disabled: `D:\Github\worktrees\ScriptBoard\mcp-streamable-http\.scratch\mcp-disabled-2026-08-27`, `http://127.0.0.1:18788`, final PID `21668`.
+- Enabled: `../worktrees/ScriptBoard/mcp-streamable-http/.scratch/mcp-local-2026-08-27`, `http://127.0.0.1:18787`, final PID `44028`.
+- Disabled: `../worktrees/ScriptBoard/mcp-streamable-http/.scratch/mcp-disabled-2026-08-27`, `http://127.0.0.1:18788`, final PID `21668`.
 - Login username: `admin`. The generated 32-character initial password remains only in each deployment's protected State Root and is not copied into this report.
 - Test clients, OAuth grants, token hashes, invocation data, and other test state are intentionally retained in the enabled deployment database.
 

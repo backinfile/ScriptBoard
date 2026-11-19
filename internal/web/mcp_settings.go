@@ -9,6 +9,7 @@ import (
 
 type mcpSettingsData struct {
 	CSRFToken          string
+	EndpointURL        string
 	Clients            []mcpaccess.ClientView
 	Authorizations     []mcpaccess.AuthorizationView
 	Locale             webLocale
@@ -27,8 +28,19 @@ func (a *App) mcpSettingsPage(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "Unable to load MCP authorizations", http.StatusInternalServerError)
 		return
 	}
+	locale := resolveWebLocale(request)
+	data := mcpSettingsData{
+		CSRFToken:          current.csrfToken,
+		Clients:            clients,
+		Authorizations:     authorizations,
+		Locale:             locale,
+		SettingsNavigation: newSettingsNavigation(current, locale, "mcp"),
+	}
+	if a.mcpEnabled {
+		data.EndpointURL = a.mcpHTTP.ResourceURL(request)
+	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = mcpSettingsTemplate.Execute(response, mcpSettingsData{CSRFToken: current.csrfToken, Clients: clients, Authorizations: authorizations, Locale: resolveWebLocale(request), SettingsNavigation: newSettingsNavigation(current, resolveWebLocale(request), "mcp")})
+	_ = mcpSettingsTemplate.Execute(response, data)
 }
 func (a *App) createMCPClient(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {

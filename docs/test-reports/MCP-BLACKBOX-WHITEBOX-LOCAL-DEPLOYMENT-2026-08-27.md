@@ -9,7 +9,7 @@
 
 ## 保留部署与证据
 
-- 启用态：`D:\Github\worktrees\ScriptBoard\mcp-streamable-http\.scratch\mcp-validation-2026-08-27`
+- 启用态：`../worktrees/ScriptBoard/mcp-streamable-http/.scratch/mcp-validation-2026-08-27`
 - URL：`http://127.0.0.1:18791`
 - PID：`42012`
 - 登录用户：`admin`。初始密码只保留在部署 State Root 的受保护凭据文件中，未复制到脚本、命令输出或报告。

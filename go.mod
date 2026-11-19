@@ -1,7 +1,7 @@
 module scriptboard
 
-// Keep builds on the patched toolchain used by the vulnerability gate.
-go 1.26.9
+// Go 1.26.11 includes the standard library fixes for GO-2026-6809 and GO-2026-6859.
+go 1.26.11
 
 require (
 	github.com/Microsoft/go-winio v0.6.2

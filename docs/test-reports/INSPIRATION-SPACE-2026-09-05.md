@@ -36,8 +36,8 @@
 
 - 地址：http://127.0.0.1:18786/resources/workbench
 - 用户名：admin
-- 密码：calibration-ledger-2026
-- 数据目录：D:/Github/ScriptBoard/.scratch/inspiration-space-deployment/data
+- 密码：[测试密码]
+- 数据目录：.scratch/inspiration-space-deployment/data
 - 保留日常工作、绘图与多成员同步验收面板。原个人测试实例的数据副本仍保留。
 
 ## 截图

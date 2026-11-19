@@ -2,7 +2,7 @@
 
 测试时间：2026-09-01（Asia/Shanghai）  
 测试分支：`codex/file-multi-select-sort`  
-worktree：`D:\Github\worktrees\ScriptBoard\file-multi-select-sort`
+worktree：`../worktrees/ScriptBoard/file-multi-select-sort`
 
 ## 结论
 

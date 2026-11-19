@@ -18,12 +18,12 @@
 ## 保留部署
 
 应用：http://127.0.0.1:19746
-账号：admin / calibration-ledger-2026
+账号：admin / [测试密码]
 Registry V2 测试服务：http://127.0.0.1:18946
 本次使用真实应用测试入口和本地 Registry V2 HTTP 模拟服务，未连接生产仓库。
 
 当前二进制和截图、日志、results.json 位于此 worktree 的 `.scratch/namespace-test/`。
-连接和测试状态沿用 `D:/Github/worktrees/ScriptBoard/registry-workspace/.scratch/registry-test/deployment`，测试数据全部保留。
+连接和测试状态沿用 `../worktrees/ScriptBoard/registry-workspace/.scratch/registry-test/deployment`，测试数据全部保留。
 
 ## 数据库与镜像仓库共用框架
 

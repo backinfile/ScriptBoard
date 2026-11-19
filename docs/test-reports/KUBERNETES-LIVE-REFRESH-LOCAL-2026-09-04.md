@@ -4,7 +4,7 @@
 
 测试分支：`codex/kubernetes-refresh`
 
-worktree：`D:\Github\worktrees\ScriptBoard\kubernetes-refresh`
+worktree：`../worktrees/ScriptBoard/kubernetes-refresh`
 
 ## 结论
 

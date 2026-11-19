@@ -135,6 +135,14 @@ func TestOAuthAuthorizationResumesAfterLogin(t *testing.T) {
 func TestOAuthConsentAllowsOnlyValidatedCallbackNavigation(t *testing.T) {
 	client, base := authenticatedClientWithConfig(t, app.Config{StateRoot: t.TempDir(), CanonicalExternalURL: "https://panel.example"})
 	page := getBody(t, client, base+"/settings/mcp", http.StatusOK)
+	for _, expected := range []string{
+		`data-copy-value="https://panel.example/mcp"`,
+		`<details class="mcp-manual-registration">`,
+	} {
+		if !strings.Contains(string(page), expected) {
+			t.Fatalf("MCP settings does not contain %q", expected)
+		}
+	}
 	response, err := client.PostForm(base+"/settings/mcp/clients", url.Values{"csrf_token": {formToken(t, page)}, "client_id": {"browser-test"}, "name": {"Browser callback test"}, "redirect_uris": {"http://127.0.0.1:18880/callback"}})
 	if err != nil {
 		t.Fatal(err)

@@ -29,9 +29,9 @@
 
 - 应用：http://127.0.0.1:11165 ，管理员 admin，测试密码见本机验收目录 ids.json。
 - Registry 测试服务：http://127.0.0.1:11166 ，含 25 个镜像仓库。
-- 状态、日志、截图及测试脚本：D:/Github/ScriptBoard/.scratch/acceptance-20260920/ 。保留测试数据和两个服务。
-- 完整测试日志：D:/Github/ScriptBoard/.scratch/finish-pending-20260920/ 。
-- 原始 review：D:/Github/ScriptBoard/.scratch/worktree-review-2026-09-20/REVIEW.md 。
+- 状态、日志、截图及测试脚本：.scratch/acceptance-20260920/ 。保留测试数据和两个服务。
+- 完整测试日志：.scratch/finish-pending-20260920/ 。
+- 原始 review：.scratch/worktree-review-2026-09-20/REVIEW.md 。
 
 本次使用 Windows 本机便携部署；Linux 为交叉编译，未执行 Linux 原生部署、Windows SCM 服务安装和 race detector。真实生产 Registry 的删除/恢复仍取决于服务端能力；本机使用测试服务与自动化夹具验证。
 

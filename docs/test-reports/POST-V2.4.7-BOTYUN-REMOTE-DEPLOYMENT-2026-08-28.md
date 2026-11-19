@@ -2,7 +2,7 @@
 
 测试时间：2026-08-28（Asia/Shanghai）  
 SSH 目标：`botyun`  
-公网地址：`https://server-test.karen.fan`  
+公网地址：`https://panel.example`
 最终被测提交：`a7adcf7e7aac238c2c69bcc94ee92ba059b70c4d`
 
 ## 结论
@@ -28,7 +28,7 @@ SSH 目标：`botyun`
 | Commit | `a7adcf7e7aac238c2c69bcc94ee92ba059b70c4d` |
 | Schema | 62，由原 schema 54 启动迁移 |
 | 本地监听 | `127.0.0.1:8787` |
-| 公网入口 | Nginx HTTPS `server-test.karen.fan` |
+| 公网入口 | Nginx HTTPS `panel.example` |
 | 服务 | `scriptboard.service`、`scriptboard-broker.service`、`scriptboard-runner.socket` 均 active/enabled |
 | 退役服务 | `scriptboard-ai.socket` inactive/not-found，unit 已移除 |
 
@@ -117,7 +117,7 @@ retained-upload.txt
 retained-upload (2).txt
 ```
 
-应用数据库中继续保留共享分组、变量、网站监控、DCR 客户端、快捷执行、实际 Run 与审计事件。最初放在 `/var/tmp/scriptboard-qa-2b15adc` 和 `/tmp/qa-hostfiles-2b15adc` 的探针数据也未删除；这些目录因 world-writable ancestor 安全边界不用于最终 Host Files 验收。
+应用数据库中继续保留共享分组、变量、网站监控、DCR 客户端、快捷执行、实际 Run 与审计事件。最初放在 `[远程验证状态目录]` 和 `[远程文件操作测试目录]` 的探针数据也未删除；这些目录因 world-writable ancestor 安全边界不用于最终 Host Files 验收。
 
 ## 补充说明
 

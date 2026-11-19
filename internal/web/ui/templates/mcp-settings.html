@@ -5,13 +5,34 @@
   <a class="task-back" href="/settings/integrations"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a><header class="page-heading"><div><h1>{{t .Locale "settings.mcp"}}</h1></div></header>
   {{template "settings-navigation" .SettingsNavigation}}
   <section class="settings-content">
-    <section class="settings-block"><header class="section-heading"><div><h2>{{t .Locale "settings.mcp_register"}}</h2><p>{{t .Locale "settings.mcp_register_hint"}}</p></div></header>
-      <form method="post" action="/settings/mcp/clients" class="stack"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>{{t .Locale "settings.client_id"}}<input name="client_id" maxlength="256" required></label><label>{{t .Locale "settings.client_name"}}<input name="name" maxlength="128" required></label><label>{{t .Locale "settings.redirect_uris"}}<textarea name="redirect_uris" rows="4" required></textarea></label><button class="button button--primary" type="submit"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "settings.mcp_register"}}</button></form>
-    </section>
+    {{if .EndpointURL}}
+    <div class="stack">
+      <label for="mcp-endpoint">{{t .Locale "settings.mcp_endpoint"}}</label>
+      <div class="mcp-endpoint">
+        <input id="mcp-endpoint" type="text" value="{{.EndpointURL}}" readonly spellcheck="false">
+        <button class="button button--primary" type="button" hidden data-copy-value="{{.EndpointURL}}" data-copy-label="{{t .Locale "settings.mcp_copy"}}" data-copied-label="{{t .Locale "settings.mcp_copied"}}" data-copy-failed-label="{{t .Locale "settings.mcp_copy_failed"}}">
+          <span data-lucide="copy" data-copy-icon aria-hidden="true"></span><span data-copy-value-label>{{t .Locale "settings.mcp_copy"}}</span>
+        </button>
+        <span class="sr-only" role="status" data-copy-value-status></span>
+      </div>
+    </div>
+    {{else}}
+    <p>{{t .Locale "settings.mcp_disabled"}}</p>
+    {{end}}
     <section class="settings-block"><header class="section-heading"><div><h2>{{t .Locale "settings.clients"}}</h2></div></header>
       {{if .Clients}}<div class="account-action-list">{{range .Clients}}<div><span data-lucide="bot" aria-hidden="true"></span><span><strong>{{.Name}}</strong><small>{{.RegistrationType}} · {{.ClientID}}{{if .Revoked}} · {{t $.Locale "settings.revoked"}}{{end}}</small></span>{{if not .Revoked}}<form method="post" action="/settings/mcp/clients/{{.ID}}/revoke"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="ban" aria-hidden="true"></span>{{t $.Locale "settings.revoke"}}</button></form>{{end}}</div>{{end}}</div>{{else}}<p>{{t .Locale "settings.clients_empty"}}</p>{{end}}
+      <details class="mcp-manual-registration">
+        <summary tabindex="0">{{t .Locale "settings.mcp_register_manually"}}</summary>
+        <form method="post" action="/settings/mcp/clients" class="stack">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <label>{{t .Locale "settings.client_id"}}<input name="client_id" maxlength="256" required></label>
+          <label>{{t .Locale "settings.client_name"}}<input name="name" maxlength="128" required></label>
+          <label>{{t .Locale "settings.redirect_uris"}}<textarea name="redirect_uris" rows="3" required></textarea></label>
+          <button class="button" type="submit"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "settings.mcp_register"}}</button>
+        </form>
+      </details>
     </section>
-    <section class="settings-block"><header class="section-heading"><div><h2>{{t .Locale "settings.authorizations"}}</h2><p>{{t .Locale "settings.authorizations_hint"}}</p></div></header>
+    <section class="settings-block"><header class="section-heading"><div><h2>{{t .Locale "settings.authorizations"}}</h2></div></header>
       {{if .Authorizations}}<div class="account-action-list">{{range .Authorizations}}<div><span data-lucide="user-round-check" aria-hidden="true"></span><span><strong>{{.Username}} → {{.ClientName}}</strong><small>{{.Scopes}}</small></span><form method="post" action="/settings/mcp/authorizations/{{.ID}}/revoke"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="unlink" aria-hidden="true"></span>{{t $.Locale "settings.revoke"}}</button></form></div>{{end}}</div>{{else}}<p>{{t .Locale "settings.authorizations_empty"}}</p>{{end}}
     </section>
   </section>

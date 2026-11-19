@@ -3,10 +3,10 @@
 - 日期：2026-09-15
 - 实例：`http://127.0.0.1:11155`（保持运行中）
 - 程序：`.scratch/deploy-local-dashboard-actions/scriptboard.exe`，state root：同目录 `state/`
-- 分支 worktree：`D:/Github/worktrees/ScriptBoard/dashboard-actions`
+- 分支 worktree：`../worktrees/ScriptBoard/dashboard-actions`
 - 账号（本地测试实例，按 AGENTS.md 明文记录）：
-  - 管理员：`admin` / `SbTest!2026a-ok!`
-    - 说明：任务指定的 `SbTest!2026a` 仅 11 字符，不满足产品密码策略（≥15 字符，`internal/web/password_policy.go`），setup 页面返回密码策略错误（证据 `shot-02b-setup-error.png`）。改用合规密码 `SbTest!2026a-ok!`（16 字符）。
+  - 管理员：`admin` / `[测试密码]`
+    - 说明：任务指定的 `[测试密码]` 仅 11 字符，不满足产品密码策略（≥15 字符，`internal/web/password_policy.go`），setup 页面返回密码策略错误（证据 `shot-02b-setup-error.png`）。改用合规密码 `[测试密码]`（16 字符）。
   - 执行员：`operator1` / `S-P4f4GxxBWp53Kh6j-q1BPQj0EaEFJq`
   - 查看员：`viewer1` / `OZt2vV_2-tuSddlTTZXW4YAfFaTarjkB`
   - 面板「验收面板」当前访问 Key（轮换两次后的有效值）：`9O-Htsqj58CudlRULnq0hDLiDFTDEP7JCTO0DsfRw-w`
@@ -46,7 +46,7 @@
 
 - 一次性执行页语言列表含 `Node.js (.js)`；提交 `language=nodejs` + `console.log('hello-js'); console.log('node=' + process.version);` → 303 到 Run `yP60Nlve8P6qFpqLTxiKYm4w`，输出 `hello-js` 与 `node=v24.14.0`，状态 Succeeded（`evidence-run-history-oneTime.json`、`evidence-03-onetime-run.html`）。
 - 主机脚本 `hello-quick.js`（`console.log('hello-js-quickrun')`）发布为快捷执行「验收-JS快捷执行」（ID `LXvHknRKHk26k6OhNrJfzD-p`），start → Run `eWTiEYCCNL-Mhu5qtF7-Lnd4` 输出正确（`evidence-run-history-quickRun.json`）。
-- 说明：实例主机文件根限定在用户目录（默认工作目录 `C:\Users\17575`），`.scratch` 下的 scripts 目录被边界检查拒绝（一次性执行 400 / 快捷执行发布 403），故脚本放在 `C:\Users\17575\scriptboard-acceptance\`，并在 `.scratch/deploy-local-dashboard-actions/scripts/` 留了归档副本。
+- 说明：实例主机文件根限定在用户目录（默认工作目录 `[用户主目录]`），`.scratch` 下的 scripts 目录被边界检查拒绝（一次性执行 400 / 快捷执行发布 403），故脚本放在 `[用户主目录]/scriptboard-acceptance/`，并在 `.scratch/deploy-local-dashboard-actions/scripts/` 留了归档副本。
 
 ### A. 操作卡片与四档可见性（5–10）
 

@@ -108,7 +108,7 @@ mkdir -p state
 3. Choose a username and password, then save to enter the application. Tokens last 24 hours; restart an unfinished installation to generate a new token.
 4. Open Resources → Host Files, select an existing script, or upload files and create a Quick Run.
 
-Existing accounts sign in normally. Automated deployments can provide `--admin-password-file` to skip setup; the supplied credentials are written to the account database once during startup. Subsequent account edits take effect immediately. Local account recovery remains available with `scriptboard admin reset`.
+Existing accounts sign in normally. Use **Sign out** at the bottom of the sidebar to end your session. Automated deployments can provide `--admin-password-file` to skip setup; the supplied credentials are written to the account database once during startup. Subsequent account edits take effect immediately. Local account recovery remains available with `scriptboard admin reset`.
 
 Upload results show whether each file was created, overwritten, or renamed. For multi-file uploads, ScriptBoard validates the whole batch before committing it, so a failed batch does not leave partial results. Files and directories can both be pinned to instance-wide Quick access. A pinned file opens its containing directory and focuses the file; display names and ordering can be edited in place.
 
@@ -168,9 +168,9 @@ For remote access, prefer a trusted VPN, zero-trust network, or HTTPS reverse pr
 
 ## MCP agent access
 
-ScriptBoard serves Streamable HTTP MCP at `POST /mcp` on the main listener by default. Authentication uses browser OAuth with PKCE; static tokens are neither required nor accepted. Point a remote-OAuth-capable agent at:
+Under **Settings → Integrations and notifications → MCP clients and access**, copy the server URL, add it to your remote OAuth-capable MCP client, and approve access in the browser. Clients that support dynamic registration register automatically. For clients that require preregistration, expand **Register a client manually**.
 
-Register clients under **Settings → Integrations and notifications → MCP clients and access**. After browser authorization, MCP can query status and run published Quick Runs. Content writes are performed by the Quick Run script.
+ScriptBoard serves Streamable HTTP MCP with OAuth and PKCE at `/mcp`. The default local URL is shown below.
 
 ```text
 http://127.0.0.1:8787/mcp
@@ -267,4 +267,4 @@ Image versions are ordered newest first by creation time, with unknown dates las
 
 Dashboard registry cards group images by path prefix. Expand or collapse each level; this browser remembers the state separately for each card.
 
-Source builds require Go 1.26.9 or later. See the [release guide (Chinese)](docs/RELEASING.md).
+Source builds require Go 1.26.11 or later. See the [release guide (Chinese)](docs/RELEASING.md).

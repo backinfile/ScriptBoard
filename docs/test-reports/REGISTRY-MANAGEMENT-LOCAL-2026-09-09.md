@@ -1,6 +1,6 @@
 # 镜像仓库管理本地测试
 
-日期：2026-09-09。工作树：`D:\Github\worktrees\ScriptBoard\registry-management`。
+日期：2026-09-09。工作树：`../worktrees/ScriptBoard/registry-management`。
 
 ## 验证范围
 
@@ -39,7 +39,7 @@
 | 项目 | 值 |
 | --- | --- |
 | ScriptBoard | http://127.0.0.1:19743/resources/registries |
-| 用户 / 密码 | `admin` / `RegistryLocal-2026-Test!`（仅此隔离测试实例） |
+| 用户 / 密码 | `admin` / `[测试密码]`（仅此隔离测试实例） |
 | PID | 80356 |
 | 二进制 | `.scratch/registry-management-local/scriptboard-verified.exe` |
 | SHA-256 | `60955FD49DA98FAD3127877B8048D50616B395B82A85971178D1D6AD22228AD6` |

@@ -28,10 +28,10 @@
 
 ## 保留的测试部署
 
-- 主实例：<http://127.0.0.1:5066>；账号 `setup-owner`；密码 `ScriptBoard Setup Test 2026!`。
-- 无 JavaScript 验证实例：<http://127.0.0.1:5067>；账号 `manual-owner`；密码 `Manual Setup Passphrase 2026!`。
+- 主实例：<http://127.0.0.1:5066>；账号 `setup-owner`；密码 `[测试密码]`。
+- 无 JavaScript 验证实例：<http://127.0.0.1:5067>；账号 `manual-owner`；密码 `[测试密码]`。
 - 两个实例都已完成初始化；访问 `/setup` 会转到登录页。
-- 最终程序、配置、PID、数据、日志、截图和复现脚本位于 `D:\Github\worktrees\ScriptBoard\first-admin-setup\.scratch\first-admin-tests`，测试数据保留。
+- 最终程序、配置、PID、数据、日志、截图和复现脚本位于 `../worktrees/ScriptBoard/first-admin-setup/.scratch/first-admin-tests`，测试数据保留。
 - 截图：`setup-desktop.png`、`setup-mobile.png`、`setup-complete.png`；结果：`browser-result.json`、`restart-http.json`。
 
 ## 集成状态

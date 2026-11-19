@@ -2,7 +2,7 @@
 
 测试时间：2026-09-01（Asia/Shanghai）
 测试分支：`codex/registry-tag-history`
-worktree：`D:\Github\worktrees\ScriptBoard\registry-tag-history`
+worktree：`../worktrees/ScriptBoard/registry-tag-history`
 
 ## 结论
 

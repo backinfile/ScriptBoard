@@ -2,7 +2,7 @@
 
 测试时间：2026-09-01（Asia/Shanghai）  
 测试分支：`codex/k8s-config-monitor-recovery`  
-worktree：`D:\Github\worktrees\ScriptBoard\k8s-config-monitor-recovery`
+worktree：`../worktrees/ScriptBoard/k8s-config-monitor-recovery`
 
 ## 结论
 

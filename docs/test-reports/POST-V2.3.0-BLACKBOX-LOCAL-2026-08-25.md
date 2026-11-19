@@ -13,7 +13,7 @@
 | 对比基线 | `v2.3.0` |
 | 测试提交 | `72e3be3` |
 | ScriptBoard | `http://127.0.0.1:18788`，PID `27992` |
-| State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
+| State Root | `../worktrees/ScriptBoard/database-unified/.scratch/database-unified-deployment/state` |
 | 外部页签目标站 | HTTP `127.0.0.1:18880`、HTTPS `127.0.0.1:18881`，PID `43024` |
 | 浏览器 | Playwright 1.61.1 / Chromium，外部 headless 进程 |
 | 数据库容器 | 7 个：MySQL/MariaDB 明文/TLS，Redis 明文/鉴权/TLS |

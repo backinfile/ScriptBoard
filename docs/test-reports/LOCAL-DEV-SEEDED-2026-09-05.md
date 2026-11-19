@@ -6,7 +6,7 @@
 
 - 地址：http://127.0.0.1:19055
 - 用户名：admin
-- 测试密码：ScriptBoard-Test-2026!
+- 测试密码：[测试密码]
 - PID：61588（重启后以部署目录 pid.txt 为准）
 - 程序、State Root 和日志：`.scratch/local-dev-20260905/`
 - 示例文件：`.scratch/sample-data-20260905/`

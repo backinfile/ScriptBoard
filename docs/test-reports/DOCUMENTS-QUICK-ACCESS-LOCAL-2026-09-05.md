@@ -27,8 +27,8 @@
 | 浏览器 pageerror | 无 |
 | 布局机械检查 | 无报告项 |
 
-使用外部 Chromium；稳定状态截图已人工查看。主部署测试账号沿用 admin / ScriptBoard-Test-2026!，地址 http://127.0.0.1:19055，原 State Root 与测试数据保留。
+使用外部 Chromium；稳定状态截图已人工查看。主部署测试账号沿用 admin / [测试密码]，地址 http://127.0.0.1:19055，原 State Root 与测试数据保留。
 
 主部署服务账号保存主机文件时受现有磁盘回收目录权限限制，接口返回 `protect filesystem trash: read directory owner: Access is denied.`。该环境限制发生在写入前；本次没有修改磁盘权限。完整保存链路另在仓库 fixture 的隔离文件根目录验证，文件操作仍经过真实应用接口。
 
-隔离验证地址：http://127.0.0.1:19056，账号 admin / calibration-ledger-2026；应用监控数据来自 fixture。状态和已保存的 README 保留在用户临时目录 `scriptboard-documents-ui-20260905`。截图与验证脚本归档在主部署目录的 `documents-quick-access-qa` 中。
+隔离验证地址：http://127.0.0.1:19056，账号 admin / [测试密码]；应用监控数据来自 fixture。状态和已保存的 README 保留在用户临时目录 `scriptboard-documents-ui-20260905`。截图与验证脚本归档在主部署目录的 `documents-quick-access-qa` 中。

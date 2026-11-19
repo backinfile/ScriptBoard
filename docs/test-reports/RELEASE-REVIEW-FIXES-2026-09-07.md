@@ -34,10 +34,10 @@
 | HTTP | http://127.0.0.1:29881 | 62548 |
 | HTTPS | https://127.0.0.1:29882 | 73044 |
 
-账号均为 `admin`，密码均为 `Review fixes local password 2026!`。
+账号均为 `admin`，密码均为 `[测试密码]`。
 
 部署、证书、日志、状态、截图及测试脚本位于：
-`D:\Github\worktrees\ScriptBoard\review-fixes-20260907\.scratch\review-test`。
+`../worktrees/ScriptBoard/review-fixes-20260907/.scratch/review-test`。
 
 - `browser.cjs`：外部 Edge 回归脚本；`results.json`：通过结果。
 - `retry-saved.png`、`embedded-language.png`：测试截图。

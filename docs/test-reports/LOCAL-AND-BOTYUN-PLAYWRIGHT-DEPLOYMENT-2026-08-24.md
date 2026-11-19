@@ -44,7 +44,7 @@
 | 项目 | 结果 |
 | --- | --- |
 | 目标主机 | SSH `botyun` |
-| 对外地址 | `https://server-test.karen.fan` |
+| 对外地址 | `https://panel.example` |
 | 版本 | `dev-e3d47ac`；schema 54 |
 | 安装槽位 | `/opt/scriptboard/versions/0.0.1` |
 | State Root | `/var/lib/scriptboard/state-v20` |

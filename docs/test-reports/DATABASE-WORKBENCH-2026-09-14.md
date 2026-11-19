@@ -34,9 +34,9 @@
 ## 保留部署与复现
 
 - 应用：http://127.0.0.1:19756
-- 登录：admin / calibration-ledger-2026
+- 登录：admin / [测试密码]
 - Redis RESP 夹具：127.0.0.1:19757
-- 工作树：D:/Github/worktrees/ScriptBoard/redis-key-separator
+- 工作树：../worktrees/ScriptBoard/redis-key-separator
 - 部署、下载夹具、截图和日志：.scratch/database-enhancements/
 - 当前二进制：fixture-final.exe；测试状态：deployment/state。
 - 夹具脚本：integration/browser/database-enhancements-seed.cjs、database-enhancements-redis-fixture.cjs。

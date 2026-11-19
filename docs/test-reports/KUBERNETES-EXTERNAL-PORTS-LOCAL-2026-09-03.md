@@ -2,7 +2,7 @@
 
 测试时间：2026-09-03（Asia/Shanghai）  
 测试分支：`codex/k8s-external-ports`  
-worktree：`D:\Github\worktrees\ScriptBoard\k8s-external-ports`
+worktree：`../worktrees/ScriptBoard/k8s-external-ports`
 
 ## 结论
 

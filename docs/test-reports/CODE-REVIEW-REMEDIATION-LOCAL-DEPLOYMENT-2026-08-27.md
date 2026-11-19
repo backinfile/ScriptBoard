@@ -14,7 +14,7 @@
 | URL | `http://127.0.0.1:18794` |
 | 进程 | `scriptboard-final.exe`，PID `30504` |
 | 监听 | 仅 `127.0.0.1:18794` |
-| 部署目录 | `D:\Github\worktrees\ScriptBoard\code-review-remediation\.scratch\code-review-remediation-20260827` |
+| 部署目录 | `../worktrees/ScriptBoard/code-review-remediation/.scratch/code-review-remediation-20260827` |
 | 登录用户 | `admin` |
 | State Root | `.scratch/code-review-remediation-20260827/state-final` |
 | 初始密码 | 仅保留在 State Root 的 `secrets/initial-admin-password`，未写入报告或测试结果 |

@@ -5,7 +5,7 @@
 | 项目 | 结果 |
 | --- | --- |
 | 目标主机 | SSH `botyun` |
-| 对外地址 | `https://server-test.karen.fan` |
+| 对外地址 | `https://panel.example` |
 | 分支 | `dev` |
 | 提交 | `724b0ceb501f265f14550e89d8d5e8eb19383f3f` |
 | 部署目录 | `/opt/scriptboard/versions/0.0.1` |
