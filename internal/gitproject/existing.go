@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"scriptboard/internal/hostfiles"
 )
 
 func (repository repo) existingRemote(ctx context.Context, checkout *Checkout) (string, error) {
@@ -56,7 +54,7 @@ func (repository repo) existingRemote(ctx context.Context, checkout *Checkout) (
 		return "", errors.New("Git cannot open this checkout with the service identity")
 	}
 	canonical, err := checkout.files.CanonicalDirectory(strings.TrimSpace(top))
-	if err != nil || hostfiles.ComparisonKey(canonical) != hostfiles.ComparisonKey(repository.path) {
+	if err != nil || !sameCheckoutLocation(canonical, repository.path) {
 		return "", errors.New("registered directory is not the Git working tree root")
 	}
 	return remote, nil

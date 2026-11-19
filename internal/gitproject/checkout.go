@@ -281,10 +281,20 @@ func (checkout *Checkout) validateCheckout(repository repo) error {
 		return err
 	}
 	target, ok := strings.CutPrefix(strings.TrimSpace(string(marker)), "gitdir: ")
-	if !ok || !filepath.IsAbs(target) || hostfiles.ComparisonKey(target) != hostfiles.ComparisonKey(repository.dir) {
+	if !ok || !sameCheckoutLocation(target, repository.dir) {
 		return errors.New("Git checkout metadata is outside its managed location")
 	}
 	return nil
+}
+
+// Git may report the long spelling for a worktree or metadata path supplied
+// using a Windows 8.3 alias. Use the Host Files path comparison in both
+// directions to require equality across those spellings.
+func sameCheckoutLocation(path, expected string) bool {
+	if !filepath.IsAbs(path) || !strings.EqualFold(filepath.VolumeName(path), filepath.VolumeName(expected)) {
+		return false
+	}
+	return hostfiles.Contains(expected, path) && hostfiles.Contains(path, expected)
 }
 
 func (checkout *Checkout) clone(ctx context.Context, repository repo) error {
