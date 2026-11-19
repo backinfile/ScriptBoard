@@ -7,4 +7,4 @@
 
 ## 升级
 
-如果 Windows 服务的「应用更新」显示为便携安装，请使用此版本的 Windows 安装器升级。升级前备份 ScriptBoard 状态目录与自定义配置。
+如果 Windows 服务的「应用更新」显示为便携安装，请先备份状态目录和配置，再以管理员身份运行已安装的 `scriptboard.exe service uninstall` 移除旧服务注册，然后用此版本的 Windows 安装器和原有配置重新安装。自定义配置可通过 `--config CONFIG_PATH` 指定。
