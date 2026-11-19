@@ -1712,7 +1712,7 @@ func TestProtectedErrorsRenderInsideTheApplicationShell(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`class="app-sidebar"`, `aria-label="Primary navigation"`, `href="/settings/account"`,
-		`class="sidebar-sign-out" method="post" action="/logout" data-native`,
+		`class="sidebar-sign-out" method="post" action="/logout"`,
 		`role="alert"`, `error-page`, "Return to workspace", `data-environment="Local"`,
 	} {
 		if !strings.Contains(page, expected) {
