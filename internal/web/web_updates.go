@@ -56,6 +56,10 @@ func (a *App) updatesPage(response http.ResponseWriter, request *http.Request) {
 	}
 	data.Sources, data.SourceName = updateSourcesForWeb(locale, a.updates.Sources(), snapshot.SourceID)
 	switch snapshot.InstallMode {
+	case "managed-service":
+		if !snapshot.CanApply {
+			data.Capability = snapshot.Capability
+		}
 	case "development":
 		data.Capability = webText(locale, "updates.development_capability")
 	case "portable":
@@ -186,7 +190,8 @@ func (a *App) prepareUpdate(response http.ResponseWriter, request *http.Request)
 		http.Error(response, webText(locale, "updates.csrf_error"), http.StatusForbidden)
 		return
 	}
-	operation, err := a.updates.Prepare(request.Context())
+	current := request.Context().Value(sessionContextKey).(session)
+	operation, err := a.updates.PrepareForSession(request.Context(), current.rawToken)
 	if err != nil {
 		a.recordAuditForRequest(request, "update_prepare_failed", "stable", "failed")
 		http.Error(response, webText(locale, "updates.prepare_failed")+": "+err.Error(), http.StatusConflict)
@@ -208,7 +213,8 @@ func (a *App) applyUpdate(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, fmt.Sprintf(webText(locale, "updates.active_runs_error"), active), http.StatusConflict)
 		return
 	}
-	operation, err := a.updates.Handoff(operationID)
+	current := request.Context().Value(sessionContextKey).(session)
+	operation, err := a.updates.Handoff(request.Context(), operationID, current.rawToken)
 	if err != nil {
 		a.endUpdateMaintenance()
 		a.recordAuditForRequest(request, "update_apply_requested", operationID, "failed")

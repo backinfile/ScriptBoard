@@ -188,7 +188,7 @@ MCP inherits `listen`, TLS, `allowed_hosts`, `trusted_proxies`, and `canonical_e
 
 ## Updates and backups
 
-Administrators can download and install stable releases under System Settings → Updates. Every package is checked against its signature, platform, size, and SHA-256. ScriptBoard will not switch versions while a script is running.
+Administrators can download and install signed releases under **System Settings → Maintenance → Application updates**, including on Windows service installations. Every package is checked against its signature, platform, size, and SHA-256. ScriptBoard will not switch versions while a script is running.
 
 Back up these items regularly:
 

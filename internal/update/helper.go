@@ -36,6 +36,9 @@ type Result struct {
 }
 
 func ApplyOperation(ctx context.Context, stateRoot, operationID string) error {
+	if err := requireProtectedOperationStorage(stateRoot); err != nil {
+		return err
+	}
 	lock, err := acquireOperationLock(stateRoot)
 	if err != nil {
 		return err
@@ -61,11 +64,18 @@ func ApplyOperation(ctx context.Context, stateRoot, operationID string) error {
 	if err := waitForServiceStopped(ctx, 15*time.Second); err != nil {
 		return recoverBeforeSwitch(ctx, &operation, err)
 	}
+	if runtime.GOOS == "windows" {
+		// The Broker also opens SQLite. Stop the entire service group before
+		// taking the snapshot or changing any SCM command line.
+		if err := platformservice.Stop(); err != nil {
+			return recoverBeforeSwitch(ctx, &operation, fmt.Errorf("stop the service group: %w", err))
+		}
+	}
 	operation.Phase = PhaseSnapshotting
 	if err := SaveOperation(operation); err != nil {
 		return err
 	}
-	if err := copyFileSync(operation.DatabasePath, operation.SnapshotPath, 0o600); err != nil {
+	if err := snapshotDatabase(ctx, operation.DatabasePath, operation.SnapshotPath); err != nil {
 		return recoverBeforeSwitch(ctx, &operation, fmt.Errorf("snapshot database: %w", err))
 	}
 	if err := switchAndValidate(ctx, &operation); err != nil {
@@ -83,6 +93,13 @@ func ApplyOperation(ctx context.Context, stateRoot, operationID string) error {
 }
 
 func RecoverOperation(ctx context.Context, stateRoot, operationID string) error {
+	if err := requireProtectedOperationStorage(stateRoot); err != nil {
+		return err
+	}
+	return recoverOperation(ctx, stateRoot, operationID)
+}
+
+func recoverOperation(ctx context.Context, stateRoot, operationID string) error {
 	lock, err := acquireOperationLock(stateRoot)
 	if err != nil {
 		return err
@@ -315,7 +332,9 @@ func rollbackOperation(ctx context.Context, operation *Operation, cause error) e
 		_ = writeResult(*operation, operation.Error)
 		return errors.New(operation.Error)
 	}
-	_ = platformservice.Stop()
+	if err := platformservice.Stop(); err != nil {
+		return markRecoveryFailure(operation, cause, fmt.Errorf("stop the service group before rollback: %w", err))
+	}
 	metadata, err := loadOperationInstallation(*operation)
 	if err == nil {
 		var previousInfo buildinfo.Info
@@ -563,31 +582,41 @@ func restoreDatabase(snapshot, database string) error {
 	if err := verifyDatabaseSnapshot(snapshot); err != nil {
 		return err
 	}
-	temporary := database + ".update-restore"
-	previous := database + ".update-replaced"
-	_ = os.Remove(temporary)
-	if err := copyFileSync(snapshot, temporary, 0o600); err != nil {
+	state, err := os.OpenRoot(filepath.Dir(database))
+	if err != nil {
 		return err
 	}
-	defer os.Remove(temporary)
-	if err := verifyDatabaseSnapshot(temporary); err != nil {
-		return fmt.Errorf("verify staged database restore: %w", err)
+	defer state.Close()
+	active := filepath.Base(database)
+	temporary := active + ".update-restore"
+	previous := active + ".update-replaced"
+	_ = state.Remove(temporary)
+	source, err := os.Open(snapshot)
+	if err != nil {
+		return err
 	}
-	_ = os.Remove(database + "-wal")
-	_ = os.Remove(database + "-shm")
-	_ = os.Remove(previous)
-	if _, err := os.Stat(database); err == nil {
-		if err := os.Rename(database, previous); err != nil {
+	defer source.Close()
+	output, err := state.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer state.Remove(temporary)
+	if err := syncCopy(source, output); err != nil {
+		return err
+	}
+	for _, name := range []string{active + "-wal", active + "-shm", previous} {
+		if err := state.Remove(name); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-	} else if !os.IsNotExist(err) {
+	}
+	if err := state.Rename(active, previous); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Rename(temporary, database); err != nil {
-		_ = os.Rename(previous, database)
+	if err := state.Rename(temporary, active); err != nil {
+		_ = state.Rename(previous, active)
 		return err
 	}
-	_ = os.Remove(previous)
+	_ = state.Remove(previous)
 	return syncDirectory(filepath.Dir(database))
 }
 
@@ -601,14 +630,20 @@ func copyFileSync(source, destination string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if _, err = io.Copy(output, input); err == nil {
+	if err := syncCopy(input, output); err != nil {
+		_ = os.Remove(destination)
+		return err
+	}
+	return nil
+}
+
+func syncCopy(input io.Reader, output *os.File) error {
+	_, err := io.Copy(output, input)
+	if err == nil {
 		err = output.Sync()
 	}
 	if closeErr := output.Close(); err == nil {
 		err = closeErr
-	}
-	if err != nil {
-		_ = os.Remove(destination)
 	}
 	return err
 }

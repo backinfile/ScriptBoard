@@ -100,7 +100,7 @@ func OperationDirectory(stateRoot, id string) (string, error) {
 	if !operationIDPattern.MatchString(id) {
 		return "", errors.New("invalid update operation ID")
 	}
-	return filepath.Join(stateRoot, "updates", "operations", id), nil
+	return filepath.Join(operationStorageRoot(stateRoot), "operations", id), nil
 }
 
 func LoadOperation(stateRoot, id string) (Operation, error) {
@@ -111,6 +111,9 @@ func LoadOperation(stateRoot, id string) (Operation, error) {
 	var operation Operation
 	if err := readStrictJSON(filepath.Join(root, "operation.json"), &operation, 1<<20); err != nil {
 		return Operation{}, err
+	}
+	if operation.ID != id {
+		return Operation{}, errors.New("operation ID does not match its storage directory")
 	}
 	if err := operation.Validate(stateRoot); err != nil {
 		return Operation{}, err
@@ -131,7 +134,7 @@ func SaveOperation(operation Operation) error {
 	if err := writeAtomicJSON(filepath.Join(root, "operation.json"), operation, 0o600); err != nil {
 		return err
 	}
-	return writeAtomicJSON(filepath.Join(operation.StateRoot, "updates", "active.json"), ActiveOperation{
+	return writeAtomicJSON(filepath.Join(operationStorageRoot(operation.StateRoot), "active.json"), ActiveOperation{
 		Schema: OperationSchema, OperationID: operation.ID, Phase: operation.Phase,
 	}, 0o600)
 }
@@ -187,7 +190,7 @@ func (o Operation) Validate(stateRoot string) error {
 
 func LoadActive(stateRoot string) (ActiveOperation, error) {
 	var active ActiveOperation
-	if err := readStrictJSON(filepath.Join(stateRoot, "updates", "active.json"), &active, 64<<10); err != nil {
+	if err := readStrictJSON(filepath.Join(operationStorageRoot(stateRoot), "active.json"), &active, 64<<10); err != nil {
 		return ActiveOperation{}, err
 	}
 	if active.Schema != OperationSchema || !operationIDPattern.MatchString(active.OperationID) {

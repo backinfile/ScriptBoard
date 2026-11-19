@@ -37,6 +37,7 @@ import (
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/servicelogs"
 	"scriptboard/internal/statebackup"
+	updatepkg "scriptboard/internal/update"
 )
 
 const (
@@ -411,6 +412,7 @@ type KubeconfigService interface {
 
 type ServerOptions struct {
 	Listener       net.Listener
+	Updates        *updatepkg.Manager
 	VerifyPeer     func(net.Conn) error
 	Authorizer     Authorizer
 	Executor       Executor
@@ -435,6 +437,7 @@ type ServerOptions struct {
 
 type Server struct {
 	listener       net.Listener
+	updates        *updatepkg.Manager
 	verifyPeer     func(net.Conn) error
 	authorizer     Authorizer
 	executor       Executor
@@ -515,6 +518,7 @@ type wireRequest struct {
 }
 
 type wireResponse struct {
+	Update               *updatepkg.Operation      `json:"update,omitempty"`
 	Status               string                    `json:"status"`
 	Capability           string                    `json:"capability,omitempty"`
 	ExpiresAt            int64                     `json:"expires_at,omitempty"`
@@ -553,7 +557,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 		errorLogger = log.New(io.Discard, "", 0)
 	}
 	return &Server{
-		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
+		listener: options.Listener, updates: options.Updates, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
 		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, mysql: options.MySQL, redis: options.Redis, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, kubeconfigs: options.Kubeconfigs, hostSecurity: options.HostSecurity, serviceLogs: options.ServiceLogs, errorLogger: errorLogger, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
@@ -629,6 +633,15 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.execute(request)
 	case operationCheckpointVerify, operationCheckpointWrite:
 		response = server.checkpointOperation(request)
+	case operationUpdateVerify, operationUpdatePrepare, operationUpdateHandoff:
+		timeout := defaultCallDeadline
+		if request.Operation == operationUpdatePrepare {
+			timeout = updatePrepareDeadline
+			_ = connection.SetDeadline(server.now().Add(timeout))
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		response = server.updateOperation(ctx, request)
+		cancel()
 	case operationMFAStatus, operationMFABegin, operationMFAConfirm, operationMFAVerify, operationMFAReset:
 		response = server.mfaOperation(request)
 	case operationPasskeyUser, operationPasskeyList, operationPasskeyAdd, operationPasskeyUpdate, operationPasskeyDelete, operationPasskeyReset:
@@ -1251,6 +1264,9 @@ func (client *Client) call(ctx context.Context, request wireRequest) (wireRespon
 		}
 	}()
 	deadline := time.Now().Add(defaultCallDeadline)
+	if request.Operation == operationUpdatePrepare {
+		deadline = time.Now().Add(updatePrepareDeadline)
+	}
 	if request.Operation == operationRegistryManage {
 		deadline = time.Now().Add(6 * time.Minute)
 	}
@@ -1302,6 +1318,9 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if request.Registry != nil && !isRegistryOperation(request.Operation) {
 		return errors.New("request contains unrelated Registry fields")
+	}
+	if request.Operation == operationUpdateVerify || request.Operation == operationUpdatePrepare || request.Operation == operationUpdateHandoff {
+		return validateUpdateRequest(request)
 	}
 	if request.Operation == operationCheckpointVerify || request.Operation == operationCheckpointWrite {
 		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
