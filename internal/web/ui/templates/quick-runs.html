@@ -49,6 +49,7 @@
         </div>
         <div class="qr__meta">
           <span class="qr__version" title="{{t $.Locale "quick_runs.version"}}">v{{.Revision}}</span>
+          {{if .GitProjectCount}}<span class="status-chip" title="{{t $.Locale "git.preflight_projects"}}"><span data-lucide="git-branch" aria-hidden="true"></span>{{.GitProjectCount}} {{t $.Locale "git.projects_count"}}</span>{{end}}
           {{if .Params}}<span class="status-chip" title="{{t $.Locale "quick_runs.params"}}"><span data-lucide="sliders-horizontal" aria-hidden="true"></span>{{len .Params}} {{t $.Locale "quick_runs.params_unit"}}</span>{{end}}
           {{if .Locked}}<span class="status-chip" data-state="locked"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "quick_runs.locked"}}</span>{{end}}
           <div class="quick-run-history__barometer qr__barometer" data-quick-run-history role="group" aria-label="{{t $.Locale "quick_runs.recent_runs"}}">

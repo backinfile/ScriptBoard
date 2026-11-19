@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"scriptboard/internal/externaltrigger"
+	"scriptboard/internal/gitproject"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/quickrun"
 	"scriptboard/internal/recordnote"
@@ -786,6 +787,12 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
+	if request.FormValue("git_settings") == "1" {
+		if err := gitproject.SaveQuickSetup(request.Context(), transaction, id, request.FormValue("follow_file") != "1", request.Form["git_project"]); err != nil {
+			http.Error(response, "Unable to save Git project settings", http.StatusBadRequest)
+			return
+		}
+	}
 	synchronizeExternal := request.FormValue("sync_external_interfaces") == "1"
 	if synchronizeExternal && publicationChanged {
 		if _, err = externaltrigger.RebindQuickRunEntries(request.Context(), transaction, id, newRevision, prepared.Digest, now); err != nil {
@@ -896,6 +903,13 @@ func (a *App) createQuickRunCopy(ctx context.Context, source quickRunRecord, scr
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?)`,
 		id, name, note, scriptPath, hostfiles.ComparisonKey(scriptPath), arguments, source.MemoryLimit, timeoutSeconds, sourceRunID,
 		sortOrder, now, targetGroup, requireConfirmation, prepared.Digest, now, paramsJSON); err != nil {
+		return "", err
+	}
+	setup, err := gitproject.QuickSetup(ctx, transaction, source.ID)
+	if err != nil {
+		return "", err
+	}
+	if err := gitproject.SaveQuickSetup(ctx, transaction, id, setup.Pinned, setup.Own); err != nil {
 		return "", err
 	}
 	if err := transaction.Commit(); err != nil {

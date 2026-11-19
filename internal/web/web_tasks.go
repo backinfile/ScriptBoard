@@ -13,21 +13,23 @@ import (
 )
 
 type taskPageData struct {
-	Locale      webLocale
-	Kind        string
-	Title       string
-	Description string
-	BackURL     string
-	Action      string
-	CSRFToken   string
-	ID          string
-	Path        string
-	Name        string
-	Value       string
-	Note        string
-	ValueType   variables.Kind
-	Script      string
-	Arguments   string
+	GitSettings, GitGroup, GitPinned bool
+	GitProjects                      []gitProjectPick
+	Locale                           webLocale
+	Kind                             string
+	Title                            string
+	Description                      string
+	BackURL                          string
+	Action                           string
+	CSRFToken                        string
+	ID                               string
+	Path                             string
+	Name                             string
+	Value                            string
+	Note                             string
+	ValueType                        variables.Kind
+	Script                           string
+	Arguments                        string
 	// ParamsJSON 是快捷执行执行参数定义的原始 JSON，供编辑表单预填。
 	ParamsJSON string
 	// Params 是解析后的执行参数定义，供运行参数页渲染输入控件。
@@ -77,6 +79,10 @@ func (a *App) renderTaskPage(response http.ResponseWriter, request *http.Request
 }
 
 func (a *App) renderTaskPageStatus(response http.ResponseWriter, request *http.Request, status int, data taskPageData) {
+	if err := a.fillGitTaskSettings(request, &data); err != nil {
+		http.Error(response, "Unable to read Git project settings", http.StatusInternalServerError)
+		return
+	}
 	current := request.Context().Value(sessionContextKey).(session)
 	data.Locale = resolveWebLocale(request)
 	data.CSRFToken = current.csrfToken

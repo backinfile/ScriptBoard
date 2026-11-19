@@ -12,6 +12,7 @@ import (
 	"scriptboard/internal/customtab"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/fleetstatus"
+	"scriptboard/internal/gitproject"
 	"scriptboard/internal/mcpaccess"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/redismanager"
@@ -48,6 +49,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 	}{
 		{name: "SQLite", statements: baseSchemaStatements},
 		{name: "Workflow SQLite", statements: workflow.SchemaStatements},
+		{name: "Git project SQLite", statements: gitproject.SchemaStatements},
 		{name: "Inspiration space SQLite", statements: workbench.SchemaStatements},
 		{name: "Website Monitor SQLite", statements: websitemonitor.SchemaStatements},
 		{name: "External Interface SQLite", statements: externaltrigger.SchemaStatements},

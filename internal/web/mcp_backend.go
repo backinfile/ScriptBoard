@@ -112,7 +112,7 @@ func (a *App) GetRunLogs(_ context.Context, id, cursor string, limit int) (mcpse
 func (a *App) StartQuickRun(ctx context.Context, p mcpaccess.Principal, input mcpserver.StartQuickRunInput) (any, error) {
 	const tool = "scriptboard.start_quick_run"
 	return a.mcpCommands.Execute(ctx, mcpcommand.Key{UserID: p.UserID, ClientID: p.ClientID, Tool: tool, RequestID: input.RequestID}, func() (any, error) {
-		started, err := a.runControl.Start(ctx, runcontrol.StartRequest{QuickRunID: input.QuickRunID, ConfirmOverlap: input.ConfirmOverlap, Actor: runcontrol.Actor{UserID: p.UserID, Username: p.Username, Role: identity.Role(p.Role)}})
+		started, err := a.runControl.Start(ctx, runcontrol.StartRequest{QuickRunID: input.QuickRunID, ConfirmOverlap: input.ConfirmOverlap, PublishedOnly: true, Actor: runcontrol.Actor{UserID: p.UserID, Username: p.Username, Role: identity.Role(p.Role)}})
 		if err != nil {
 			if errors.Is(err, runcontrol.ErrNotFound) {
 				return nil, errors.New("forbidden")

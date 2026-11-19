@@ -333,6 +333,7 @@
           <label>{{t .Locale "task.source_conflict.rename"}} <input name="rename_file_name" value="{{.SuggestedName}}" autocomplete="off" spellcheck="false"></label>
         </section>
         {{end}}
+      {{template "git-quick-settings" .}}
       </div>
       {{if .Conflict}}
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button" type="submit" name="conflict_action" value="rename"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "task.source_conflict.use_rename"}}</button>{{if .CanOverwrite}}<button class="button button--primary" type="submit" name="conflict_action" value="overwrite"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "task.source_conflict.overwrite"}}</button>{{end}}</footer>
@@ -416,6 +417,7 @@
       <div class="drawer-body">
         <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" maxlength="256" value="{{.Name}}" required autofocus></label>
         <label>{{t .Locale "common.note"}} <textarea name="note" maxlength="500">{{.Note}}</textarea><small>{{t .Locale "common.note_hint"}}</small></label>
+      {{template "git-quick-settings" .}}
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{if or (or (eq .Kind "quick-group-edit") (eq .Kind "schedule-group-edit")) (eq .Kind "record-group-edit")}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
     </form>
@@ -481,6 +483,7 @@
           <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "task.quick_edit.sync_external"}}</strong><small>{{t .Locale "task.quick_edit.sync_external_hint"}}</small></span><input class="switch" type="checkbox" name="sync_external_interfaces" value="1"></label>
           <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "quick_runs.require_confirmation"}}</strong><small>{{t .Locale "quick_runs.require_confirmation_hint"}}</small></span><input class="switch" type="checkbox" name="require_confirmation" value="1" {{if .RequireConfirmation}}checked{{end}}></label>
         </section>
+      {{template "git-quick-settings" .}}
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
     </form>
@@ -653,3 +656,25 @@
 </main>
 </body>
 </html>
+
+{{define "git-quick-settings"}}
+{{if .GitSettings}}
+  <input type="hidden" name="git_settings" value="1">
+  {{if not .GitGroup}}
+  <section class="d-section"><label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "git.follow_file"}}</strong></span>
+    <input class="switch" type="checkbox" name="follow_file" value="1" {{if not .GitPinned}}checked{{end}}>
+  </label></section>
+  {{end}}
+  {{if .GitProjects}}
+  <section class="d-section">
+    <p class="ds-title"><span data-lucide="git-branch" aria-hidden="true"></span>{{t .Locale "git.preflight"}}</p>
+    <fieldset><legend>{{t .Locale "git.preflight_projects"}}</legend><div class="git-preflight-picks">
+      {{range .GitProjects}}<label class="checkbox-row"><input type="checkbox" name="git_project" value="{{.ID}}"
+        {{if or .Selected .Inherited}}checked{{end}} {{if .Inherited}}disabled{{end}}><span>{{.Name}}</span>{{if .Inherited}}<small>{{t $.Locale "git.from_group"}}</small>{{end}}</label>
+        {{if and .Selected .Inherited}}<input type="hidden" name="git_project" value="{{.ID}}">{{end}}
+      {{end}}
+    </div></fieldset>
+  </section>
+  {{end}}
+{{end}}
+{{end}}

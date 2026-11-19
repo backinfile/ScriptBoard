@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/gitproject"
 	"scriptboard/internal/recordnote"
 )
 
@@ -173,7 +174,7 @@ func (a *App) editRecordGroupTask(response http.ResponseWriter, request *http.Re
 	a.renderTaskPage(response, request, taskPageData{
 		Kind: kind, Title: title,
 		Description: webText(locale, "task.record_group.description"), BackURL: backURL,
-		Action: action, Name: name, Note: note,
+		Action: action, ID: id, Name: name, Note: note,
 	})
 }
 
@@ -210,6 +211,9 @@ func (a *App) createRecordGroup(response http.ResponseWriter, request *http.Requ
 		if err == nil {
 			_, err = tx.Exec(`INSERT INTO schedule_groups(id,name,note,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?)`, id, name, note, order, now, now)
 		}
+	}
+	if err == nil && recordGroupReturnTo(request) == "/config/quick-runs" && request.FormValue("git_settings") == "1" {
+		err = gitproject.SaveGroupProjects(request.Context(), tx, id, request.Form["git_project"])
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -260,6 +264,9 @@ func (a *App) updateRecordGroup(response http.ResponseWriter, request *http.Requ
 	}
 	if err == nil && changed > 0 {
 		_, err = tx.Exec(`UPDATE schedules SET group_name=? WHERE group_id=? AND deleted=0`, name, id)
+	}
+	if err == nil && changed > 0 && recordGroupReturnTo(request) == "/config/quick-runs" && request.FormValue("git_settings") == "1" {
+		err = gitproject.SaveGroupProjects(request.Context(), tx, id, request.Form["git_project"])
 	}
 	if err == nil && changed > 0 {
 		err = tx.Commit()

@@ -23,6 +23,7 @@ import (
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/config"
 	"scriptboard/internal/externaltrigger"
+	"scriptboard/internal/gitproject"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/mfa"
@@ -192,7 +193,7 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 	if err := hostFileMoveEngine.Recover(context.Background()); err != nil {
 		return fmt.Errorf("recover Broker-owned Host Files operations: %w", err)
 	}
-	hostFilesService, err := privilegebroker.NewBrokerHostFilesServiceWithMoves(brokerFiles, hostFilesStagingRoot, hostFileMoveEngine, ctx, database, legacyExternal)
+	hostFilesService, err := privilegebroker.NewBrokerHostFilesServiceWithMoves(brokerFiles, hostFilesStagingRoot, hostFileMoveEngine, ctx, database, legacyExternal, gitproject.NewCheckout(brokerFiles, absolute))
 	if err != nil {
 		return err
 	}

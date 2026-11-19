@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"scriptboard/internal/externaltrigger"
+	"scriptboard/internal/gitproject"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/logstream"
 )
@@ -50,6 +51,7 @@ type HostFileInfo struct {
 }
 
 type hostFilesWireRequest struct {
+	GitProject        *gitproject.Request         `json:"git_project,omitempty"`
 	Path              string                      `json:"path,omitempty"`
 	Directory         string                      `json:"directory,omitempty"`
 	Name              string                      `json:"name,omitempty"`
@@ -82,6 +84,7 @@ type hostFilesWireRequest struct {
 }
 
 type hostFilesWireResponse struct {
+	GitProject     *gitproject.Result            `json:"git_project,omitempty"`
 	Entries        []hostfiles.Entry             `json:"entries,omitempty"`
 	Info           *HostFileInfo                 `json:"info,omitempty"`
 	Document       *hostfiles.TextDocument       `json:"document,omitempty"`
@@ -120,6 +123,7 @@ type hostFilesPrepared struct {
 }
 
 type brokerHostFilesService struct {
+	gitProjects *gitproject.Checkout
 	files       *hostfiles.Manager
 	stagingRoot string
 	mutationMu  sync.Mutex
@@ -158,12 +162,15 @@ func NewBrokerHostFilesService(files *hostfiles.Manager, stagingRoots ...string)
 	return newBrokerHostFilesService(files, stagingRoot, nil, context.Background(), nil), nil
 }
 
-func NewBrokerHostFilesServiceWithMoves(files *hostfiles.Manager, stagingRoot string, engine *hostfiles.MoveEngine, moveContext context.Context, db *sql.DB, external *externaltrigger.Manager) (HostFilesService, error) {
+func NewBrokerHostFilesServiceWithMoves(files *hostfiles.Manager, stagingRoot string, engine *hostfiles.MoveEngine, moveContext context.Context, db *sql.DB, external *externaltrigger.Manager, gitProjects ...*gitproject.Checkout) (HostFilesService, error) {
 	if files == nil || engine == nil || moveContext == nil || db == nil || external == nil || !filepath.IsAbs(filepath.Clean(stagingRoot)) {
 		return nil, errors.New("Broker Host Files move service is not fully configured")
 	}
 	service := newBrokerHostFilesService(files, filepath.Clean(stagingRoot), engine, moveContext, db)
 	service.external = external
+	if len(gitProjects) != 0 {
+		service.gitProjects = gitProjects[0]
+	}
 	return service, nil
 }
 
@@ -939,6 +946,10 @@ func validateHostFilesRequest(request wireRequest) error {
 		return errors.New("Host Files request contains operation-forbidden fields")
 	}
 	switch request.Operation {
+	case operationGitProject:
+		if payload.GitProject == nil || !gitproject.ValidateRequest(*payload.GitProject) {
+			return errors.New("invalid Git project request")
+		}
 	case operationHostFilesRoots:
 	case operationHostFilesList:
 		if payload.Path != "" && !filepath.IsAbs(payload.Path) || payload.Offset < 0 || payload.Limit != hostFilesPageSize {
@@ -1110,6 +1121,8 @@ func validateHostFilesScheduleRequest(request wireRequest) error {
 
 func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) hostFilesWireRequest {
 	switch operation {
+	case operationGitProject:
+		return hostFilesWireRequest{GitProject: payload.GitProject}
 	case operationHostFilesRoots:
 		return hostFilesWireRequest{}
 	case operationHostFilesList:
@@ -1163,6 +1176,8 @@ func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) ho
 
 func isHostFilesOperation(operation string) bool {
 	switch operation {
+	case operationGitProject:
+		return true
 	case operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
 		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesPermissions, operationHostFilesSetPermissions,
 		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,

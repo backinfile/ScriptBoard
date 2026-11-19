@@ -32,6 +32,7 @@ type Actor struct {
 type StartRequest struct {
 	QuickRunID     string
 	ConfirmOverlap bool
+	PublishedOnly  bool
 	// ParamValues 是交互路径收集的执行参数取值；nil 表示非交互启动，全部走默认值。
 	ParamValues map[string]string
 	Actor       Actor
@@ -57,6 +58,7 @@ type Options struct {
 	PrepareScript    func(context.Context, string) (hostfiles.Script, error)
 	PrepareDirectory func(context.Context, string) (hostfiles.PreparedDirectory, error)
 	LoadVariables    func() (map[string]string, error)
+	BeforeStart      func(context.Context, string) error
 }
 type Controller struct{ options Options }
 
@@ -68,11 +70,13 @@ type quickRun struct {
 	TimeoutSeconds                                        int
 	Revision                                              int64
 	GroupID                                               sql.NullString
+	Pinned                                                bool
 }
 
 func (controller *Controller) load(ctx context.Context, id string) (quickRun, error) {
 	var q quickRun
-	err := controller.options.DB.QueryRowContext(ctx, `SELECT id,name,script_path,arguments_template,memory_limit,timeout_seconds,script_sha256,revision,group_id,params_json FROM quick_runs WHERE id=?`, id).Scan(&q.ID, &q.Name, &q.ScriptPath, &q.ArgumentsTemplate, &q.MemoryLimit, &q.TimeoutSeconds, &q.ScriptSHA256, &q.Revision, &q.GroupID, &q.ParamsJSON)
+	err := controller.options.DB.QueryRowContext(ctx, `SELECT q.id,q.name,q.script_path,q.arguments_template,q.memory_limit,q.timeout_seconds,q.script_sha256,q.revision,q.group_id,q.params_json,COALESCE(g.pinned,0)
+		FROM quick_runs q LEFT JOIN quick_run_git_options g ON q.id=g.quick_id WHERE q.id=?`, id).Scan(&q.ID, &q.Name, &q.ScriptPath, &q.ArgumentsTemplate, &q.MemoryLimit, &q.TimeoutSeconds, &q.ScriptSHA256, &q.Revision, &q.GroupID, &q.ParamsJSON, &q.Pinned)
 	if errors.Is(err, sql.ErrNoRows) {
 		return q, ErrNotFound
 	}
@@ -94,10 +98,6 @@ func (controller *Controller) Start(ctx context.Context, request StartRequest) (
 	if err != nil {
 		return StartResult{}, err
 	}
-	prepared, err := controller.options.PrepareScript(ctx, q.ScriptPath)
-	if err != nil || q.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(q.ScriptSHA256)) != 1 {
-		return StartResult{}, ErrPublicationChanged
-	}
 	if controller.options.Runs.IsActiveScript(q.ScriptPath) && !request.ConfirmOverlap {
 		rows, _ := controller.options.DB.QueryContext(ctx, `SELECT id,status FROM runs WHERE script_path_key=(SELECT script_path_key FROM quick_runs WHERE id=?) AND status IN ('starting','running','stopping','timing_out') ORDER BY created_at DESC LIMIT 10`, q.ID)
 		result := StartResult{Conflict: "active_run", RetryWithConfirmOverlap: true, Revision: q.Revision, Digest: q.ScriptSHA256, ScriptPath: q.ScriptPath}
@@ -110,10 +110,6 @@ func (controller *Controller) Start(ctx context.Context, request StartRequest) (
 			}
 		}
 		return result, nil
-	}
-	directory, err := controller.options.PrepareDirectory(ctx, prepared.Directory)
-	if err != nil {
-		return StartResult{}, ErrWorkingDirectory
 	}
 	variables, err := controller.options.LoadVariables()
 	if err != nil {
@@ -140,11 +136,30 @@ func (controller *Controller) Start(ctx context.Context, request StartRequest) (
 		}
 		variables = merged
 	}
-	runID, err := controller.options.Runs.Start(runmanager.StartRequest{ScriptPath: q.ScriptPath, ExpectedDigest: q.ScriptSHA256, ArgumentsTemplate: q.ArgumentsTemplate, MemoryLimit: q.MemoryLimit, TimeoutSeconds: q.TimeoutSeconds, SourceType: "admin/quick-run", SourceName: controller.snapshot(ctx, q), SourceID: q.ID, Variables: variables, ExtraEnv: paramEnv, InitiatorUserID: request.Actor.UserID, InitiatorUsername: request.Actor.Username, PreparedScript: &prepared, PreparedDirectory: &directory})
+	if q.ScriptSHA256 == "" {
+		return StartResult{}, ErrPublicationChanged
+	}
+	if !request.PublishedOnly && controller.options.BeforeStart != nil {
+		if err := controller.options.BeforeStart(ctx, q.ID); err != nil {
+			return StartResult{}, err
+		}
+	}
+	prepared, err := controller.options.PrepareScript(ctx, q.ScriptPath)
 	if err != nil {
 		return StartResult{}, err
 	}
-	return StartResult{RunID: runID, Status: "starting", Revision: q.Revision, Digest: q.ScriptSHA256}, nil
+	if (request.PublishedOnly || q.Pinned) && subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(q.ScriptSHA256)) != 1 {
+		return StartResult{}, ErrPublicationChanged
+	}
+	directory, err := controller.options.PrepareDirectory(ctx, prepared.Directory)
+	if err != nil {
+		return StartResult{}, ErrWorkingDirectory
+	}
+	runID, err := controller.options.Runs.Start(runmanager.StartRequest{ScriptPath: q.ScriptPath, ExpectedDigest: prepared.Digest, ArgumentsTemplate: q.ArgumentsTemplate, MemoryLimit: q.MemoryLimit, TimeoutSeconds: q.TimeoutSeconds, SourceType: "admin/quick-run", SourceName: controller.snapshot(ctx, q), SourceID: q.ID, Variables: variables, ExtraEnv: paramEnv, InitiatorUserID: request.Actor.UserID, InitiatorUsername: request.Actor.Username, PreparedScript: &prepared, PreparedDirectory: &directory})
+	if err != nil {
+		return StartResult{}, err
+	}
+	return StartResult{RunID: runID, Status: "starting", Revision: q.Revision, Digest: prepared.Digest}, nil
 }
 
 func (controller *Controller) Stop(_ context.Context, actor Actor, runID string) (runmanager.Run, error) {

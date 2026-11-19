@@ -616,8 +616,13 @@ func (server *Server) handle(connection net.Conn) {
 		writeWireResponse(connection, wireResponse{Status: statusError, ErrorCode: "request_invalid", Message: err.Error()})
 		return
 	}
+	if request.Operation == operationGitProject {
+		_ = connection.SetDeadline(server.now().Add(gitProjectDeadline))
+	}
 	var response wireResponse
 	switch request.Operation {
+	case operationGitProject:
+		response = server.gitProjectOperation(request)
 	case operationAuthorize:
 		response = server.authorize(request)
 	case operationExecute:
@@ -1248,6 +1253,9 @@ func (client *Client) call(ctx context.Context, request wireRequest) (wireRespon
 	deadline := time.Now().Add(defaultCallDeadline)
 	if request.Operation == operationRegistryManage {
 		deadline = time.Now().Add(6 * time.Minute)
+	}
+	if request.Operation == operationGitProject {
+		deadline = time.Now().Add(gitProjectDeadline)
 	}
 	if isMySQLOperation(request.Operation) || isStateBackupOperation(request.Operation) {
 		deadline = time.Now().Add(2 * time.Hour)

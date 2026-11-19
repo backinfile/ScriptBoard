@@ -255,6 +255,12 @@ Apply global changes with elevated `scriptboard service restart`, or restart the
 
 `unlimited` removes only that layer's limit. Tasks remain subject to the total limit and Windows process limit. Removing every limit can exhaust host memory; operating-system and parent-service limits still apply.
 
+## Git projects
+
+Open **Resources → Git projects** to add a remote repository or register an existing checkout. Choose the checkout directory, open it in Host Files, batch clone or update projects, switch branches, discard changes, or force an update. The host requires Git. Existing checkouts need a supported `origin` URL and access for the service account. HTTPS, HTTP, SSH, and the Git protocol are supported. Skipping HTTPS certificate verification can expose the connection to man-in-the-middle attacks.
+
+Quick Runs use the current local script by default. Select Git projects in a Quick Run or its group to update them before running. Group projects update first. A failed update skips the script.
+
 ## Workflows
 
 Open **Workflows** to arrange nodes, configure execution entries, and inspect run history. Import or export JSON from the editor menu; download the AI authoring guide and example from the Guide tab. Custom scripts are stored in ScriptBoard.

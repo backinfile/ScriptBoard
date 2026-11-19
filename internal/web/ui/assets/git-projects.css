@@ -1,0 +1,41 @@
+
+.git-search { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+.git-search .file-search-field { flex:0 1 340px; min-width:min(100%,200px); }
+.git-search select { width:auto; }
+.git-table { table-layout:fixed; }
+.git-table th:first-child { width:37%; }
+.git-table th:nth-child(2) { width:19%; }
+.git-table th:nth-child(3) { width:16%; }
+.git-table th:nth-child(4) { width:13%; }
+.git-table :is(td,th) { overflow-wrap:anywhere; }
+.git-table .record-primary { min-width:0; }
+.git-table th input { margin-right:12px; }
+.git-project-identity { display:flex; align-items:center; gap:12px; }
+.git-project-identity > input, .git-table th > input { flex:none; width:16px; height:16px; accent-color:var(--accent); }
+.git-project-identity .record-primary__content > div { min-width:0; }
+.git-table tr[data-selected="true"] { background:var(--accent-soft); }
+.git-table .status-chip { width:fit-content; }
+.git-table .record-actions__group form { display:contents; }
+.git-table .record-actions__group { flex-wrap:wrap; }
+.git-batch { margin:0 0 12px; }
+.git-batch[hidden] { display:none; }
+.git-count { margin-top:14px; color:var(--muted); font-size:.75rem; }
+.git-projects-page [data-state="ready"] { color:var(--accent-text); border-color:var(--accent-border); background:var(--accent-soft); }
+.git-projects-page [data-state="partial"], .git-sheet [data-state="partial"] { color:var(--warning); background:var(--warning-soft); }
+.git-detail-body { padding:20px var(--overlay-header-x); }
+.git-facts { margin:12px 0; }
+.git-facts > div { display:grid; grid-template-columns:minmax(90px,.28fr) minmax(0,1fr); align-items:baseline; gap:8px; padding:9px 0; border-bottom:1px solid var(--rule); }
+.git-facts dt { color:var(--muted); font-size:.77rem; }
+.git-facts dd { margin:0; overflow-wrap:anywhere; }
+.git-changes { list-style:none; margin:0; padding:0; }
+.git-changes li, .git-result { border-bottom:1px solid var(--rule); padding:8px 0; overflow-wrap:anywhere; }
+.git-result > div { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+.git-result p { margin:3px 0 0; }
+.git-error { color:var(--danger); }
+@media(max-width:760px) {
+  .git-search .file-search-field { flex-basis:100%; }
+  .git-table :is(td,th) { padding-inline:12px; }
+  .git-table .record-actions__group { justify-content:flex-end; }
+  .git-branch-cell { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px; }
+  .git-detail-body { padding-inline:16px; }
+}

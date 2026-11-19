@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+  <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+  <title>{{t .Locale "nav.git_projects"}} · ScriptBoard</title>
+</head>
+<body>
+{{if eq .Kind "list"}}
+<main class="workspace git-projects-page">
+  <header class="page-heading primary-page-heading">
+    <div><p class="page-eyebrow">{{t .Locale "nav.resources"}}</p><h1>{{t .Locale "nav.git_projects"}}</h1></div>
+    {{if and .CanWrite (not .History)}}<a class="button button--primary" href="{{.Task "add" ""}}" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "git.add"}}</a>{{end}}
+  </header>
+  <nav class="external-interface-tabs" aria-label="{{t .Locale "nav.git_projects"}}">
+    <a href="/resources/git-projects" {{if not .History}}aria-current="page"{{end}}><span data-lucide="git-branch" aria-hidden="true"></span>{{t .Locale "git.projects"}}</a>
+    <a href="/resources/git-projects?tab=history" {{if .History}}aria-current="page"{{end}}><span data-lucide="history" aria-hidden="true"></span>{{t .Locale "nav.runs"}}</a>
+  </nav>
+  {{if .History}}
+    <div class="table-shell"><table class="records-table git-table">
+      <thead><tr><th>{{t .Locale "git.operation"}}</th><th>{{t .Locale "git.source"}}</th><th>{{t .Locale "git.status"}}</th><th>{{t .Locale "git.time"}}</th><th><span class="sr-only">{{t .Locale "common.details"}}</span></th></tr></thead>
+      <tbody>{{range .Runs}}<tr>
+        <td class="record-primary"><div class="record-primary__content"><span class="file-icon" data-lucide="history" aria-hidden="true"></span><div>
+          <a href="{{$.RunURL .ID}}" data-task-link>{{$.ActionLabel .Action}}</a><small>{{$.ProjectCount (len .Entries)}}</small>
+        </div></div></td>
+        <td data-label="{{t $.Locale "git.source"}}">{{if eq .Source "quick_run"}}{{t $.Locale "nav.quick_runs"}}{{else}}{{t $.Locale "git.manual"}}{{end}}</td>
+        <td data-label="{{t $.Locale "git.status"}}"><span class="status-chip" data-state="{{$.RunState .}}">{{$.StatusLabel ($.RunState .)}}</span></td>
+        <td data-label="{{t $.Locale "git.time"}}">{{$.Time .StartedAt}}</td>
+        <td class="record-actions"><div class="record-actions__group"><a class="button button--compact button--quiet" href="{{$.RunURL .ID}}" data-task-link>{{t $.Locale "common.details"}}</a></div></td>
+      </tr>{{else}}<tr class="records-table__empty"><td colspan="5"><div class="empty-inline">{{t .Locale "git.no_runs"}}</div></td></tr>{{end}}</tbody>
+    </table></div>
+  {{else}}
+    <form class="git-search" method="get" action="/resources/git-projects" data-async data-async-push>
+      <label class="file-search-field"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "git.search"}}</span>
+        <input type="search" name="q" value="{{.Search}}" placeholder="{{t .Locale "git.search"}}">
+      </label>
+      <select name="status" aria-label="{{t .Locale "git.status"}}">
+        <option value="">{{t .Locale "git.all_status"}}</option>
+        {{range $state := .FilterStates}}<option value="{{$state}}" {{if eq $.Filter $state}}selected{{end}}>{{$.StatusLabel $state}}</option>{{end}}
+      </select>
+      <button class="button" type="submit">{{t .Locale "git.find"}}</button>
+    </form>
+    {{if .CanWrite}}
+    <form id="git-batch" method="post" action="/resources/git-projects/sync" data-async data-git-batch class="file-selection-actions git-batch">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <strong data-git-selected role="status" data-selected-label="{{t .Locale "git.selected"}}"></strong>
+      <button class="button button--compact button--quiet" type="button" data-git-clear>{{t .Locale "git.clear"}}</button>
+      <button class="button button--compact" type="submit"><span data-lucide="download" aria-hidden="true"></span>{{.ActionLabel "sync"}}</button>
+      <details class="action-menu">
+        <summary aria-label="{{t .Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
+        <div><a class="danger-action" href="{{.Task "force" ""}}" data-git-force data-git-force-url="{{.Task "force" ""}}" data-task-link><span data-lucide="refresh-cw" aria-hidden="true"></span>{{.ActionLabel "force"}}</a></div>
+      </details>
+    </form>
+    {{end}}
+    <div class="table-shell"><table class="records-table git-table" data-git-table>
+      <thead><tr>
+        <th>{{if .CanWrite}}<input type="checkbox" data-git-all aria-label="{{t .Locale "git.select_all"}}">{{end}}{{t .Locale "git.project"}}</th>
+        <th>{{t .Locale "git.branch"}}</th><th>{{t .Locale "git.workspace"}}</th><th>{{t .Locale "git.latest"}}</th>
+        <th><span class="sr-only">{{t .Locale "git.operation"}}</span></th>
+      </tr></thead>
+      <tbody>{{range .Projects}}<tr>
+        <td class="record-primary"><div class="git-project-identity">
+          {{if $.CanWrite}}<input type="checkbox" form="git-batch" name="project_id" value="{{.ID}}" data-git-select aria-label="{{t $.Locale "git.select"}} {{.Name}}">{{end}}
+          <div class="record-primary__content"><span class="file-icon" data-lucide="folder-code" aria-hidden="true"></span><div>
+            <a href="{{$.Task "detail" .ID}}" data-task-link>{{.Name}}</a><small><code>{{.Directory}}</code></small>
+          </div></div>
+        </div></td>
+        <td data-label="{{t $.Locale "git.branch"}}"><div class="git-branch-cell">{{if .Status.Branch}}<code>{{.Status.Branch}}</code>{{else}}—{{end}}<small><code>{{$.Short .Status.Commit}}</code></small></div></td>
+        <td data-label="{{t $.Locale "git.workspace"}}"><span class="status-chip" data-state="{{.State}}">{{$.StatusLabel .State}}</span></td>
+        <td data-label="{{t $.Locale "git.latest"}}">{{.Last}}</td>
+        <td class="record-actions"><div class="record-actions__group">
+          {{if $.CanWrite}}<form method="post" action="/resources/git-projects/sync" data-async>
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="project_id" value="{{.ID}}">
+            <button class="button button--compact button--quiet" type="submit"><span data-lucide="download" aria-hidden="true"></span>{{if .Status.Cloned}}{{t $.Locale "git.update"}}{{else}}{{t $.Locale "git.clone"}}{{end}}</button>
+          </form>{{end}}
+          <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}} · {{.Name}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
+            <div>
+              <a href="{{$.Task "detail" .ID}}" data-task-link><span data-lucide="eye" aria-hidden="true"></span>{{t $.Locale "common.details"}}</a>
+              {{if .DirectoryURL}}<a href="{{.DirectoryURL}}"><span data-lucide="folder-open" aria-hidden="true"></span>{{t $.Locale "git.open_directory"}}</a>{{end}}
+              {{if and $.CanWrite .Status.Cloned}}
+              <a href="{{$.Task "switch" .ID}}" data-task-link><span data-lucide="git-branch" aria-hidden="true"></span>{{$.ActionLabel "switch"}}</a>
+              {{if .Status.Upstream}}<a class="danger-action" href="{{$.Task "force" .ID}}" data-task-link><span data-lucide="refresh-cw" aria-hidden="true"></span>{{$.ActionLabel "force"}}</a>{{end}}
+              {{if .Status.Tracked}}<a class="danger-action" href="{{$.Task "discard" .ID}}" data-task-link><span data-lucide="rotate-ccw" aria-hidden="true"></span>{{$.ActionLabel "discard"}}</a>{{end}}
+              {{end}}
+            </div>
+          </details>
+        </div></td>
+      </tr>{{else}}<tr class="records-table__empty"><td colspan="5"><div class="empty-inline">{{t .Locale "git.empty"}}</div></td></tr>{{end}}</tbody>
+    </table></div>
+    <p class="git-count">{{.ProjectCount (len .Projects)}}</p>
+  {{end}}
+</main>
+{{else}}
+<main class="workspace task-page" data-task-page data-task-kind="git-{{.Kind}}" data-task-close-label="{{t .Locale "common.close"}}" {{if eq .Kind "run"}}data-task-refresh-on-close{{end}}>
+  <a class="task-back" href="/resources/git-projects">{{t .Locale "nav.git_projects"}}</a>
+  <section class="task-sheet git-sheet">
+    <header><span class="dico" aria-hidden="true"><span data-lucide="{{if eq .Kind "run"}}history{{else}}git-branch{{end}}"></span></span>
+      <div><p class="page-eyebrow">{{t .Locale "nav.git_projects"}}</p><h1>{{if eq .Kind "add"}}{{t .Locale "git.add"}}{{else if eq .Kind "run"}}{{.ActionLabel .Run.Action}}{{else if eq .Kind "detail"}}{{.Project.Name}}{{else}}{{.ActionLabel .Action}}{{end}}</h1></div>
+      <a class="icon-button" href="/resources/git-projects" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a>
+    </header>
+    {{if eq .Kind "add"}}
+    <form method="post" action="/resources/git-projects/new" data-async>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="drawer-body">
+        {{if .Message}}<p class="page-error" role="alert">{{.Message}}</p>{{end}}
+        <section class="d-section">
+          <label>{{t .Locale "git.project"}}<input name="name" value="{{.Project.Name}}" required maxlength="128" autofocus></label>
+          <label>{{t .Locale "git.mode"}}<select name="mode" data-git-mode><option value="new">{{t .Locale "git.new_checkout"}}</option><option value="existing" {{if .Project.Existing}}selected{{end}}>{{t .Locale "git.existing_checkout"}}</option></select></label>
+          <label>{{t .Locale "git.directory"}}<input name="directory" value="{{.Project.Directory}}" required maxlength="4096" placeholder="{{t .Locale "git.absolute_path"}}"></label>
+          <label>{{t .Locale "git.remote"}}<input name="remote" value="{{.Project.Remote}}" maxlength="2048" data-git-remote></label>
+          <label data-git-branch>{{t .Locale "git.branch"}}<input name="branch" value="{{.Project.Branch}}" maxlength="255" placeholder="{{t .Locale "git.default_branch"}}"></label>
+          <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "git.skip_tls"}}</strong><small>{{t .Locale "git.skip_tls_hint"}}</small></span><input class="switch" type="checkbox" name="skip_tls" value="1" {{if .Project.SkipTLS}}checked{{end}}></label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="/resources/git-projects">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "common.create"}}</button></footer>
+    </form>
+    {{else if eq .Kind "detail"}}
+    <div class="drawer-body git-detail-body">
+      {{if .Project.Message}}<p class="page-error" role="alert">{{.Project.Message}}</p>{{end}}
+      <span class="status-chip" data-state="{{.Project.State}}">{{.StatusLabel .Project.State}}</span>
+      <dl class="git-facts">
+        <div><dt>{{t .Locale "git.directory"}}</dt><dd><code>{{.Project.Directory}}</code>{{if .Project.DirectoryURL}} <a class="button button--compact button--quiet" href="{{.Project.DirectoryURL}}"><span data-lucide="folder-open" aria-hidden="true"></span>{{t .Locale "git.open_directory"}}</a>{{end}}</dd></div>
+        <div><dt>{{t .Locale "git.remote"}}</dt><dd><code>{{.Project.Remote}}</code></dd></div>
+        <div><dt>{{t .Locale "git.branch"}}</dt><dd><code>{{.Project.Status.Branch}}</code></dd></div>
+        <div><dt>{{t .Locale "git.commit"}}</dt><dd><code>{{.Project.Status.Commit}}</code></dd></div>
+        {{if .Project.Status.Upstream}}<div><dt>{{t .Locale "git.upstream"}}</dt><dd><code>{{.Project.Status.Upstream}}</code> · {{t .Locale "git.ahead"}} {{.Project.Status.Ahead}} · {{t .Locale "git.behind"}} {{.Project.Status.Behind}}</dd></div>{{end}}
+        {{if .Project.SkipTLS}}<div><dt>{{t .Locale "git.skip_tls"}}</dt><dd>{{t .Locale "git.skip_tls_hint"}}</dd></div>{{end}}
+      </dl>
+      <section class="d-section"><p class="ds-title"><span data-lucide="git-branch" aria-hidden="true"></span>{{t .Locale "git.changes"}}</p>
+        {{if .Project.Status.Changes}}<ul class="git-changes">{{range .Project.Status.Changes}}<li><span class="status-chip"><code>{{.Code}}</code></span> <code>{{.Path}}</code></li>{{end}}</ul>{{else}}<p class="empty-copy">{{t .Locale "git.no_changes"}}</p>{{end}}
+      </section>
+    </div>
+    {{else if eq .Kind "run"}}
+    <div class="drawer-body git-detail-body" data-git-live="{{.RunURL .Run.ID}}" {{if .Run.FinishedAt}}data-git-finished{{end}}>
+      <span class="status-chip" data-state="{{.RunState .Run}}" role="status">{{.StatusLabel (.RunState .Run)}}</span>
+      <dl class="git-facts"><div><dt>ID</dt><dd><code>{{.Run.ID}}</code></dd></div><div><dt>{{t .Locale "git.time"}}</dt><dd>{{.Time .Run.StartedAt}}</dd></div></dl>
+      <section class="d-section"><p class="ds-title"><span data-lucide="history" aria-hidden="true"></span>{{t .Locale "git.results"}}</p>
+        {{range .Run.Entries}}<div class="git-result"><div><strong>{{.Name}}</strong><span class="status-chip" data-state="{{.Status}}">{{$.StatusLabel .Status}}</span></div>
+          {{if .Branch}}<p><code>{{.Branch}}</code> · <code>{{if and .Before (ne .Before .Commit)}}{{$.Short .Before}} → {{end}}{{$.Short .Commit}}</code></p>{{end}}
+          {{if .Error}}<p class="git-error">{{.Error}}</p>{{end}}
+        </div>{{end}}
+      </section>
+    </div>
+    {{else}}
+    <form method="post" action="/resources/git-projects/{{.Kind}}" data-async>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="drawer-body">
+        {{if eq .Kind "switch"}}
+          <input type="hidden" name="project_id" value="{{.Project.ID}}">
+          {{if .Project.Message}}<p class="page-error" role="alert">{{.Project.Message}}</p>{{end}}
+          <label>{{t .Locale "git.target_branch"}}<select name="branch" required>{{range .Project.Status.Branches}}<option value="{{.Name}}" {{if eq .Name $.Project.Status.Branch}}selected{{end}}>{{.Name}}{{if not .Local}} · origin{{end}}</option>{{end}}</select></label>
+        {{else}}
+          <p class="page-error">{{if eq .Kind "force"}}{{t .Locale "git.force_hint"}}{{else}}{{t .Locale "git.discard_hint"}}{{end}}</p>
+          {{range .Projects}}<div class="git-result"><div><strong>{{.Name}}</strong><code>{{.Status.Branch}}</code></div>
+            {{if and .Status.Revision (or (eq $.Kind "discard") .Status.Upstream (eq .State "idle"))}}
+              <input type="hidden" name="project_id" value="{{.ID}}"><input type="hidden" name="revision_{{.ID}}" value="{{.Status.Revision}}">
+              <p>{{if eq .State "idle"}}{{t $.Locale "git.status.idle"}}{{else}}{{t $.Locale "git.modified_count"}} {{.Status.Tracked}}{{if eq $.Kind "force"}} · {{t $.Locale "git.local_commits"}} {{.Status.Ahead}}{{end}}{{end}}</p>
+            {{else}}<p>{{if .Message}}{{.Message}}{{else}}{{t $.Locale "git.not_eligible"}}{{end}}</p>{{end}}
+          </div>{{end}}
+          <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "git.confirm"}}</strong></span><input class="switch" type="checkbox" name="confirm" value="yes" required></label>
+        {{end}}
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="/resources/git-projects">{{t .Locale "common.cancel"}}</a>
+        <button class="button {{if eq .Kind "switch"}}button--primary{{else}}button--danger{{end}}" type="submit">{{.ActionLabel .Action}}</button>
+      </footer>
+    </form>
+    {{end}}
+  </section>
+</main>
+{{end}}
+</body>
+</html>

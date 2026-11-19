@@ -49,6 +49,7 @@ import (
 	"scriptboard/internal/externalapproval"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/fleetstatus"
+	"scriptboard/internal/gitproject"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/hoststatus"
@@ -522,6 +523,7 @@ func deletePasskeyWithContext(ctx context.Context, store PasskeyStore, userID, c
 }
 
 type App struct {
+	gitJobs                   *gitJobs
 	workflowEngine            *workflow.Engine
 	memorySettingsMu          sync.Mutex
 	activeMemory              resourcelimits.Memory
@@ -879,7 +881,11 @@ func Open(config Config) (*App, error) {
 	}
 	application.runs = runmanager.NewWithLauncher(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains, config.RunnerProcessLauncher, application.auditLog)
 	application.runs.SetDefaultMemory(config.Memory.Resolved().PerRun)
-	application.runControl = runcontrol.New(runcontrol.Options{DB: db, Runs: application.runs, PrepareScript: application.hostPrepareScript, PrepareDirectory: application.hostPrepareDirectory, LoadVariables: application.loadVariables})
+	if err := recoverGitRuns(context.Background(), db); err != nil {
+		return nil, fmt.Errorf("recover Git project operations: %w", err)
+	}
+	application.gitJobs = newGitJobs(gitproject.NewCheckout(files, stateRoot))
+	application.runControl = runcontrol.New(runcontrol.Options{DB: db, Runs: application.runs, PrepareScript: application.hostPrepareScript, PrepareDirectory: application.hostPrepareDirectory, LoadVariables: application.loadVariables, BeforeStart: application.runQuickGitProjects})
 	application.mcpStore = mcpaccess.NewStore(db, time.Now)
 	application.mcpCommands = mcpcommand.NewLedger(db, time.Now)
 	application.mcpStore.SetLifecycleObserver(func(event mcpaccess.LifecycleEvent) {
@@ -1688,6 +1694,9 @@ func (a *App) applyStartupCredentials(username, passwordFile string) error {
 }
 
 func (a *App) Close() error {
+	if a.gitJobs != nil {
+		a.gitJobs.close()
+	}
 	if a.workflowEngine != nil {
 		a.workflowEngine.Close()
 	}
@@ -2373,11 +2382,11 @@ func safeWebErrorMessage(message string) string {
 	return strings.TrimSpace(string(clean))
 }
 
-var appCSS = mustWebAsset("ui/assets/app.css") + "\n" + mustWebAsset("ui/assets/file-jump.css") + "\n" + mustWebAsset("ui/assets/registries.css") + "\n" + mustWebAsset("ui/assets/resource-workspace.css")
+var appCSS = mustWebAsset("ui/assets/app.css") + "\n" + mustWebAsset("ui/assets/file-jump.css") + "\n" + mustWebAsset("ui/assets/registries.css") + "\n" + mustWebAsset("ui/assets/resource-workspace.css") + "\n" + mustWebAsset("ui/assets/git-projects.css")
 
 var workbenchJS = mustWebAsset("ui/assets/workbench.js")
 
-var appJS = mustWebAsset("ui/assets/file-jump.js") + "\n" + mustWebAsset("ui/assets/app.js") + "\n" + mustWebAsset("ui/assets/registries.js") + "\n" + mustWebAsset("ui/assets/registry-card-tree.js")
+var appJS = mustWebAsset("ui/assets/file-jump.js") + "\n" + mustWebAsset("ui/assets/app.js") + "\n" + mustWebAsset("ui/assets/registries.js") + "\n" + mustWebAsset("ui/assets/registry-card-tree.js") + "\n" + mustWebAsset("ui/assets/git-projects.js")
 
 var markdownItJS = mustWebAsset("ui/assets/markdown-it.min.js")
 
@@ -2796,6 +2805,8 @@ func (a *App) deleteSchedule(response http.ResponseWriter, request *http.Request
 }
 
 type quickRunView struct {
+	GitProjectCount     int
+	GitPinned           bool
 	ID                  string
 	Name                string
 	Note                string
@@ -3040,8 +3051,13 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "无法读取快捷执行分组", http.StatusInternalServerError)
 		return
 	}
-	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, memory_limit, timeout_seconds, group_id, locked, require_confirmation, script_sha256, revision, params_json
-		FROM quick_runs ORDER BY sort_order, created_at`)
+	gitCounts, err := a.gitProjectSetupStats(request.Context())
+	if err != nil {
+		http.Error(response, "Unable to read Git preflight settings", http.StatusInternalServerError)
+		return
+	}
+	rows, err := a.db.Query(`SELECT q.id, q.name, q.script_path, q.arguments_template, q.memory_limit, q.timeout_seconds, q.group_id, q.locked, q.require_confirmation, q.script_sha256, q.revision, q.params_json, COALESCE(g.pinned,0)
+		FROM quick_runs q LEFT JOIN quick_run_git_options g ON q.id=g.quick_id ORDER BY q.sort_order, q.created_at`)
 	if err != nil {
 		http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 		return
@@ -3050,13 +3066,14 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	for rows.Next() {
 		var quick quickRunView
 		var groupID sql.NullString
-		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.MemoryLimit, &quick.TimeoutSeconds, &groupID, &quick.Locked, &quick.RequireConfirmation, &quick.ScriptSHA256, &quick.Revision, &quick.ParamsJSON); err != nil {
+		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.MemoryLimit, &quick.TimeoutSeconds, &groupID, &quick.Locked, &quick.RequireConfirmation, &quick.ScriptSHA256, &quick.Revision, &quick.ParamsJSON, &quick.GitPinned); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 			return
 		}
 		quick.Params, _ = quickrun.ParseParamDefs(quick.ParamsJSON)
-		if prepared, prepareErr := a.hostPrepareScript(request.Context(), quick.ScriptPath); prepareErr == nil && quick.ScriptSHA256 != "" && subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) == 1 {
+		quick.GitProjectCount = gitCounts[quick.ID]
+		if prepared, prepareErr := a.hostPrepareScript(request.Context(), quick.ScriptPath); quick.ScriptSHA256 != "" && (quick.GitProjectCount > 0 || prepareErr == nil && (!quick.GitPinned || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) == 1)) {
 			quick.Valid = true
 		}
 		if groupID.Valid {
@@ -3166,7 +3183,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		_ = overlapTemplate.Execute(response, overlapView{Action: "/config/quick-runs/" + url.PathEscape(request.PathValue("id")) + "/start", Script: started.ScriptPath, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request), Params: paramValues})
 		return
 	}
-	a.recordQuickRunAuditForRequest(request, "start_quick_run", request.PathValue("id"), "accepted")
+	a.recordAuditResourceForRequest(request, "start_quick_run", request.PathValue("id"), "accepted", strconv.FormatInt(started.Revision, 10), started.Digest)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(started.RunID), http.StatusSeeOther)
 }
 

@@ -6363,6 +6363,10 @@ body.custom-dashboard-monitor .custom-dashboard-workspace{width:100%;max-width:n
 .quickrun-param-item__head strong{font-size:.76rem}
 .quickrun-param-item label{display:grid;gap:4px;color:var(--muted);font-size:.7rem}
 .quickrun-param-item .checkbox-row{display:flex;align-items:center;gap:8px}
+.git-preflight-picks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px}
+.git-preflight-picks label.checkbox-row{display:flex;align-items:center;gap:8px;padding:4px;overflow-wrap:anywhere}
+.git-preflight-picks input{flex:none;width:15px;height:15px;min-height:0;margin:0;accent-color:var(--accent)}
+@media(max-width:440px){.git-preflight-picks{grid-template-columns:minmax(0,1fr)}}
 .required-mark{color:var(--danger,#c0392b);font-weight:700}
 .custom-dashboard-card__actions-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--rule)}
 .custom-dashboard-action-status{flex-basis:100%;margin:4px 0 0;color:var(--muted);font-size:.72rem}

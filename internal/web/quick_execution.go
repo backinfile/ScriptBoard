@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/gitproject"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/quickrun"
 	"scriptboard/internal/recordnote"
@@ -346,6 +347,9 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 			(id, name, note, script_path, script_path_key, arguments_template, memory_limit, timeout_seconds, source_run_id, sort_order, created_at, group_id, require_confirmation, script_sha256, revision, updated_at, params_json)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 1, ?, ?)`,
 			id, name, note, prepared.Path, hostfiles.ComparisonKey(prepared.Path), argumentsTemplate, request.FormValue("memory_limit"), timeoutSeconds, sortOrder, now, groupID, request.FormValue("require_confirmation") == "1", prepared.Digest, now, paramsJSON)
+	}
+	if err == nil && request.FormValue("git_settings") == "1" {
+		err = gitproject.SaveQuickSetup(request.Context(), transaction, id, request.FormValue("follow_file") != "1", request.Form["git_project"])
 	}
 	if err == nil {
 		err = transaction.Commit()
