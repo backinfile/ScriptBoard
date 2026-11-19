@@ -1,6 +1,6 @@
 # ScriptBoard
 
-v2.14.1 updates security components and release checks, with improved registry browsing and grouping. See the [release notes (Chinese)](./docs/RELEASE_NOTES.md).
+v2.14.2 adds sidebar sign-out, simplifies MCP setup, and applies Go security patches. See the [release notes (Chinese)](./docs/RELEASE_NOTES.md).
 
 [简体中文](./README.md) | English
 

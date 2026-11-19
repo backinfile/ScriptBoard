@@ -1,6 +1,6 @@
 # ScriptBoard
 
-v2.14.1 更新安全组件与发布验证，并改进镜像仓库浏览和分组。详见[发布说明](./docs/RELEASE_NOTES.md)。
+v2.14.2 在侧栏加入退出登录，简化 MCP 接入并更新 Go 安全补丁。详见[发布说明](./docs/RELEASE_NOTES.md)。
 
 简体中文 | [English](./README_EN.md)
 
