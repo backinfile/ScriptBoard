@@ -549,7 +549,7 @@ func TestCommittedUpdateRecoveryRequiresIntactSnapshotBeforeSwitching(t *testing
 		t.Fatal(err)
 	}
 
-	err := RecoverOperation(context.Background(), stateRoot, id)
+	err := recoverOperation(context.Background(), stateRoot, id)
 	if err == nil || !strings.Contains(err.Error(), "snapshot") {
 		t.Fatalf("committed recovery without snapshot error = %v", err)
 	}

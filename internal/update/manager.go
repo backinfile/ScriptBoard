@@ -20,7 +20,15 @@ import (
 	"scriptboard/internal/secretredaction"
 )
 
+// ManagedService runs the privileged parts of a managed update outside the Web process.
+type ManagedService interface {
+	Verify(context.Context) error
+	Prepare(context.Context, string) (Operation, error)
+	Handoff(context.Context, string, string) (Operation, error)
+}
+
 type ManagerConfig struct {
+	ManagedService     ManagedService
 	StateRoot          string
 	CheckEnabled       bool
 	CheckInterval      time.Duration
@@ -52,6 +60,7 @@ type Snapshot struct {
 }
 
 type Manager struct {
+	managedService     ManagedService
 	stateRoot          string
 	build              buildinfo.Info
 	checkEnabled       bool
@@ -91,7 +100,7 @@ func NewManager(config ManagerConfig) *Manager {
 		build = *config.Build
 	}
 	manager := &Manager{
-		stateRoot: config.StateRoot, build: build,
+		stateRoot: config.StateRoot, build: build, managedService: config.ManagedService,
 		checkEnabled: config.CheckEnabled, checkInterval: config.CheckInterval,
 		source: config.Source, sources: sources, selectedSource: SourceGitHub,
 		now: config.Now, requestShutdown: config.RequestShutdown, runnerIdentityMode: config.RunnerIdentityMode,
@@ -235,6 +244,13 @@ func (manager *Manager) CheckFrom(ctx context.Context, force bool, requestedSour
 	return manager.snapshotLocked(), nil
 }
 
+func (manager *Manager) PrepareForSession(ctx context.Context, sessionToken string) (Operation, error) {
+	if manager.managedService != nil {
+		return manager.managedService.Prepare(ctx, sessionToken)
+	}
+	return manager.Prepare(ctx)
+}
+
 func (manager *Manager) Prepare(ctx context.Context) (Operation, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -290,7 +306,10 @@ func (manager *Manager) Prepare(ctx context.Context) (Operation, error) {
 	if err != nil {
 		return Operation{}, err
 	}
-	root, _ := OperationDirectory(manager.stateRoot, id)
+	root, err := OperationDirectory(manager.stateRoot, id)
+	if err != nil {
+		return Operation{}, err
+	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return Operation{}, err
 	}
@@ -337,7 +356,35 @@ func (manager *Manager) Prepare(ctx context.Context) (Operation, error) {
 	return operation, nil
 }
 
-func (manager *Manager) Handoff(operationID string) (Operation, error) {
+func (manager *Manager) Handoff(ctx context.Context, operationID, sessionToken string) (Operation, error) {
+	if manager.requestShutdown == nil {
+		return Operation{}, errors.New("service host does not provide a shutdown callback")
+	}
+	var operation Operation
+	var err error
+	if manager.managedService != nil {
+		operation, err = manager.managedService.Handoff(ctx, operationID, sessionToken)
+	} else {
+		operation, err = manager.handoff(operationID, func() (int, error) { return os.Getpid(), nil })
+	}
+	if err == nil {
+		time.AfterFunc(250*time.Millisecond, manager.requestShutdown)
+	}
+	return operation, err
+}
+
+func (manager *Manager) VerifyManagedService() error {
+	_, err := manager.managedInstallation()
+	return err
+}
+
+// HandoffFromBroker is used by the Windows Broker, which can read the SCM's
+// actual Web PID and start the updater without raising the Web service's rights.
+func (manager *Manager) HandoffFromBroker(operationID string) (Operation, error) {
+	return manager.handoff(operationID, platformservice.RunningWebProcessID)
+}
+
+func (manager *Manager) handoff(operationID string, webPID func() (int, error)) (Operation, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	operation, err := LoadOperation(manager.stateRoot, operationID)
@@ -351,14 +398,19 @@ func (manager *Manager) Handoff(operationID string) (Operation, error) {
 	if err != nil {
 		return Operation{}, err
 	}
-	if manager.requestShutdown == nil {
-		return Operation{}, errors.New("service host does not provide a shutdown callback")
+	active, err := LoadActive(manager.stateRoot)
+	if err != nil || active.OperationID != operation.ID || active.Phase != PhasePrepared {
+		return Operation{}, errors.New("operation is no longer the active prepared update")
 	}
-	updaterExecutable, err := prepareHandoffUpdater(metadata, operation)
+	pid, err := webPID()
 	if err != nil {
 		return Operation{}, err
 	}
-	operation.OldPID = os.Getpid()
+	updaterExecutable, err := prepareHandoffUpdater(metadata)
+	if err != nil {
+		return Operation{}, err
+	}
+	operation.OldPID = pid
 	operation.Phase = PhaseHandoff
 	operation.Error = ""
 	if err := SaveOperation(operation); err != nil {
@@ -370,28 +422,16 @@ func (manager *Manager) Handoff(operationID string) (Operation, error) {
 		_ = SaveOperation(operation)
 		return Operation{}, err
 	}
-	time.AfterFunc(250*time.Millisecond, manager.requestShutdown)
 	return operation, nil
 }
 
-func prepareHandoffUpdater(metadata installation.Metadata, operation Operation) (string, error) {
+func prepareHandoffUpdater(metadata installation.Metadata) (string, error) {
 	source := installation.UpdaterExecutable(metadata)
-	if runtime.GOOS != "windows" {
-		target := installation.ServiceUpdaterExecutable(metadata)
-		if err := copyExecutableAtomic(source, target); err != nil {
-			return "", err
-		}
-		return target, nil
+	if runtime.GOOS == "windows" {
+		// The Broker must launch only the installed helper under the protected Install Root.
+		return source, nil
 	}
-	root, err := OperationDirectory(operation.StateRoot, operation.ID)
-	if err != nil {
-		return "", err
-	}
-	helperRoot := filepath.Join(root, "helper")
-	if err := os.MkdirAll(helperRoot, 0o700); err != nil {
-		return "", err
-	}
-	target := filepath.Join(helperRoot, "scriptboard-updater.exe")
+	target := installation.ServiceUpdaterExecutable(metadata)
 	if err := copyExecutableAtomic(source, target); err != nil {
 		return "", err
 	}
@@ -436,6 +476,15 @@ func (manager *Manager) snapshotLocked() Snapshot {
 	if !manager.build.ValidRelease() {
 		snapshot.InstallMode = "development"
 		snapshot.Capability = "Development builds do not participate in updates."
+	} else if manager.managedService != nil {
+		snapshot.InstallMode = "managed-service"
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := manager.managedService.Verify(ctx)
+		cancel()
+		snapshot.CanApply = err == nil
+		if err != nil {
+			snapshot.Capability = secretredaction.String(err.Error())
+		}
 	} else if _, err := manager.managedInstallation(); err == nil {
 		snapshot.InstallMode = "managed-service"
 		snapshot.CanApply = true

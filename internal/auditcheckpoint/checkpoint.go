@@ -37,6 +37,7 @@ type Options struct {
 	StateRoot   string
 	SecretStore *secretstore.Store
 	ReadOnly    bool
+	PauseWrites func() bool
 }
 
 type Store struct {
@@ -47,6 +48,7 @@ type Store struct {
 	privateKey     ed25519.PrivateKey
 	newKey         bool
 	readOnly       bool
+	pauseWrites    func() bool
 	trusted        *checkpointDocument
 	mu             sync.Mutex
 }
@@ -92,7 +94,7 @@ func New(options Options) (*Store, error) {
 		return nil, err
 	}
 	store := &Store{
-		vault: vault, stateRootID: stateRootID, keyPath: keyPath, checkpointPath: checkpointPath, readOnly: options.ReadOnly,
+		vault: vault, stateRootID: stateRootID, keyPath: keyPath, checkpointPath: checkpointPath, readOnly: options.ReadOnly, pauseWrites: options.PauseWrites,
 	}
 	sealedKey, keyErr := os.ReadFile(store.keyPath)
 	_, checkpointErr := os.Stat(store.checkpointPath)
@@ -197,6 +199,10 @@ func (store *Store) Write(ctx context.Context, audit *auditlog.Store, now time.T
 	defer store.mu.Unlock()
 	if store.readOnly {
 		return errors.New("read-only audit checkpoint store cannot write")
+	}
+	// Uncommitted migrations can add audit rows that a rollback removes.
+	if store.pauseWrites != nil && store.pauseWrites() {
+		return nil
 	}
 	release, err := store.acquireFileLock(ctx)
 	if err != nil {

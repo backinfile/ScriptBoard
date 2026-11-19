@@ -636,6 +636,10 @@ IPAddressDeny=any
 `
 }
 
+func RunningWebProcessID() (int, error) {
+	return 0, errors.New("Broker-managed update handoff is Windows-only")
+}
+
 func StartUpdater(_, _, operationID string) error {
 	if operationID == "" || strings.ContainsAny(operationID, "/\\ \t\r\n") {
 		return errors.New("invalid update operation ID")

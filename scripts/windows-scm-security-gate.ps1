@@ -266,6 +266,11 @@ notification_email_recipient: 'security@example.invalid'
     Invoke-WebRequest -Uri "$baseURL/login" -Method Post -WebSession $webSession -Body @{
         username = "admin"; password = $adminPassword; csrf_token = $loginToken
     } | Out-Null
+    $updateStatus = Invoke-RestMethod -Uri "$baseURL/settings/updates/status" -WebSession $webSession
+    if ($updateStatus.install_mode -ne "managed-service" -or -not $updateStatus.can_apply) {
+        throw "Windows managed Web service cannot prepare updates: $($updateStatus | ConvertTo-Json -Compress)"
+    }
+    Write-Host "MANAGED_UPDATE_CAPABILITY: VERIFIED"
     $taskPage = Invoke-WebRequest -Uri "$baseURL/config/quick-runs/one-time/new" -WebSession $webSession
     $taskToken = [Regex]::Match($taskPage.Content, 'name="csrf_token" value="([^"]+)"').Groups[1].Value
     if ([string]::IsNullOrWhiteSpace($taskToken)) { throw "One-time Run CSRF token was not rendered" }

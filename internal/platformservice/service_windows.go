@@ -895,6 +895,23 @@ func sameWindowsPath(first, second string) bool {
 	return firstErr == nil && secondErr == nil && strings.EqualFold(filepath.Clean(firstAbsolute), filepath.Clean(secondAbsolute))
 }
 
+func RunningWebProcessID() (int, error) {
+	manager, service, err := openService()
+	if err != nil {
+		return 0, err
+	}
+	defer manager.Disconnect()
+	defer service.Close()
+	status, err := service.Query()
+	if err != nil {
+		return 0, err
+	}
+	if status.State != svc.Running || status.ProcessId == 0 {
+		return 0, errors.New("ScriptBoard Web service is not running")
+	}
+	return int(status.ProcessId), nil
+}
+
 func openService() (*mgr.Mgr, *mgr.Service, error) {
 	manager, err := mgr.Connect()
 	if err != nil {

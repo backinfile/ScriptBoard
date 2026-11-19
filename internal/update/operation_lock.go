@@ -11,7 +11,7 @@ type operationLock struct {
 }
 
 func acquireOperationLock(stateRoot string) (*operationLock, error) {
-	root := filepath.Join(stateRoot, "updates")
+	root := operationStorageRoot(stateRoot)
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
