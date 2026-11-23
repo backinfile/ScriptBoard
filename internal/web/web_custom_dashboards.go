@@ -95,6 +95,7 @@ type customDashboardCardView struct {
 	Websites                                      []customDashboardWebsiteView
 	SelectedMonitorIDs                            map[string]bool
 	InsecureSource                                bool
+	SourceAllowsPrivate, SourceSkipsTLSVerify     bool
 	RegistryEndpoint, RegistryImagesText          string
 	RegistryAuthMode, RegistryUsername            string
 	RegistryImageCount                            int
@@ -280,8 +281,8 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 			}
 		}
 		var cardConfig struct {
+			customdashboard.DataSourceConfig
 			MonitorIDs []string `json:"monitorIds"`
-			Unit       string   `json:"unit"`
 		}
 		_ = json.Unmarshal(card.Config, &cardConfig)
 		var registryConfig registrymonitor.Config
@@ -325,6 +326,8 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 			}
 		}
 		item.Unit = strings.TrimSpace(cardConfig.Unit)
+		item.SourceAllowsPrivate = cardConfig.AllowPrivate
+		item.SourceSkipsTLSVerify = cardConfig.SkipTLSVerify
 		headerNames := make([]string, 0, len(card.Headers))
 		for name := range card.Headers {
 			headerNames = append(headerNames, name)
@@ -806,12 +809,19 @@ func customDashboardCardInput(request *http.Request, preserveRegistryPassword bo
 			return customdashboard.CardInput{}, err
 		}
 		config = encoded
-	} else if cardType == customdashboard.CardNumber || cardType == customdashboard.CardQuota {
-		unitRunes := []rune(strings.TrimSpace(request.FormValue("unit")))
-		if len(unitRunes) > 16 {
-			unitRunes = unitRunes[:16]
+	} else if cardType != customdashboard.CardFlow {
+		sourceConfig := customdashboard.DataSourceConfig{
+			AllowPrivate:  request.FormValue("source_allow_private") == "1",
+			SkipTLSVerify: request.FormValue("source_skip_tls_verify") == "1",
 		}
-		encoded, err := json.Marshal(map[string]string{"unit": string(unitRunes)})
+		if cardType == customdashboard.CardNumber || cardType == customdashboard.CardQuota {
+			unitRunes := []rune(strings.TrimSpace(request.FormValue("unit")))
+			if len(unitRunes) > 16 {
+				unitRunes = unitRunes[:16]
+			}
+			sourceConfig.Unit = string(unitRunes)
+		}
+		encoded, err := json.Marshal(sourceConfig)
 		if err != nil {
 			return customdashboard.CardInput{}, err
 		}

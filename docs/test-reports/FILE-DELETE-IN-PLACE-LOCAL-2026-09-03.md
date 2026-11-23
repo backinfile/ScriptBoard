@@ -36,7 +36,7 @@
 | 回收站记录 | 通过，三个测试文件均可查到 |
 | Console / Page errors | 0 |
 
-结构化结果和截图分别保存在 `.scratch/folder-drop-upload-20260903/delete-refresh-result.json` 与 `.scratch/folder-drop-upload-20260903/delete-refresh-acceptance.png`。测试数据保留在 `D:\ScriptBoardLocalTests\folder-drop-upload-20260903`。
+结构化结果和截图分别保存在 `.scratch/folder-drop-upload-20260903/delete-refresh-result.json` 与 `.scratch/folder-drop-upload-20260903/delete-refresh-acceptance.png`。测试数据保留在 `[本地测试目录]/folder-drop-upload-20260903`。
 
 ## 保留部署
 

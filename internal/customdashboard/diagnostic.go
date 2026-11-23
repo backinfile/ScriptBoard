@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/outboundpolicy"
 	"scriptboard/internal/registryconnection"
 	"scriptboard/internal/registrymonitor"
 )
@@ -84,7 +85,30 @@ func (m *Manager) runCardRequest(ctx context.Context, input CardInput, existingC
 	for name, value := range input.Headers {
 		req.Header.Set(name, value)
 	}
-	response, err := m.client.Do(req)
+	client := m.client
+	var config DataSourceConfig
+	if len(input.Config) > 0 && json.Unmarshal(input.Config, &config) != nil {
+		config = DataSourceConfig{}
+	}
+	skipTLSVerify := req.URL.Scheme == "https" && config.SkipTLSVerify
+	if config.AllowPrivate || skipTLSVerify {
+		// 显式允许私网的卡片可连接内网 API 及其自定义端口，仍使用共享出站策略校验地址。
+		transport := outboundpolicy.Policy{AllowPrivate: config.AllowPrivate, AllowAnyPort: config.AllowPrivate}.Transport()
+		if base, ok := m.client.Transport.(*http.Transport); ok && base.TLSClientConfig != nil {
+			transport.TLSClientConfig = base.TLSClientConfig.Clone()
+		}
+		if skipTLSVerify {
+			if transport.TLSClientConfig == nil {
+				transport.TLSClientConfig = &tls.Config{}
+			}
+			transport.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec -- explicit per-card HTTPS option
+		}
+		requestClient := *m.client
+		requestClient.Transport = transport
+		defer transport.CloseIdleConnections()
+		client = &requestClient
+	}
+	response, err := client.Do(req)
 	if err != nil {
 		code := classifyNetworkError(err)
 		return finishRequestFailure(result, started, "connect", code, actionableSummary(code), err), err

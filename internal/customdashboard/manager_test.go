@@ -585,6 +585,68 @@ func TestDefaultDashboardClientBlocksLoopbackSources(t *testing.T) {
 	}
 }
 
+func TestDashboardCardAllowsExplicitPrivateHTTPSource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.TLS != nil || request.Method != http.MethodGet {
+			t.Errorf("want plaintext GET, got %s (TLS: %v)", request.Method, request.TLS != nil)
+		}
+		_, _ = response.Write([]byte(`{"value":42}`))
+	}))
+	defer server.Close()
+	ctx := context.Background()
+	manager := testManagerWithClient(t, nil)
+	input := CardInput{Name: "Private data", Type: CardNumber, SourceURL: server.URL, ValuePath: "value", Config: json.RawMessage(`{"allowPrivate":true}`)}
+	result, err := manager.TestCard(ctx, input, "")
+	if err != nil || !result.OK || result.Value != float64(42) {
+		t.Fatalf("test private HTTP source = %+v, %v", result, err)
+	}
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "Private data", Slug: "private-data"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := manager.CreateCard(ctx, dashboard.ID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err = manager.RefreshCard(ctx, card.ID)
+	if err != nil || card.Snapshot.Number != 42 {
+		t.Fatalf("refresh private HTTP source = %+v, %v", card.Snapshot, err)
+	}
+}
+
+func TestPrivateDashboardCardHTTPSVerification(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`{"value":42}`))
+	}))
+	defer server.Close()
+	for _, test := range []struct {
+		name   string
+		client *http.Client
+		config string
+		wantOK bool
+	}{
+		{name: "trusted certificate", client: server.Client(), config: `{"allowPrivate":true}`, wantOK: true},
+		{name: "untrusted certificate", config: `{"allowPrivate":true}`},
+		{name: "explicit skip", config: `{"allowPrivate":true,"skipTLSVerify":true}`, wantOK: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manager := testManagerWithClient(t, test.client)
+			result, err := manager.TestCard(context.Background(), CardInput{
+				Name: "Private data", Type: CardNumber, SourceURL: server.URL, ValuePath: "value", Config: json.RawMessage(test.config),
+			}, "")
+			if err != nil || result.OK != test.wantOK {
+				t.Fatalf("test private HTTPS source = %+v, %v", result, err)
+			}
+			if test.wantOK && result.Value != float64(42) {
+				t.Fatalf("test private HTTPS value = %v", result.Value)
+			}
+			if !test.wantOK && result.Diagnostic.Code != DiagnosticTLS {
+				t.Fatalf("untrusted certificate diagnostic = %s", result.Diagnostic.Code)
+			}
+		})
+	}
+}
+
 func TestDashboardClientRejectsRedirectBeforeForwardingCredentials(t *testing.T) {
 	var targetRequests int
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { targetRequests++ }))
@@ -596,17 +658,17 @@ func TestDashboardClientRejectsRedirectBeforeForwardingCredentials(t *testing.T)
 		http.Redirect(response, request, target.URL, http.StatusFound)
 	}))
 	defer source.Close()
-	manager := testManagerWithClient(t, source.Client())
+	manager := testManagerWithClient(t, nil)
 	dashboard, _ := manager.CreateDashboard(context.Background(), DashboardInput{Name: "Security", Slug: "security"})
 	card, err := manager.CreateCard(context.Background(), dashboard.ID, CardInput{
 		Name: "Redirect", Type: CardNumber, SourceURL: source.URL, ValuePath: "value",
-		Headers: map[string]string{"Authorization": "Bearer dashboard-secret"},
+		Headers: map[string]string{"Authorization": "Bearer dashboard-secret"}, Config: json.RawMessage(`{"allowPrivate":true}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.RefreshCard(context.Background(), card.ID); err == nil {
-		t.Fatal("dashboard redirect was accepted")
+	if _, err := manager.RefreshCard(context.Background(), card.ID); err == nil || !strings.Contains(err.Error(), "dashboard source redirects are not allowed") {
+		t.Fatalf("dashboard refresh did not reject the redirect: %v", err)
 	}
 	if targetRequests != 0 {
 		t.Fatalf("dashboard credential crossed redirect origin: requests = %d", targetRequests)

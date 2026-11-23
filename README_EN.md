@@ -269,6 +269,8 @@ Editable records support private notes of up to 500 characters. Registry connect
 
 Dashboard flows support node and global cleanup steps, parameterized Quick Runs, inline scripts and built-in operations with retained history. Public action buttons report run outcomes. Built-in HTTP supports HTTP/HTTPS; explicitly skipping certificate verification creates a man-in-the-middle risk. See the [dashboard configuration format](docs/DASHBOARD-CONFIG-FORMAT.md).
 
+Data cards support HTTP and HTTPS. To reach an internal API, enable **Allow private network access and custom ports** in the card settings. HTTPS verifies certificates by default. Skipping verification exposes the connection to man-in-the-middle attacks.
+
 Image versions are ordered newest first by creation time, with unknown dates last. Dashboards support localized controls, mobile editing and inline flow validation; expand the selected image scope before cleanup.
 
 Dashboard registry cards group images by path prefix. Expand or collapse each level; this browser remembers the state separately for each card.

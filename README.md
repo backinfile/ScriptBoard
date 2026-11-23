@@ -190,4 +190,6 @@ scriptboard admin reset --config CONFIG_PATH
 
 面板中的镜像仓库卡片可按路径前缀逐级折叠；当前浏览器分别记住每张卡片的折叠状态。
 
+数据卡片支持 HTTP 和 HTTPS。访问内网 API 时，在卡片设置中勾选「允许访问私网和自定义端口」。HTTPS 默认验证证书，跳过验证有中间人攻击风险。
+
 从源码构建需要 Go 1.26.11 或更新版本；构建与发布说明见[发布指南](docs/RELEASING.md)。

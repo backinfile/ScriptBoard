@@ -79,7 +79,7 @@
 | 初始密码 | State Root 私有文件 `secrets/initial-admin-password` |
 | 部署目录 | `.scratch/post-release-review-simplifications-20260902` |
 | State Root | `.scratch/post-release-review-simplifications-20260902/state` |
-| 测试数据 | `D:\ScriptBoardLocalTests\post-release-review-simplifications-20260902` |
+| 测试数据 | `[本地测试目录]/post-release-review-simplifications-20260902` |
 | stderr | 0 字节 |
 
 Windows 便携模式不经过独立 Broker；实际 MySQL Broker interface seam 与制品检查由编译期 interface、定向 Broker 测试和全仓测试覆盖。部署进程保持运行。

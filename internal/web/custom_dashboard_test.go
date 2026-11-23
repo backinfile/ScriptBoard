@@ -531,11 +531,8 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
 		StateRoot: root + string(filepath.Separator) + "state", FileTopology: testHostTopology{root: hostRoot},
-		CustomDashboardClient: &http.Client{Transport: transport},
 	})
 	response, err := client.Get(serverURL + "/config/dashboards")
 	if err != nil {
@@ -622,7 +619,10 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 		_, _ = io.WriteString(w, `{"remaining":63.2387,"used":36.7613}`)
 	}))
 	defer api.Close()
-	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{"csrf_token": {formToken(t, page)}, "name": {"使用率"}, "type": {"percentage"}, "source_url": {api.URL}, "value_path": {"remaining / 1"}, "refresh_seconds": {"60"}})
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"使用率"}, "type": {"percentage"},
+		"source_url": {api.URL}, "source_allow_private": {"1"}, "value_path": {"remaining / 1"}, "refresh_seconds": {"60"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -634,7 +634,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	response.Body.Close()
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"账户额度"}, "type": {"quota"},
-		"source_url": {api.URL}, "value_path": {"used"}, "secondary_path": {"100 - used"},
+		"source_url": {api.URL}, "source_allow_private": {"1"}, "value_path": {"used"}, "secondary_path": {"100 - used"},
 		"unit": {"GB"}, "refresh_seconds": {"60"},
 	})
 	if err != nil {
@@ -700,21 +700,35 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(configRendered, `name="unit"`) {
 		t.Fatal("number and quota unit setting is missing")
 	}
+	if strings.Count(configRendered, `name="source_allow_private" value="1" checked`) != 2 || !strings.Contains(configRendered, `name="source_skip_tls_verify" value="1"`) {
+		t.Fatal("dashboard card connection settings were not rendered")
+	}
 	if strings.Contains(configRendered, "数值路径：") || strings.Contains(configRendered, "60 秒刷新") {
 		t.Fatal("dashboard configuration row exposes drawer-only details")
 	}
 	if !strings.Contains(configRendered, `href="/monitor/dashboard/`+dashboardID+`"`) || !strings.Contains(configRendered, "Open monitor") || !strings.Contains(configRendered, `data-dashboard-card-row`) {
 		t.Fatal("dashboard configuration page is missing its monitor shortcut or clickable card row")
 	}
-	testResponse, err := client.PostForm(serverURL+"/config/dashboard-card-tests", url.Values{
-		"csrf_token":      {formToken(t, page)},
-		"name":            {"unsaved request"},
-		"type":            {"number"},
-		"source_url":      {api.URL},
-		"value_path":      {"used"},
-		"headers":         {"Authorization: Bearer test-only-secret"},
-		"refresh_seconds": {"60"},
-	})
+	var testForm bytes.Buffer
+	testWriter := multipart.NewWriter(&testForm)
+	for field, value := range map[string]string{
+		"csrf_token":           formToken(t, page),
+		"name":                 "unsaved request",
+		"type":                 "number",
+		"source_url":           api.URL,
+		"source_allow_private": "1",
+		"value_path":           "used",
+		"headers":              "Authorization: Bearer test-only-secret",
+		"refresh_seconds":      "60",
+	} {
+		if err := testWriter.WriteField(field, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := testWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	testResponse, err := client.Post(serverURL+"/config/dashboard-card-tests", testWriter.FormDataContentType(), &testForm)
 	if err != nil {
 		t.Fatal(err)
 	}

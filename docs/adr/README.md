@@ -81,7 +81,7 @@
 - [ADR-0143 可恢复凭据使用 State Root 外部、操作系统保护的主密钥](./0143-seal-recoverable-secrets-with-an-external-host-key.md)，让 MySQL 与远程网站 Key 的密文和解密材料不再同库存放。
 - [ADR-0142 Host Files 可执行上传先进入私有收件箱再发布](./0142-stage-executable-host-uploads-before-publication.md)，把接收字节与使脚本进入可执行主机路径拆成两个有审计的动作。
 - [ADR-0141 TLS 验证例外一小时到期且远程汇聚只接受 HTTPS](./0141-expire-monitor-tls-exceptions-and-require-https-aggregation.md)，移除网站探测的永久弱校验状态，并收紧跨实例只读汇聚传输。
-- [ADR-0140 Custom Dashboard 数据源使用共享出站策略且不跟随重定向](./0140-route-custom-dashboard-sources-through-outbound-policy.md)，阻止数据卡片访问本机、私网或元数据服务，并避免保存的凭据跨重定向转发。
+- [ADR-0140 Custom Dashboard 数据源使用共享出站策略且不跟随重定向](./0140-route-custom-dashboard-sources-through-outbound-policy.md)，支持逐卡片授权私网访问，并阻止访问云元数据服务和跨重定向转发凭据。
 - [ADR-0139 配置导入先验证文件边界再进入领域解码](./0139-validate-configuration-imports-before-domain-decoding.md)，为 JSON 配置建立文件名、MIME、编码和对象根约束。
 - [ADR-0138 可信代理只接受一套有界 X-Forwarded 合同](./0138-use-one-bounded-trusted-proxy-header-contract.md)，拒绝多规范混用、坏值、重复字段和无界代理链。
 - [ADR-0137 MySQL 恢复禁用本地客户端命令并限制 gzip 展开](./0137-disable-local-mysql-commands-during-restore.md)，防止导入 SQL 调用宿主命令并限制压缩展开资源。

@@ -41,6 +41,6 @@
 | 初始密码 | State Root 的 `secrets/initial-admin-password` |
 | 部署目录 | `.scratch/quick-access-tab-20260904` |
 | State Root | `.scratch/quick-access-tab-20260904/state` |
-| 测试数据 | `D:\ScriptBoardLocalTests\quick-access-tab-20260904` |
+| 测试数据 | `[本地测试目录]/quick-access-tab-20260904` |
 
 部署进程、State Root、日志和已固定的测试目录均保留，便于继续复核。

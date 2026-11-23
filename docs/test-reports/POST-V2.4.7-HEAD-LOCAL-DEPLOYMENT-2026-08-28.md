@@ -39,7 +39,7 @@
 | State Root | `.scratch/local-deploy-post-v247-20260828/state` |
 | 登录用户 | `admin` |
 | 初始密码 | 仅保留在 State Root 的 `secrets/initial-admin-password`，未写入报告或测试结果 |
-| 外部宿主测试目录 | `D:\ScriptBoard-QA-20260828` |
+| 外部宿主测试目录 | `[本地测试目录]/ScriptBoard-QA-20260828` |
 | 黑盒结构化结果 | `.scratch/local-deploy-post-v247-20260828/blackbox-results.json` |
 | 外部浏览器脚本 | `.scratch/local-deploy-post-v247-20260828/deployment-blackbox.cjs` |
 | 截图 | `.scratch/local-deploy-post-v247-20260828/retained-head-blackbox.png` |

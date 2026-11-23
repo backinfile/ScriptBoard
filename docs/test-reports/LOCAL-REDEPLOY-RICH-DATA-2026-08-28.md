@@ -21,7 +21,7 @@
 | 初始密码 | 仅保留在 State Root 的 `secrets/initial-admin-password`，未写入报告 |
 | 部署目录 | `.scratch/local-deploy-richdata-final-20260828` |
 | State Root | `.scratch/local-deploy-richdata-final-20260828/state` |
-| 宿主测试目录 | `D:\ScriptBoard-QA-20260828` |
+| 宿主测试目录 | `[本地测试目录]/ScriptBoard-QA-20260828` |
 | 结构化结果 | `.scratch/local-deploy-richdata-final-20260828/seed-results.json` |
 | 截图 | `.scratch/local-deploy-richdata-final-20260828/rich-data-dashboard.png` |
 | 服务日志 | `stderr.log` 为 0 字节 |

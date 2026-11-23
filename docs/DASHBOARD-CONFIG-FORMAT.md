@@ -41,6 +41,15 @@
 | `refresh_seconds` | number | 否 | 刷新间隔秒数；≤0 取 60，下限 15，上限 86400 |
 | `website_monitors` | string[] | website | 网站监控名称列表，导入时按名称重映射为本机监控 ID |
 
+## 数据源连接选项
+
+数值、百分比、配额和键值卡片支持以下 `config` 字段，默认值均为 `false`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `allowPrivate` | bool | 允许本卡片通过 HTTP 或 HTTPS 访问私网和自定义端口 |
+| `skipTLSVerify` | bool | 跳过 HTTPS 证书验证，有中间人攻击风险 |
+
 ## 操作按钮（config.actions）
 
 任何类型的卡片都可以在 `config.actions` 中携带操作按钮，每张卡片最多 8 个。

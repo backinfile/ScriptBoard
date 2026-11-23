@@ -49,7 +49,7 @@ worktree：`../worktrees/ScriptBoard/file-multi-select-sort`
 | State Root | `.scratch/local-deploy-file-multi-select-20260901/state` |
 | 登录用户 | `admin` |
 | 初始密码 | 保留在 State Root 的 `secrets/initial-admin-password` |
-| 保留测试数据 | `D:\ScriptBoard-QA\file-multi-select-20260901` |
+| 保留测试数据 | `[本地测试目录]/file-multi-select-20260901` |
 | stderr | 0 字节 |
 
 最终构建重启后，真实部署 HTTP 黑盒验证登录、文件页访问、创建时间排序、ZIP 签名、批量移动提交、批量回收提交与零标准错误，全部通过。新增批量测试数据与回收站记录均按约定保留。部署、State Root、管理员凭据与测试数据均保留；报告生成后未停止进程。

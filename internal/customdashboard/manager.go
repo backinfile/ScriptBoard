@@ -86,6 +86,13 @@ type CardInput struct {
 	RegistryPassword                  string
 	PreserveRegistryPassword          bool
 }
+
+type DataSourceConfig struct {
+	Unit          string `json:"unit,omitempty"`
+	AllowPrivate  bool   `json:"allowPrivate,omitempty"`
+	SkipTLSVerify bool   `json:"skipTLSVerify,omitempty"`
+}
+
 type Snapshot struct {
 	Value      any                           `json:"value,omitempty"`
 	Number     float64                       `json:"number,omitempty"`

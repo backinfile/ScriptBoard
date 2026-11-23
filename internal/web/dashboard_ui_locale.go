@@ -124,6 +124,8 @@ func init() {
 		"dashboard.ui.deploy_114":                                             {"部署", "Deploy"},
 		"dashboard.ui.data_url_115":                                           {"数据地址", "Data URL"},
 		"dashboard.ui.supports_http_and_https_http_headers_and_responses_116": {"支持 HTTP 与 HTTPS；HTTP 请求头和响应均为明文传输。", "Supports HTTP and HTTPS. HTTP headers and responses are transmitted in plaintext."},
+		"dashboard.source.allow_private":                                      {"允许访问私网和自定义端口", "Allow private network access and custom ports"},
+		"dashboard.source.skip_tls_verify":                                    {"跳过 HTTPS 证书验证（有中间人攻击风险）", "Skip HTTPS certificate verification (man-in-the-middle risk)"},
 		"dashboard.ui.value_expression_117":                                   {"取值表达式", "Value expression"},
 		"dashboard.ui.use_a_json_path_for_text_numbers_support_paths_ari_118": {"字符串使用 JSON 路径；数字支持路径与 + − × ÷、括号运算", "Use a JSON path for text; numbers support paths, arithmetic and parentheses."},
 		"dashboard.ui.remaining_quota_expression_119":                         {"剩余额度表达式", "Remaining quota expression"},
