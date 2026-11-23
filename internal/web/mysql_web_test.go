@@ -313,6 +313,11 @@ func TestBackupRecordsFilterAndOpenConfirmationDrawers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
+	// Match the application's lock wait when seeding records alongside background writes.
+	database.SetMaxOpenConns(1)
+	if _, err := database.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		t.Fatal(err)
+	}
 	for index := 0; index < 14; index++ {
 		databaseName := "inventory"
 		if index == 13 {
