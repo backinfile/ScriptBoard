@@ -108,6 +108,50 @@ func TestHTTPSnapshotAggregatesPodsAndMetricsByStableWorkload(t *testing.T) {
 	}
 }
 
+func TestTopologyUsesServiceAndPodUIDsBeforeScopingToPhysicalHost(t *testing.T) {
+	var services []kubeService
+	if err := json.Unmarshal([]byte(`[
+		{"metadata":{"namespace":"commerce","name":"checkout","uid":"service-checkout"}},
+		{"metadata":{"namespace":"commerce","name":"catalog","uid":"service-catalog"}}
+	]`), &services); err != nil {
+		t.Fatal(err)
+	}
+	var slices []kubeEndpointSlice
+	if err := json.Unmarshal([]byte(`[
+		{"metadata":{"namespace":"commerce","labels":{"kubernetes.io/service-name":"checkout"},
+			"ownerReferences":[{"kind":"Service","uid":"service-checkout"}]},
+		 "endpoints":[{"targetRef":{"kind":"Pod","name":"checkout-b","uid":"pod-checkout"},"conditions":{"ready":false}}]},
+		{"metadata":{"namespace":"commerce","labels":{"kubernetes.io/service-name":"catalog"},
+			"ownerReferences":[{"kind":"Service","uid":"service-catalog"}]},
+		 "endpoints":[{"targetRef":{"kind":"Pod","name":"catalog-c","uid":"pod-replaced"}}]},
+		{"metadata":{"namespace":"commerce","labels":{"kubernetes.io/service-name":"catalog"},
+			"ownerReferences":[{"kind":"Service","uid":"service-replaced"}]},
+		 "endpoints":[{"targetRef":{"kind":"Pod","name":"catalog-c","uid":"pod-catalog"}}]}
+	]`), &slices); err != nil {
+		t.Fatal(err)
+	}
+	pods := []TopologyPod{
+		{Pod: Pod{Name: "checkout-b", Namespace: "commerce", Node: "worker-b"}, UID: "pod-checkout", WorkloadKey: "commerce/Deployment/checkout", Status: "degraded"},
+		{Pod: Pod{Name: "catalog-c", Namespace: "commerce", Node: "worker-c"}, UID: "pod-catalog", WorkloadKey: "commerce/Deployment/catalog", Status: "ready"},
+	}
+	topologyServices := collectTopologyServices(services, slices, pods)
+	if len(topologyServices) != 2 || topologyServices[0].Name != "catalog" || len(topologyServices[0].Endpoints) != 0 ||
+		len(topologyServices[1].Endpoints) != 1 || topologyServices[1].Endpoints[0].PodUID != "pod-checkout" ||
+		topologyServices[1].Endpoints[0].Ready == nil || *topologyServices[1].Endpoints[0].Ready {
+		t.Fatalf("validated topology services: %#v", topologyServices)
+	}
+	snapshot := Snapshot{
+		TopologyPods: pods, TopologyServices: topologyServices,
+		Nodes:     []Node{{Name: "worker-a", PhysicalHost: "edge-01"}, {Name: "worker-b", PhysicalHost: "edge-01"}, {Name: "worker-c", PhysicalHost: "edge-02"}},
+		Workloads: []Workload{{Key: pods[0].WorkloadKey, Namespace: "commerce", Nodes: "worker-a, worker-b"}, {Key: pods[1].WorkloadKey, Namespace: "commerce"}},
+	}
+	scoped := scopeTopology(snapshot, Query{Namespace: "commerce", PhysicalHost: "host:edge-01"})
+	if len(scoped.Nodes) != 2 || len(scoped.Pods) != 1 || len(scoped.Services) != 1 || len(scoped.Workloads) != 1 ||
+		scoped.Services[0].Name != "checkout" || scoped.Workloads[0].Nodes != "worker-b" {
+		t.Fatalf("physical host topology: %#v", scoped)
+	}
+}
+
 func TestHTTPSnapshotKeepsWorkloadsWhenPodAccessIsDenied(t *testing.T) {
 	client := testHTTPKubeClient(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")

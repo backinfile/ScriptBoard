@@ -37,6 +37,7 @@ package migrations
 // access keys, and the flow card type.
 // Schema 74 adds runtime execution parameters to Quick Runs.
 // Schema 76 adds Git projects and Quick Run preflight configuration.
+// Schema 77 adds the per-connection Kubernetes physical host label.
 // The explicit current-version guard forces a deliberate policy update when a
 // future schema is introduced instead of silently promising an untested path.
 func Compatible(current, existing int) bool {
@@ -44,7 +45,7 @@ func Compatible(current, existing int) bool {
 		return true
 	}
 	switch current {
-	case 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76:
+	case 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77:
 		return existing >= 20 && existing < current
 	default:
 		return false

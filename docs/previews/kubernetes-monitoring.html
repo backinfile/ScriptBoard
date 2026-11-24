@@ -1,0 +1,1063 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kubernetes 监控界面预览 · ScriptBoard</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f4f6fa;
+  --surface: #fff;
+  --ink: #172238;
+  --muted: #59687d;
+  --line: #e0e6ef;
+  --accent: #3356df;
+  --accent-soft: #edf1ff;
+  --good: #187154;
+  --warn: #a4412c;
+  --progress: #805613;
+  --plot: #131d30;
+  --plot-line: #32425b;
+  --plot-text: #e9effa;
+  --plot-muted: #a2afc7;
+  --mono: "Cascadia Mono", Consolas, monospace;
+  font: 14px/1.45 "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--ink); background: var(--page); }
+button, select, input { font: inherit; }
+button, select { cursor: pointer; }
+button { color: inherit; }
+button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible {
+  outline: 2px solid #6684ff;
+  outline-offset: 3px;
+}
+button:disabled { cursor: default; opacity: .42; }
+[hidden] { display: none !important; }
+svg.icon { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+code, .number { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.shell { display: grid; grid-template-columns: 180px minmax(0, 1fr); min-height: 100vh; }
+.rail { display: flex; flex-direction: column; gap: 25px; padding: 19px 12px; color: #96a3b9; background: #171e2b; }
+.brand { display: flex; align-items: center; gap: 9px; padding: 0 6px; color: white; font-size: 16px; font-weight: 720; letter-spacing: -.25px; }
+.brand-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: #425fe8; }
+.rail nav { display: grid; gap: 3px; }
+.rail-label { margin: 2px 10px 7px; color: #a3aec2; font-size: 11px; }
+.rail-item { display: flex; align-items: center; gap: 9px; padding: 8px 9px; border-radius: 6px; font-size: 13px; }
+.rail-item[aria-current] { background: #2a354d; color: white; box-shadow: inset 2px 0 #7590ff; }
+.rail-item[aria-current] .icon { color: #afbdff; }
+.workspace { min-width: 0; padding: 23px 28px 30px; }
+.frame { max-width: 1650px; margin-inline: auto; }
+.breadcrumb { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
+.breadcrumb > div { display: flex; align-items: center; gap: 5px; }
+.breadcrumb .icon { width: 12px; height: 12px; }
+.sample { border: 1px solid var(--line); border-radius: 5px; padding: 2px 7px; background: var(--surface); white-space: nowrap; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 15px; margin: 13px 0 16px; }
+h1 { margin: 0; font-size: clamp(25px, 3.1vw, 36px); line-height: 1.17; letter-spacing: -.85px; font-weight: 710; }
+.cluster-meta { display: flex; flex-wrap: wrap; gap: 8px 13px; align-items: center; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.status { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.status .icon { width: 13px; height: 13px; }
+.status[data-state="ok"] { color: var(--good); }
+.status[data-state="bad"] { color: var(--warn); }
+.status[data-state="progress"] { color: var(--progress); }
+.cluster-tools, .filter-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.field { display: flex; align-items: center; min-width: 0; gap: 7px; min-height: 35px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); }
+.field select { min-width: 0; border: 0; color: var(--ink); background: transparent; padding: 6px 0; }
+.field input { min-width: 85px; width: 151px; border: 0; color: var(--ink); background: transparent; padding: 6px 0; }
+.field input::placeholder { color: var(--muted); }
+.field:focus-within { border-color: #8298f3; }
+.icon-button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 35px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font-size: 12px; white-space: nowrap; }
+.icon-button { min-width: 35px; padding-inline: 7px; }
+.button:hover, .icon-button:hover { background: var(--accent-soft); color: var(--accent); }
+.button[aria-pressed="true"] { border-color: #b6c2fc; background: var(--accent-soft); color: var(--accent); }
+.button.primary { color: white; background: var(--accent); border-color: var(--accent); }
+.button.primary:hover { background: #2948bf; color: white; }
+.refreshing .icon { animation: spin .45s ease-out; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0 0 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.fact { padding: 10px 14px; min-width: 0; }
+.fact + .fact { border-left: 1px solid var(--line); }
+.fact-title { display: flex; gap: 7px; align-items: center; color: var(--muted); font-size: 12px; }
+.fact-title .icon { width: 14px; height: 14px; }
+.fact-value { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 7px; margin-top: 1px; font-size: 23px; letter-spacing: -.55px; font-weight: 625; }
+.fact-value small { color: var(--muted); font: 11px/1.3 "Segoe UI", "Microsoft YaHei", sans-serif; letter-spacing: 0; }
+.fact-action { color: var(--warn); text-align: left; border: 0; background: var(--surface); }
+.fact-action:hover, .fact-action[aria-pressed="true"] { background: #fff4ef; }
+.fact-action .fact-title { color: var(--warn); }
+
+.command-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 9px; margin-bottom: 9px; }
+.segment { display: inline-flex; gap: 2px; border: 1px solid var(--line); padding: 2px; border-radius: 7px; background: #e9edf5; }
+.segment button { display: flex; align-items: center; gap: 6px; justify-content: center; border: 0; border-radius: 5px; padding: 5px 10px; min-height: 28px; background: transparent; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.segment button:hover { color: var(--accent); }
+.segment button[aria-pressed="true"] { background: var(--surface); color: var(--accent); box-shadow: 0 1px 3px #1a32571a; font-weight: 650; }
+
+.workbench { display: grid; grid-template-columns: minmax(0, 1fr) 292px; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.workbench.no-detail { grid-template-columns: minmax(0, 1fr); }
+.browser { min-width: 0; }
+.pane-bar { min-height: 53px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 11px; border-bottom: 1px solid var(--line); }
+.pane-tools { display: flex; align-items: center; gap: 8px; }
+.pane-title { margin: 0; font-size: 14px; font-weight: 660; }
+.count { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.resource-tabs, .detail-tabs { display: flex; align-self: stretch; gap: 14px; }
+.tab { position: relative; background: transparent; color: var(--muted); border: 0; padding: 5px 0; font-size: 12px; white-space: nowrap; }
+.tab[aria-pressed="true"] { color: var(--accent); font-weight: 680; }
+.tab[aria-pressed="true"]::after { content: ""; position: absolute; height: 2px; inset: auto 0 -7px; background: var(--accent); }
+
+.plot { position: relative; color: var(--plot-text); background: var(--plot); overflow: hidden; }
+.viewport { position: relative; overflow: hidden; min-height: 370px; height: clamp(370px, calc(100dvh - 407px), 680px); touch-action: none; cursor: grab; background-image: radial-gradient(circle, #33445f 1px, transparent 1.15px); background-size: 23px 23px; }
+.viewport.dragging { cursor: grabbing; }
+.scene { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+
+.stage-label { position: absolute; display: flex; align-items: center; gap: 7px; color: #b8c7e0; font-size: 13px; font-weight: 650; }
+.stage-label .icon { color: #93a9e8; }
+.stage-divider { position: absolute; width: 1px; background: #2e3d56; opacity: .8; }
+.edges { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.edge { fill: none; stroke-width: 1.55; }
+.edge.route { stroke: #7e9eff; stroke-dasharray: 4 5; }
+.edge.owner { stroke: #9aaac6; }
+.edge.schedule { stroke: #92b7cb; stroke-dasharray: 1 5; stroke-linecap: round; }
+.edge.dimmed { opacity: .40; }
+.edge.active { stroke-width: 2.1; }
+.host-group { position: absolute; border: 1px solid #465d85; border-radius: 8px; background: #1b2b456e; }
+.host-group[data-unmapped] { border-style: dashed; }
+.host-group button { position: relative; z-index: 1; display: flex; align-items: center; gap: 6px; width: 100%; min-height: 32px; padding: 0 8px; border: 0; border-radius: 7px 7px 0 0; color: #d9e4ff; background: transparent; text-align: left; font: 12px var(--mono); }
+.host-group button:hover, .host-group button[aria-pressed="true"] { background: #2a4068; }
+.host-group button small { margin-inline-start: auto; color: var(--plot-muted); }
+.host-group .icon { width: 14px; height: 14px; color: #a9bcf2; }
+.graph-node { position: absolute; display: grid; grid-template-columns: 29px minmax(0, 1fr) 14px; align-items: center; gap: 7px; padding: 7px 8px; border: 1px solid #40516e; border-radius: 7px; background: #1e2c44; color: var(--plot-text); text-align: left; line-height: 1.25; user-select: none; transition: background .15s, border-color .15s, box-shadow .15s; }
+.graph-node:hover { background: #283c5f; border-color: #7d9af0; }
+.graph-node[data-state="bad"] { border-color: #a96953; }
+.graph-node[aria-pressed="true"] { background: #293b61; border-color: #a2b4ff; box-shadow: 0 0 0 2px #849dff48; }
+.graph-node .node-icon { display: grid; place-items: center; width: 29px; height: 29px; background: #2e405f; border-radius: 5px; color: #b1c4ff; }
+.graph-node[data-state="bad"] .node-icon { background: #573a38; color: #ffb299; }
+.graph-node-name, .graph-node-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-node-name { font-weight: 650; font-size: 12.5px; }
+.graph-node-meta { color: var(--plot-muted); margin-top: 3px; font-size: 11px; }
+.graph-node[data-state="bad"] .graph-node-meta { color: #ffc0aa; }
+.graph-node .status[data-state="ok"] { color: #8cdbb9; }
+.graph-node .status[data-state="bad"] { color: #ffac91; }
+.graph-node .status[data-state="progress"] { color: #f2ca83; }
+.plot-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 7px 10px; min-height: 44px; border-top: 1px solid var(--plot-line); padding: 5px 10px; }
+.legend, .zoom { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 11px; font-size: 11px; color: #c4cfe2; }
+.legend span { display: flex; align-items: center; gap: 5px; }
+.legend i { display: inline-block; width: 16px; border-top: 2px solid #9aaac6; }
+.legend .route { border-top: 2px dashed #7e9eff; }
+.legend .schedule { border-top: 2px dotted #92b7cb; }
+.zoom { flex-wrap: nowrap; gap: 3px; margin-left: auto; }
+.zoom .icon-button { min-height: 28px; min-width: 28px; color: var(--plot-text); background: #22314a; border-color: #40516e; }
+.zoom .icon-button:hover { background: #2d4268; }
+.zoom .icon { width: 14px; height: 14px; }
+.zoom output { min-width: 44px; text-align: center; }
+.plot-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; text-align: center; color: var(--plot-muted); }
+
+.table-scroll { overflow: auto; min-height: 345px; }
+.resource-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; white-space: nowrap; }
+.resource-table th { font-weight: 600; color: var(--muted); background: #f6f8fc; }
+.resource-table th, .resource-table td { padding: 9px 9px; border-bottom: 1px solid #e9edf3; }
+.resource-table th:first-child, .resource-table td:first-child { padding-left: 12px; }
+.resource-table th:last-child, .resource-table td:last-child { padding-right: 12px; }
+.resource-table tr:hover td { background: #f6f8ff; }
+.resource-table tr[data-selected] td { background: #eef2ff; }
+.resource-table tr[data-selected] td:first-child { box-shadow: inset 3px 0 var(--accent); }
+.row-name, .sort { display: inline-flex; align-items: center; gap: 5px; padding: 2px 0; border: 0; border-radius: 3px; background: transparent; text-align: left; }
+.sort .icon { width: 12px; height: 12px; }
+.row-name:hover, .sort:hover { color: var(--accent); }
+.row-name .icon { color: #5270cd; }
+.row-name strong, .row-name small { display: block; }
+.row-name small { color: var(--muted); font-size: 11px; }
+.cell-limit { display: inline-block; max-width: 130px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.table-empty { padding: 72px 12px; text-align: center; color: var(--muted); }
+
+.inspector { min-width: 0; border-left: 1px solid var(--line); background: var(--surface); }
+.detail-header { position: relative; padding: 13px 39px 13px 13px; border-bottom: 1px solid var(--line); }
+.detail-close { position: absolute; top: 11px; right: 9px; }
+.detail-kind { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.detail-kind .icon { color: var(--accent); }
+.detail-header h2 { font-size: 19px; line-height: 1.23; margin: 6px 0 4px; letter-spacing: -.25px; overflow-wrap: anywhere; }
+.detail-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--muted); font-size: 11px; }
+.detail-tabs { min-height: 40px; padding: 0 12px; border-bottom: 1px solid var(--line); }
+.detail-tabs .tab[aria-pressed="true"]::after { bottom: -1px; }
+.detail-body { padding: 12px; }
+.detail-section h3 { margin: 0 0 6px; font-size: 12px; }
+.detail-section + .detail-section { margin-top: 15px; }
+.detail-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--line); }
+.detail-facts > div { padding: 7px 5px; min-width: 0; }
+.detail-facts dt, .property-list dt { color: var(--muted); font-size: 11px; }
+.detail-facts dd { margin: 3px 0 0; font: 14px var(--mono); overflow-wrap: anywhere; }
+.property-list { display: grid; gap: 6px; margin: 0; }
+.property-list div { display: grid; grid-template-columns: 65px minmax(0, 1fr); align-items: baseline; gap: 4px; }
+.property-list dd { margin: 0; overflow-wrap: anywhere; font-size: 12px; }
+.linked { display: grid; grid-template-columns: 15px minmax(0, 1fr) 13px; gap: 7px; align-items: center; width: 100%; background: transparent; border: 0; border-bottom: 1px solid #e9edf3; border-radius: 3px; padding: 7px 1px; text-align: left; }
+.linked:hover { background: var(--accent-soft); color: var(--accent); }
+.linked strong, .linked small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linked strong { font: 12px var(--mono); }
+.linked small { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.linked .icon { width: 14px; height: 14px; }
+.event { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.event strong, .event time { display: block; }
+.event time { color: var(--muted); font: 11px var(--mono); margin-top: 3px; }
+.event p { margin: 5px 0 0; overflow-wrap: anywhere; }
+.event.problem strong { color: var(--warn); }
+.detail-action { margin-top: 11px; }
+.empty-detail { color: var(--muted); font-size: 12px; }
+.inspector.revealed { animation: inspect-in .18s ease-out; }
+@keyframes inspect-in { from { opacity: .65; transform: translateX(7px); } to { opacity: 1; transform: translateX(0); } }
+.log-dialog { width: min(620px, calc(100vw - 28px)); border: 1px solid var(--line); border-radius: 9px; padding: 0; color: var(--ink); }
+.log-dialog::backdrop { background: #111b3290; }
+.log-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 13px; }
+.log-dialog h2 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.log-dialog pre { margin: 0; padding: 13px; color: var(--plot-text); background: var(--plot); font: 12px/1.7 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (max-width: 1250px) {
+  .shell { grid-template-columns: 150px minmax(0, 1fr); }
+  .workspace { padding-inline: 17px; }
+  .workbench { grid-template-columns: minmax(0, 1fr) 265px; }
+}
+@media (max-width: 1020px) {
+  .shell { grid-template-columns: 58px minmax(0, 1fr); }
+  .rail { padding-inline: 8px; }
+  .rail .brand-name, .rail-label, .rail-item span { display: none; }
+  .rail-item { justify-content: center; }
+  .workbench { grid-template-columns: minmax(0, 1fr); }
+  .inspector { display: none; }
+  .inspector.mobile-open { display: block; position: fixed; z-index: 3; inset: 0 0 0 auto; width: min(355px, 94vw); max-height: 100dvh; overflow: auto; box-shadow: -14px 0 42px #121c3840; }
+}
+@media (max-width: 600px) {
+  .shell { display: block; }
+  .rail { padding: 9px 12px; }
+  .rail .brand-name { display: inline; }
+  .rail nav { display: none; }
+  .workspace { padding: 11px 9px 18px; }
+  .page-head { margin-block: 11px; gap: 9px; }
+  .page-head h1 { font-size: 26px; }
+  .cluster-meta { margin-top: 5px; }
+  .facts { margin-bottom: 11px; }
+  .fact { padding: 6px 5px; }
+  .fact-title { gap: 3px; font-size: 10px; }
+  .fact-title .icon { width: 12px; height: 12px; }
+  .fact-value { font-size: 16px; }
+  .fact-value small { display: none; }
+  .filter-group { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filter-group select { width: 100%; }
+  .field input { width: 100%; }
+  .pane-bar { padding-inline: 6px; min-height: 45px; }
+  .pane-title { font-size: 12px; }
+  .pane-tools { gap: 4px; }
+  .pane-tools .count { display: none; }
+  .segment button { padding-inline: 6px; }
+  .viewport { min-height: 304px; height: clamp(304px, calc(100dvh - 502px), 476px); }
+  .resource-tabs { gap: 11px; }
+  .tab[aria-pressed="true"]::after { bottom: -7px; }
+  .detail-tabs .tab[aria-pressed="true"]::after { bottom: -1px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" hidden aria-hidden="true">
+  <symbol id="terminal" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m7 8 4 4-4 4m6 0h4"/></symbol>
+  <symbol id="activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+  <symbol id="app-window" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 9h20M6 6.5h.01m3 0h.01"/></symbol>
+  <symbol id="box" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.73Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></symbol>
+  <symbol id="network" viewBox="0 0 24 24"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-4h14v4M12 12V8"/></symbol>
+  <symbol id="server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/></symbol>
+  <symbol id="layers" viewBox="0 0 24 24"><path d="M12.9 2.5a2 2 0 0 0-1.8 0l-8 4a1 1 0 0 0 0 1.8l8 4a2 2 0 0 0 1.8 0l8-4a1 1 0 0 0 0-1.8ZM22 17.7l-9.1 4.6a2 2 0 0 1-1.8 0L2 17.7M22 12.7l-9.1 4.6a2 2 0 0 1-1.8 0L2 12.7"/></symbol>
+  <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20"/></symbol>
+  <symbol id="workflow" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><path d="M17.5 14v-4a3 3 0 0 0-3-3H10m-3 3v7.5h7"/></symbol>
+  <symbol id="table" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.4-4.4"/></symbol>
+  <symbol id="circle-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="circle-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></symbol>
+  <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+  <symbol id="refresh-cw" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 7a8 8 0 0 1 13.2-1L20 8M4 16l1.2 2a8 8 0 0 0 13.2-1"/></symbol>
+  <symbol id="chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="maximize" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3m-5 13h3a2 2 0 0 0 2-2v-3m-13 5H5a2 2 0 0 1-2-2v-3"/></symbol>
+  <symbol id="x" viewBox="0 0 24 24"><path d="m18 6-12 12M6 6l12 12"/></symbol>
+  <symbol id="arrow-up-down" viewBox="0 0 24 24"><path d="m21 16-4 4-4-4m4 4V4M3 8l4-4 4 4M7 4v16"/></symbol>
+  <symbol id="arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7m-7-7v14"/></symbol>
+  <symbol id="arrow-down" viewBox="0 0 24 24"><path d="m5 12 7 7 7-7m-7-7v14"/></symbol>
+  <symbol id="list-filter" viewBox="0 0 24 24"><path d="M4 7h16M7 12h10m-7 5h4"/></symbol>
+</svg>
+<div class="shell">
+  <aside class="rail" aria-label="ScriptBoard">
+    <div class="brand"><span class="brand-icon"><svg class="icon"><use href="#terminal"/></svg></span><span class="brand-name">ScriptBoard</span></div>
+    <nav aria-label="监控">
+      <span class="rail-label">监控</span>
+      <span class="rail-item"><svg class="icon"><use href="#activity"/></svg><span>概览</span></span>
+      <span class="rail-item"><svg class="icon"><use href="#app-window"/></svg><span>应用</span></span>
+      <span class="rail-item"><svg class="icon"><use href="#box"/></svg><span>容器</span></span>
+      <span class="rail-item" aria-current="page"><svg class="icon"><use href="#network"/></svg><span>Kubernetes</span></span>
+    </nav>
+  </aside>
+  <main class="workspace">
+    <div class="frame">
+      <div class="breadcrumb"><div>监控 <svg class="icon" aria-hidden="true"><use href="#chevron-right"/></svg> Kubernetes</div><span class="sample">示例数据</span></div>
+      <header class="page-head">
+        <div>
+          <h1>Kubernetes 监控</h1>
+          <div class="cluster-meta"><span id="connection-state"></span><code id="version"></code><span>只读</span><span>采集于 <time class="number" id="collected">14:32:08</time></span></div>
+        </div>
+        <div class="cluster-tools">
+          <label class="field"><svg class="icon" aria-hidden="true"><use href="#server"/></svg><span class="sr-only">集群</span><select id="cluster"><option value="prod">prod-east</option><option value="stage">staging</option></select></label>
+          <button class="button" type="button" id="auto-refresh" aria-pressed="false">自动刷新</button><button class="icon-button" type="button" id="refresh" aria-label="刷新快照" title="刷新快照"><svg class="icon" aria-hidden="true"><use href="#refresh-cw"/></svg></button>
+        </div>
+      </header>
+      <section class="facts" id="facts" aria-label="资源摘要"></section>
+      <div class="command-row">
+        <div class="filter-group">
+          <label class="field"><svg class="icon" aria-hidden="true"><use href="#layers"/></svg><span class="sr-only">命名空间</span><select id="namespace"></select></label>
+          <label class="field"><svg class="icon" aria-hidden="true"><use href="#server"/></svg><span class="sr-only">物理机</span><select id="host"></select></label>
+          <label class="field search"><svg class="icon" aria-hidden="true"><use href="#search"/></svg><span class="sr-only">搜索资源</span><input id="search-box" type="search" placeholder="搜索资源"></label>
+          <button class="button" id="issues" type="button" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#list-filter"/></svg>待关注</button>
+        </div>
+        <div class="segment" role="group" aria-label="显示方式">
+          <button id="view-list" type="button" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#table"/></svg>列表</button>
+          <button id="view-topology" type="button" aria-pressed="true"><svg class="icon" aria-hidden="true"><use href="#workflow"/></svg>拓扑</button>
+        </div>
+      </div>
+
+      <div class="workbench" id="workbench">
+        <section class="browser" aria-label="资源浏览">
+          <div class="pane-bar" id="pane-bar"></div>
+          <div class="plot" id="plot">
+            <div class="viewport" id="viewport" role="region" aria-label="拓扑画布">
+              <div class="scene" id="scene"></div>
+              <div class="plot-empty" id="plot-empty" hidden>无匹配资源</div>
+            </div>
+            <div class="plot-footer">
+              <div class="legend" id="legend" aria-label="连线类型"></div>
+              <div class="zoom" role="group" aria-label="画布缩放">
+                <button class="icon-button" id="zoom-out" type="button" aria-label="缩小" title="缩小"><svg class="icon" aria-hidden="true"><use href="#minus"/></svg></button>
+                <output id="zoom-value" aria-label="缩放比例"></output>
+                <button class="icon-button" id="zoom-in" type="button" aria-label="放大" title="放大"><svg class="icon" aria-hidden="true"><use href="#plus"/></svg></button>
+                <button class="icon-button" id="zoom-fit" type="button" aria-label="适应视口" title="适应视口"><svg class="icon" aria-hidden="true"><use href="#maximize"/></svg></button>
+              </div>
+            </div>
+          </div>
+          <div class="table-scroll" id="table-scroll" hidden></div>
+        </section>
+        <aside class="inspector" id="inspector" aria-label="资源详情"></aside>
+      </div>
+    </div>
+  </main>
+</div>
+<dialog class="log-dialog" id="logs" aria-labelledby="log-title">
+  <header><h2 id="log-title">Pod 日志</h2><form method="dialog"><button class="icon-button" type="submit" aria-label="关闭日志"><svg class="icon" aria-hidden="true"><use href="#x"/></svg></button></form></header>
+  <pre id="log-content"></pre>
+</dialog>
+<script>
+"use strict";
+
+const events = {
+  backOff: { time: "14:31:42", reason: "BackOff", message: "Back-off restarting failed container api.", warning: true },
+  unhealthy: { time: "14:30:11", reason: "Unhealthy", message: "Readiness probe failed: HTTP 503.", warning: true },
+};
+const fixtures = {
+  prod: {
+    version: "v1.33.4",
+    resources: [
+      { id: "edge", kind: "Ingress", name: "storefront", ns: "commerce", class: "nginx", rules: [
+        { host: "shop.example.com", path: "/checkout", service: "checkout-svc", port: "80" },
+        { host: "shop.example.com", path: "/catalog", service: "catalog-svc", port: "80" },
+      ] },
+      { id: "checkout-svc", kind: "Service", name: "checkout", ns: "commerce", type: "ClusterIP", port: "80 → 8080", targets: ["checkout-4s9mt", "checkout-p2l8d"] },
+      { id: "catalog-svc", kind: "Service", name: "catalog", ns: "commerce", type: "ClusterIP", port: "80 → 8080", targets: ["catalog-m6g2f", "catalog-x7b4c"] },
+      { id: "inventory-svc", kind: "Service", name: "inventory-db", ns: "commerce", type: "Headless", port: "5432", targets: ["inventory-0", "inventory-1", "inventory-2"] },
+      { id: "checkout", kind: "Deployment", name: "checkout-api", ns: "commerce", state: "bad", ready: 1, desired: 2, cpu: 284, memory: 412, image: "registry.example.com/checkout-api:2.8.4", revision: "12", controller: "checkout-api-7d9f68d5", events: [events.backOff, events.unhealthy] },
+      { id: "catalog", kind: "Deployment", name: "catalog-api", ns: "commerce", state: "ok", ready: 2, desired: 2, cpu: 176, memory: 286, image: "registry.example.com/catalog-api:1.14.0", revision: "8", controller: "catalog-api-64876f45" },
+      { id: "inventory", kind: "StatefulSet", name: "inventory-db", ns: "commerce", state: "ok", ready: 3, desired: 3, cpu: 362, memory: 756, image: "postgres:17", revision: "5" },
+      { id: "collector", kind: "DaemonSet", name: "otel-collector", ns: "observability", state: "ok", ready: 2, desired: 2, cpu: 104, memory: 221, image: "otel/opentelemetry-collector:0.129.0", revision: "7" },
+      { id: "checkout-4s9mt", kind: "Pod", name: "checkout-4s9mt", ns: "commerce", state: "ok", owner: "checkout", node: "worker-a", ready: "1/1", restarts: 0, container: "api" },
+      { id: "checkout-p2l8d", kind: "Pod", name: "checkout-p2l8d", ns: "commerce", state: "bad", owner: "checkout", node: "worker-b", ready: "0/1", restarts: 8, container: "api", reason: "CrashLoopBackOff", events: [events.backOff, events.unhealthy] },
+      { id: "catalog-m6g2f", kind: "Pod", name: "catalog-m6g2f", ns: "commerce", state: "ok", owner: "catalog", node: "worker-a", ready: "1/1", restarts: 0, container: "api" },
+      { id: "catalog-x7b4c", kind: "Pod", name: "catalog-x7b4c", ns: "commerce", state: "ok", owner: "catalog", node: "worker-c", ready: "1/1", restarts: 0, container: "api" },
+      { id: "inventory-0", kind: "Pod", name: "inventory-db-0", ns: "commerce", state: "ok", owner: "inventory", node: "worker-a", ready: "1/1", restarts: 0, container: "db" },
+      { id: "inventory-1", kind: "Pod", name: "inventory-db-1", ns: "commerce", state: "ok", owner: "inventory", node: "worker-b", ready: "1/1", restarts: 0, container: "db" },
+      { id: "inventory-2", kind: "Pod", name: "inventory-db-2", ns: "commerce", state: "ok", owner: "inventory", node: "worker-c", ready: "1/1", restarts: 0, container: "db" },
+      { id: "collector-n4", kind: "Pod", name: "otel-collector-n4", ns: "observability", state: "ok", owner: "collector", node: "worker-a", ready: "1/1", restarts: 0, container: "collector" },
+      { id: "collector-n8", kind: "Pod", name: "otel-collector-n8", ns: "observability", state: "ok", owner: "collector", node: "worker-b", ready: "1/1", restarts: 0, container: "collector" },
+      { id: "worker-a", kind: "Node", name: "worker-a", state: "ok", cpu: 38, memory: 57, role: "worker", zone: "east-a", host: "edge-host-01" },
+      { id: "worker-b", kind: "Node", name: "worker-b", state: "ok", cpu: 48, memory: 64, role: "worker", zone: "east-a", host: "edge-host-01" },
+      { id: "worker-c", kind: "Node", name: "worker-c", state: "ok", cpu: 31, memory: 53, role: "worker", zone: "east-b", host: "edge-host-02" },
+    ],
+  },
+  stage: {
+    version: "v1.32.8",
+    resources: [
+      { id: "stage-svc", kind: "Service", name: "checkout", ns: "preview", type: "ClusterIP", port: "80 → 8080", targets: ["stage-pod"] },
+      { id: "stage-app", kind: "Deployment", name: "checkout-preview", ns: "preview", state: "ok", ready: 1, desired: 1, cpu: 82, memory: 146, image: "registry.example.com/checkout-api:2.9.0-rc.1", revision: "3", controller: "checkout-preview-647b4c9" },
+      { id: "stage-pod", kind: "Pod", name: "checkout-preview-z5k7w", ns: "preview", state: "ok", owner: "stage-app", node: "stage-worker", ready: "1/1", restarts: 0, container: "api" },
+      { id: "stage-worker", kind: "Node", name: "stage-worker", state: "ok", cpu: 22, memory: 41, role: "worker", zone: "east-a" },
+    ],
+  },
+};
+
+const $ = id => document.getElementById(id);
+const icon = name => '<svg class="icon" aria-hidden="true"><use href="#' + name + '"/></svg>';
+const kinds = { Ingress: "globe", Service: "network", Pod: "box", Node: "server", group: "layers" };
+const kindIcon = resource => kinds[resource.kind] || "layers";
+const category = resource => {
+  if (resource.kind === "Node") return "nodes";
+  if (resource.kind === "Ingress" || resource.kind === "Service") return "network";
+  if (resource.kind === "Pod" || resource.kind === "group") return "pods";
+  return "workloads";
+};
+const statusIcons = { ok: "circle-check", bad: "circle-alert", progress: "clock" };
+const statusLabels = { ok: "就绪", bad: "需关注", progress: "进行中" };
+const status = (state, label = statusLabels[state], compact = false) => state
+  ? '<span class="status" data-state="' + state + '"' + (compact ? ' aria-hidden="true"' : '') + '>' + icon(statusIcons[state]) + (compact ? "" : label) + '</span>'
+  : '<span class="empty-detail">—</span>';
+const isIssue = resource => resource.state === "bad" || resource.state === "progress";
+const servedPods = (resource, resources) => resource.kind === "Service"
+  ? resources.filter(item => resource.targets.includes(item.id))
+  : resources.filter(item => resource.rules.some(rule => resources.find(service => service.id === rule.service)?.targets.includes(item.id)));
+const ownedPods = (id, resources) => resources.filter(resource => resource.owner === id);
+const scopes = { workloads: "工作负载", network: "网络", nodes: "节点" };
+const state = {
+  cluster: "prod",
+  namespace: "commerce",
+  host: "",
+  query: "",
+  issues: false,
+  view: location.hash === "#list" ? "list" : "topology",
+  mode: location.hash === "#placement" ? "placement" : "resources",
+  scope: "workloads",
+  selected: location.hash === "#list" ? null : "checkout",
+  detailTab: "summary",
+  mobileOpen: false,
+  expanded: new Set(),
+  sort: { field: "status", descending: false },
+};
+const current = () => fixtures[state.cluster].resources;
+const find = id => current().find(resource => resource.id === id);
+const unmappedHost = "unmapped";
+const hostKey = node => node.host ? "host:" + node.host : unmappedHost;
+const hostLabel = key => key === unmappedHost ? "物理机未标记" : key.slice(5);
+
+function scopedResources() {
+  const resources = current();
+  if (!state.namespace && !state.host) return resources;
+  const namespaced = resources.filter(resource => resource.ns && (!state.namespace || resource.ns === state.namespace));
+  const nodes = resources.filter(resource => resource.kind === "Node");
+  if (!state.host) {
+    const nodeNames = new Set(namespaced.map(resource => resource.node));
+    return [...namespaced, ...nodes.filter(node => nodeNames.has(node.id))];
+  }
+
+  const hostNodes = nodes.filter(node => hostKey(node) === state.host);
+  const nodeNames = new Set(hostNodes.map(node => node.id));
+  const pods = namespaced.filter(resource => resource.kind === "Pod" && nodeNames.has(resource.node));
+  const podIds = new Set(pods.map(pod => pod.id));
+  const ownerIds = new Set(pods.map(pod => pod.owner));
+  const services = namespaced.filter(resource => resource.kind === "Service" && resource.targets.some(id => podIds.has(id)));
+  const serviceIds = new Set(services.map(service => service.id));
+  const ingresses = namespaced.filter(resource => resource.kind === "Ingress" && resource.rules.some(rule => serviceIds.has(rule.service)));
+  return [...ingresses, ...services, ...namespaced.filter(resource => ownerIds.has(resource.id)), ...pods, ...hostNodes];
+}
+function matches(resource) {
+  const query = state.query.trim().toLowerCase();
+  const fields = [resource.name, resource.ns, resource.kind, resource.reason, resource.node, resource.type, resource.host,
+    ...(resource.rules || []).flatMap(rule => [rule.host, rule.path])];
+  return (!state.issues || isIssue(resource)) && (!query || fields.some(field => field?.toLowerCase().includes(query)));
+}
+function toggleButtons(group, labels, currentValue) {
+  return Object.entries(labels).map(([value, label]) => '<button class="tab" type="button" data-' + group + '="' + value + '" aria-pressed="' + (currentValue === value) + '">' + label + '</button>').join("");
+}
+function renderFacts(resources) {
+  const works = resources.filter(resource => category(resource) === "workloads");
+  const pods = resources.filter(resource => resource.kind === "Pod");
+  const nodes = resources.filter(resource => resource.kind === "Node");
+  const facts = [
+    ["layers", "工作负载", works.length, works.filter(resource => resource.state === "ok").length + " 就绪"],
+    ["box", "Pod 就绪", pods.filter(resource => resource.state === "ok").length + "/" + pods.length, ""],
+    ["server", "节点", nodes.length, nodes.filter(resource => resource.state === "ok").length + " 就绪"],
+    ["circle-alert", "待关注", works.filter(isIssue).length, ""],
+  ];
+  $("facts").innerHTML = facts.map(([glyph, label, value, context], index) => {
+    const content = '<span class="fact-title">' + icon(glyph) + label + '</span><span class="fact-value number">' + value + (context ? '<small>' + context + '</small>' : '') + '</span>';
+    return index === 3 ? '<button type="button" class="fact fact-action" data-issues aria-pressed="' + state.issues + '">' + content + '</button>' : '<div class="fact">' + content + '</div>';
+  }).join("");
+}
+function renderNamespaces() {
+  const namespaces = [...new Set(current().flatMap(resource => resource.ns ? [resource.ns] : []))];
+  $("namespace").innerHTML = '<option value="">全部命名空间</option>' + namespaces.map(ns => '<option value="' + ns + '">' + ns + '</option>').join("");
+  $("namespace").value = state.namespace;
+}
+
+function renderHosts() {
+  const keys = [...new Set(current().filter(resource => resource.kind === "Node").map(hostKey))];
+  $("host").innerHTML = '<option value="">全部物理机</option>' + keys.map(key => '<option value="' + key + '">' + hostLabel(key) + '</option>').join("");
+  $("host").value = state.host;
+}
+
+const tables = {
+  workloads: [["name", "名称"], ["ns", "命名空间"], ["status", "状态"], ["ready", "就绪"], ["nodes", "节点"], ["cpu", "CPU"], ["memory", "内存"], ["restarts", "重启"]],
+  network: [["name", "名称"], ["ns", "命名空间"], ["type", "类型"], ["destination", "规则 / 端口"], ["targets", "Pod"]],
+  nodes: [["name", "名称"], ["host", "物理机"], ["status", "状态"], ["zone", "可用区"], ["cpu", "CPU"], ["memory", "内存"], ["pods", "Pod"]],
+};
+function tableValue(resource, field, resources) {
+  const pods = ownedPods(resource.id, resources);
+  switch (field) {
+    case "host": return hostLabel(hostKey(resource));
+    case "status": return { bad: 0, progress: 1, ok: 2 }[resource.state];
+    case "nodes": return [...new Set(pods.map(pod => pod.node).filter(Boolean))].join(", ");
+    case "restarts": return pods.reduce((total, pod) => total + pod.restarts, 0);
+    case "pods": return resources.filter(pod => pod.node === resource.id).length;
+    case "targets": return servedPods(resource, resources).length;
+    case "destination": return resource.kind === "Ingress" ? resource.rules.map(rule => rule.path).join(", ") : resource.port;
+    default: return resource[field] ?? (field === "type" ? resource.class : "");
+  }
+}
+function tableCell(resource, field, resources) {
+  const value = tableValue(resource, field, resources);
+  if (field === "name") return '<button type="button" class="row-name" data-resource="' + resource.id + '" aria-pressed="' + (state.selected === resource.id) + '">' + icon(kindIcon(resource)) + '<span><strong>' + resource.name + '</strong><small>' + resource.kind + '</small></span></button>';
+  if (field === "status") return status(resource.state);
+  if (field === "ready") return '<span class="number">' + value + '/' + resource.desired + '</span>';
+  if (field === "cpu" || field === "memory") {
+    const units = resource.kind === "Node" ? "%" : field === "cpu" ? "m" : " MiB";
+    return '<span class="number">' + value + units + '</span>';
+  }
+  return '<span class="cell-limit number" title="' + value + '">' + (value === "" ? "—" : value) + '</span>';
+}
+function renderTable(resources) {
+  const columns = tables[state.scope];
+  const sortField = columns.some(([field]) => field === state.sort.field) ? state.sort.field : "name";
+  const order = state.sort.descending ? -1 : 1;
+  const rows = resources.filter(resource => category(resource) === state.scope && matches(resource)).sort((left, right) => {
+    const a = tableValue(left, sortField, resources), b = tableValue(right, sortField, resources);
+    return order * (typeof a === "number" ? a - b : String(a).localeCompare(String(b)));
+  });
+  $("pane-bar").innerHTML = '<div class="resource-tabs" role="group" aria-label="资源类型">' + toggleButtons("scope", scopes, state.scope) + '</div><span class="count" role="status">' + rows.length + ' 项</span>';
+  if (!rows.length) {
+    $("table-scroll").innerHTML = '<div class="table-empty" role="status">无匹配资源</div>';
+    return;
+  }
+  const head = columns.map(([field, label]) => {
+    const active = field === sortField;
+    const sort = active ? ' aria-sort="' + (order === 1 ? "ascending" : "descending") + '"' : "";
+    const glyph = active ? (order === 1 ? "arrow-up" : "arrow-down") : "arrow-up-down";
+    return '<th scope="col"' + sort + '><button type="button" class="sort" data-sort="' + field + '">' + label + icon(glyph) + '</button></th>';
+  }).join("");
+  const body = rows.map(resource => '<tr' + (state.selected === resource.id ? ' data-selected' : "") + '>' + columns.map(([field]) => '<td>' + tableCell(resource, field, resources) + '</td>').join("") + '</tr>').join("");
+  $("table-scroll").innerHTML = '<table class="resource-table" aria-label="' + scopes[state.scope] + '"><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table>';
+}
+
+const viewport = $("viewport");
+const scene = $("scene");
+const camera = { x: 0, y: 0, zoom: 1, fit: true };
+const viewBox = { width: 868, height: 466 };
+const stages = {
+  resources: [
+    ["Ingress", "globe", 30, 148], ["Service", "network", 221, 150],
+    ["工作负载", "layers", 414, 165], ["Pod", "box", 625, 209],
+  ],
+  placement: [
+    ["工作负载", "layers", 36, 186], ["Pod", "box", 330, 222], ["物理机 / Node", "server", 674, 159],
+  ],
+};
+function graphResources(resources) {
+  if (!state.query.trim() && !state.issues) return resources;
+  const matched = resources.filter(matches);
+  const kept = new Set(matched.map(resource => resource.id));
+  const pods = new Set();
+  for (const resource of matched) {
+    if (resource.kind === "Pod") pods.add(resource);
+    if (resource.kind === "Node") resources.filter(item => item.node === resource.id).forEach(pod => pods.add(pod));
+    if (category(resource) === "network") servedPods(resource, resources).forEach(pod => pods.add(pod));
+    if (category(resource) === "workloads") {
+      const own = ownedPods(resource.id, resources);
+      const problematic = own.filter(isIssue);
+      (state.issues && problematic.length ? problematic : own).forEach(pod => pods.add(pod));
+    }
+  }
+  for (const pod of pods) {
+    [pod.id, pod.owner, pod.node].forEach(id => kept.add(id));
+    for (const resource of resources.filter(item => category(item) === "network")) {
+      if (servedPods(resource, resources).some(item => item.id === pod.id)) kept.add(resource.id);
+    }
+  }
+  for (const ingress of resources.filter(item => item.kind === "Ingress" && kept.has(item.id))) {
+    for (const rule of ingress.rules) {
+      if (matched.includes(ingress) || pods.size === 0) kept.add(rule.service);
+    }
+  }
+  for (const ingress of resources.filter(item => item.kind === "Ingress")) {
+    if (ingress.rules.some(rule => kept.has(rule.service))) kept.add(ingress.id);
+  }
+  return resources.filter(resource => kept.has(resource.id));
+}
+const podOrder = (left, right) => Number(isIssue(right)) - Number(isIssue(left)) || left.name.localeCompare(right.name);
+function calculateGraph(resources) {
+  const placement = state.mode === "placement";
+  const positions = new Map();
+  const aliases = new Map();
+  const workByPod = new Map();
+  const widths = stages[state.mode];
+  const works = resources.filter(resource => category(resource) === "workloads");
+  const edges = [];
+  const hostGroups = [];
+  let nextY = 80;
+  function add(resource, col, y, height = 59) {
+    const [, , x, width] = widths[col];
+    const position = { resource, x, y, width, height };
+    positions.set(resource.id, position);
+    return position;
+  }
+  function stack(resource, col, desiredY) {
+    const [, , x] = widths[col];
+    let y = desiredY;
+    while ([...positions.values()].some(position => position.x === x && Math.abs(y - position.y) < 69)) y += 69;
+    return add(resource, col, y);
+  }
+  function connect(from, to, kind, laneY = null) {
+    if (positions.has(from) && positions.has(to) && !edges.some(edge => edge.from === from && edge.to === to && edge.kind === kind)) {
+      edges.push({ from, to, kind, laneY });
+    }
+  }
+
+  for (const work of works) {
+    const pods = ownedPods(work.id, resources).sort(podOrder);
+    const selectedPod = pods.some(pod => pod.id === state.selected);
+    const expanded = state.expanded.has(work.id) || selectedPod || state.selected === work.id;
+    const workPosition = add(work, placement ? 0 : 2, nextY + (expanded && pods.length > 1 ? 27 : 0));
+    if (pods.length === 1 || expanded) {
+      pods.forEach((pod, index) => {
+        add(pod, placement ? 1 : 3, nextY + index * 62, 54);
+        aliases.set(pod.id, pod.id);
+      });
+    } else if (pods.length) {
+      const group = {
+        id: "group:" + work.id, kind: "group", name: pods.length + " 个 Pod",
+        ns: work.ns, owner: work.id, pods,
+        state: pods.some(isIssue) ? "bad" : "ok",
+      };
+      add(group, placement ? 1 : 3, nextY, 57);
+      pods.forEach(pod => aliases.set(pod.id, group.id));
+    }
+    for (const pod of pods) {
+      workByPod.set(pod.id, workPosition);
+      connect(work.id, aliases.get(pod.id), "owner");
+    }
+    nextY += Math.max(118, expanded ? pods.length * 62 + 24 : 0);
+  }
+  for (const pod of resources.filter(resource => resource.kind === "Pod" && !aliases.has(resource.id))) {
+    add(pod, placement ? 1 : 3, nextY, 54);
+    aliases.set(pod.id, pod.id);
+    nextY += 69;
+  }
+  if (placement) {
+    const groups = new Map();
+    for (const node of resources.filter(resource => resource.kind === "Node")) {
+      const key = hostKey(node);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(node);
+    }
+    let hostY = 64;
+    for (const [key, nodes] of groups) {
+      const height = 39 + nodes.length * 64;
+      hostGroups.push({ key, y: hostY, height, count: nodes.length });
+      nodes.forEach((node, index) => {
+        add(node, 2, hostY + 33 + index * 64, 55);
+        resources.filter(pod => pod.node === node.id).forEach(pod => connect(aliases.get(pod.id), node.id, "schedule"));
+      });
+      hostY += height + 13;
+    }
+  } else {
+    const services = resources.filter(resource => resource.kind === "Service");
+    for (const service of services) {
+      const targets = service.targets.filter(id => aliases.has(id));
+      const firstWork = workByPod.get(targets[0]);
+      const firstPod = positions.get(aliases.get(targets[0]));
+      const position = stack(service, 1, firstWork?.y ?? firstPod?.y ?? nextY);
+      if (!targets.length) nextY += 73;
+      for (const id of targets) {
+        const work = workByPod.get(id);
+        const pod = positions.get(aliases.get(id));
+        connect(service.id, aliases.get(id), "route", work ? work.y + work.height + 15 : Math.max(position.y, pod.y) + 70);
+      }
+    }
+    for (const ingress of resources.filter(resource => resource.kind === "Ingress")) {
+      const services = [...new Set(ingress.rules.map(rule => rule.service))].filter(id => positions.has(id));
+      const first = positions.get(services[0]);
+      stack(ingress, 0, first?.y ?? nextY);
+      if (!first) nextY += 73;
+      services.forEach(id => connect(ingress.id, id, "route"));
+    }
+  }
+  return { positions, edges, hostGroups, height: Math.max(452, ...[...positions.values()].map(item => item.y + item.height + 29), ...hostGroups.map(group => group.y + group.height + 18)) };
+}
+function graphMeta(resource) {
+  if (resource.kind === "Pod") return resource.reason || "Pod · " + resource.ready;
+  if (resource.kind === "group") return resource.pods.filter(pod => pod.state === "ok").length + "/" + resource.pods.length + " 就绪";
+  if (resource.kind === "Ingress") return resource.rules[0]?.host || "Ingress";
+  if (resource.kind === "Service") return resource.type + " · " + resource.port.split(" ")[0];
+  if (resource.kind === "Node") return "Node · " + resource.zone;
+  return resource.kind + " · " + resource.ready + "/" + resource.desired;
+}
+function edgePath(from, to, laneY) {
+  const x1 = from.x + from.width, y1 = from.y + from.height / 2;
+  const x2 = to.x, y2 = to.y + to.height / 2;
+  if (laneY === null) {
+    const middle = (x1 + x2) / 2;
+    return "M" + x1 + " " + y1 + " C" + middle + " " + y1 + " " + middle + " " + y2 + " " + x2 + " " + y2;
+  }
+  const left = x1 + 21, right = x2 - 17;
+  return "M" + x1 + " " + y1 + " H" + (left - 7) + " Q" + left + " " + y1 + " " + left + " " + (y1 + 7) +
+    " V" + (laneY - 7) + " Q" + left + " " + laneY + " " + (left + 7) + " " + laneY + " H" + (right - 7) +
+    " Q" + right + " " + laneY + " " + right + " " + (laneY + (y2 < laneY ? -7 : 7)) +
+    " V" + (y2 + (y2 < laneY ? 7 : -7)) + " Q" + right + " " + y2 + " " + (right + 7) + " " + y2 + " H" + x2;
+}
+function renderGraph(scoped) {
+  const { positions, edges, hostGroups, height } = calculateGraph(graphResources(scoped));
+  viewBox.height = height;
+  $("pane-bar").innerHTML = '<h2 class="pane-title">集群拓扑</h2><div class="pane-tools"><span class="count" role="status">' + positions.size + ' 项</span><div class="segment" role="group" aria-label="拓扑类型">' +
+    toggleButtons("mode", { resources: "资源关系", placement: "节点分布" }, state.mode) + '</div></div>';
+  $("legend").innerHTML = (state.mode === "resources" ? '<span><i class="route"></i>入口与端点</span>' : '<span><i class="schedule"></i>调度</span>') + '<span><i></i>控制器归属</span>';
+  $("plot-empty").hidden = positions.size > 0;
+  scene.hidden = positions.size === 0;
+  scene.style.width = viewBox.width + "px";
+  scene.style.height = height + "px";
+  if (!positions.size) return;
+
+  const focus = positions.get(state.selected);
+  const activeEdges = new Set();
+  if (focus) {
+    const touching = edges.filter(edge => edge.from === state.selected || edge.to === state.selected);
+    const podNeighbors = new Set(touching.flatMap(edge => [edge.from, edge.to]).filter(id => category(positions.get(id).resource) === "pods"));
+    if (category(focus.resource) === "pods") podNeighbors.add(state.selected);
+    const routes = edges.filter(edge => edge.kind === "route" && podNeighbors.has(edge.to));
+    const services = new Set(routes.map(edge => edge.from));
+    for (const edge of edges) {
+      if (touching.includes(edge) || podNeighbors.has(edge.to) || podNeighbors.has(edge.from) || (edge.kind === "route" && services.has(edge.to))) {
+        activeEdges.add(edge);
+      }
+    }
+  }
+  const stageLabels = stages[state.mode].map(([label, glyph, x], index) =>
+    '<div class="stage-label" style="left:' + x + 'px;top:24px">' + icon(glyph) + label + '</div>' +
+    (index ? '<div class="stage-divider" style="left:' + (x - 22) + 'px;top:55px;height:' + (height - 65) + 'px"></div>' : "")
+  ).join("");
+  const paths = edges.map(edge => {
+    const { from, to, kind, laneY } = edge;
+    const emphasis = activeEdges.has(edge) ? " active" : focus ? " dimmed" : "";
+    return '<path class="edge ' + kind + emphasis + '" d="' + edgePath(positions.get(from), positions.get(to), laneY) + '"/>';
+  }).join("");
+  const groups = hostGroups.map(({ key, y, height, count }) => '<div class="host-group"' +
+    (key === unmappedHost ? ' data-unmapped' : '') + ' style="left:663px;top:' + y + 'px;width:181px;height:' + height +
+    'px"><button type="button" data-host="' + key + '" aria-pressed="' + (state.host === key) + '">' + icon("server") +
+    hostLabel(key) + '<small>' + count + ' Node</small></button></div>').join("");
+  const nodes = [...positions.values()].sort((a, b) => a.x - b.x || a.y - b.y).map(({ resource, x, y, width, height }) => {
+    const accessible = [resource.kind === "group" ? resource.name : resource.kind + " " + resource.name, resource.ns, graphMeta(resource), statusLabels[resource.state]].filter(Boolean).join("，");
+    return '<button type="button" class="graph-node" data-resource="' + resource.id + '" data-state="' + (resource.state || '') + '" aria-label="' + accessible + '" title="' + accessible +
+      '" aria-pressed="' + (state.selected === resource.id) + '" style="left:' + x + 'px;top:' + y + 'px;width:' + width + 'px;height:' + height + 'px"><span class="node-icon">' + icon(kindIcon(resource)) +
+      '</span><span><span class="graph-node-name">' + resource.name + '</span><span class="graph-node-meta">' + graphMeta(resource) + '</span></span>' + (resource.state ? status(resource.state, undefined, true) : '') + '</button>';
+  }).join("");
+  scene.innerHTML = stageLabels + groups + '<svg class="edges" width="' + viewBox.width + '" height="' + height + '" aria-hidden="true">' + paths + '</svg>' + nodes;
+}
+function drawCamera() {
+  scene.style.transform = "translate(" + camera.x + "px," + camera.y + "px) scale(" + camera.zoom + ")";
+  $("zoom-value").value = Math.round(camera.zoom * 100) + "%";
+}
+function fitScene() {
+  if (viewport.clientWidth === 0) return;
+  camera.fit = true;
+  camera.zoom = Math.min(1.2, (viewport.clientWidth - 12) / viewBox.width, (viewport.clientHeight - 12) / viewBox.height);
+  camera.x = (viewport.clientWidth - viewBox.width * camera.zoom) / 2;
+  camera.y = Math.max(4, (viewport.clientHeight - viewBox.height * camera.zoom) * .31);
+  drawCamera();
+}
+function zoomScene(factor, x = viewport.clientWidth / 2, y = viewport.clientHeight / 2) {
+  const zoom = Math.min(2.3, Math.max(.26, camera.zoom * factor));
+  const ratio = zoom / camera.zoom;
+  camera.x = x - (x - camera.x) * ratio;
+  camera.y = y - (y - camera.y) * ratio;
+  camera.zoom = zoom;
+  camera.fit = false;
+  drawCamera();
+}
+
+function linked(resource) {
+  const description = resource.kind === "Pod"
+    ? (resource.reason || "就绪 " + resource.ready) + (resource.node ? " · " + resource.node : "")
+    : [resource.kind, resource.ns].filter(Boolean).join(" · ");
+  return '<button type="button" class="linked" data-resource="' + resource.id + '">' + icon(kindIcon(resource)) + '<span><strong>' + resource.name + '</strong><small>' +
+    description + '</small></span>' + icon("chevron-right") + '</button>';
+}
+function section(title, content) {
+  return '<section class="detail-section"><h3>' + title + '</h3>' + content + '</section>';
+}
+function properties(entries) {
+  return '<dl class="property-list">' + entries.map(([title, value]) => '<div><dt>' + title + '</dt><dd>' + value + '</dd></div>').join("") + '</dl>';
+}
+function miniFacts(entries) {
+  return '<dl class="detail-facts">' + entries.map(([title, value]) => '<div><dt>' + title + '</dt><dd>' + value + '</dd></div>').join("") + '</dl>';
+}
+function renderEvents(resource) {
+  if (!resource.events?.length) return '<span class="empty-detail">无事件</span>';
+  return resource.events.map(event => '<article class="event' + (event.warning ? ' problem' : '') + '"><strong>' + event.reason + '</strong><time>' + event.time + '</time><p>' +
+    event.message + '</p></article>').join("");
+}
+function renderDetailBody(resource) {
+  if (state.detailTab === "events") return renderEvents(resource);
+  const resources = scopedResources();
+  if (category(resource) === "workloads") {
+    const pods = ownedPods(resource.id, resources).sort(podOrder);
+    if (state.detailTab === "pods") return pods.map(linked).join("") || '<span class="empty-detail">无 Pod</span>';
+    return section("资源用量", miniFacts([["就绪副本", resource.ready + "/" + resource.desired], ["CPU", resource.cpu + "m"], ["内存", resource.memory + " MiB"]])) +
+      section("运行配置", properties([["镜像", '<code>' + resource.image + '</code>'], ["修订版本", resource.revision],
+        ...(resource.controller ? [["ReplicaSet", "<code>" + resource.controller + "</code>"]] : [])])) +
+      section("Pod · " + pods.length, pods.map(linked).join("") || '<span class="empty-detail">无 Pod</span>');
+  }
+  if (resource.kind === "Pod") {
+    const services = resources.filter(item => item.kind === "Service" && item.targets.includes(resource.id));
+    const related = [...[find(resource.owner), find(resource.node)].filter(Boolean), ...services];
+    return section("运行状态", properties([["就绪", resource.ready], ["容器", "<code>" + resource.container + "</code>"], ["重启", resource.restarts],
+      ["状态", resource.reason || statusLabels[resource.state]], ...(!resource.node ? [["节点", "待调度"]] : [])])) +
+      section("关联资源", related.map(linked).join("") || '<span class="empty-detail">无关联资源</span>') +
+      '<button class="button primary detail-action" type="button" data-logs>' + icon("terminal") + 'Pod 日志</button>';
+  }
+  if (resource.kind === "Node") {
+    const pods = resources.filter(item => item.node === resource.id).sort(podOrder);
+    return section("资源用量", miniFacts([["CPU", resource.cpu + "%"], ["内存", resource.memory + "%"], ["Pod", pods.length]])) +
+      section("节点属性", properties([["物理机", hostLabel(hostKey(resource))], ["角色", resource.role], ["可用区", resource.zone]])) +
+      section("Pod · " + pods.length, pods.map(linked).join("") || '<span class="empty-detail">无 Pod</span>');
+  }
+  if (resource.kind === "Service") {
+    const pods = servedPods(resource, resources).sort(podOrder);
+    return section("服务配置", properties([["类型", resource.type], ["端口", resource.port]])) +
+      section("Pod 端点 · " + pods.length, pods.map(linked).join("") || '<span class="empty-detail">无 Pod 端点</span>');
+  }
+  return section("入口规则", resource.rules.map(rule =>
+    '<article class="event"><strong><code>' + rule.host + rule.path + '</code></strong><p>端口 ' + rule.port + '</p>' + (find(rule.service) ? linked(find(rule.service)) : '') + '</article>').join(""));
+}
+function renderInspector() {
+  const inspector = $("inspector");
+  const resource = find(state.selected);
+  inspector.hidden = !resource;
+  inspector.classList.toggle("mobile-open", state.mobileOpen);
+  $("workbench").classList.toggle("no-detail", !resource);
+  if (!resource) {
+    inspector.innerHTML = "";
+    return;
+  }
+  const tabs = category(resource) === "workloads" ? { summary: "概况", pods: "Pod", events: "事件" } : resource.kind === "Pod" ? { summary: "概况", events: "事件" } : null;
+  inspector.innerHTML = '<header class="detail-header"><div class="detail-kind">' + icon(kindIcon(resource)) + resource.kind +
+    '</div><h2>' + resource.name + '</h2><div class="detail-meta">' + (resource.ns ? '<code>' + resource.ns + '</code>' : '') +
+    (resource.state ? status(resource.state) : '') + '</div><button class="icon-button detail-close" type="button" data-close-detail aria-label="关闭资源详情" title="关闭详情">' + icon("x") +
+    '</button></header>' + (tabs ? '<div class="detail-tabs" role="group" aria-label="详情类型">' + toggleButtons("detail", tabs, state.detailTab) + '</div>' : '') +
+    '<div class="detail-body">' + renderDetailBody(resource) + '</div>';
+}
+function render({ resetCamera = false } = {}) {
+  const resources = scopedResources();
+  $("version").textContent = fixtures[state.cluster].version;
+  $("connection-state").innerHTML = status("ok", "已连接");
+  $("issues").setAttribute("aria-pressed", state.issues);
+  for (const mode of ["list", "topology"]) $("view-" + mode).setAttribute("aria-pressed", state.view === mode);
+  $("plot").hidden = state.view !== "topology";
+  $("table-scroll").hidden = state.view !== "list";
+  renderFacts(resources);
+  renderInspector();
+  if (state.view === "list") {
+    renderTable(resources);
+  } else {
+    renderGraph(resources);
+    if (camera.fit || resetCamera) fitScene();
+  }
+}
+
+let returnFocus = null;
+const narrow = matchMedia("(max-width: 1020px)");
+function selectResource(id, trigger) {
+  if (id.startsWith("group:")) {
+    state.expanded.add(id.slice(6));
+    render();
+    scene.querySelector('[data-resource="' + id.slice(6) + '"]')?.focus({ preventScroll: true });
+    return;
+  }
+  if (!find(id)) return;
+  const fromInspector = Boolean(trigger.closest("#inspector"));
+  if (!fromInspector) returnFocus = id;
+  state.selected = id;
+  state.detailTab = "summary";
+  state.mobileOpen = true;
+  render();
+  $("inspector").classList.remove("revealed");
+  requestAnimationFrame(() => $("inspector").classList.add("revealed"));
+  if (narrow.matches || fromInspector) {
+    $("inspector").querySelector("[data-close-detail]")?.focus({ preventScroll: true });
+  } else {
+    document.querySelector((state.view === "list" ? "#table-scroll " : "#scene ") + '[data-resource="' + id + '"]')?.focus({ preventScroll: true });
+  }
+}
+function closeInspector() {
+  state.selected = null;
+  state.mobileOpen = false;
+  render();
+  const container = state.view === "list" ? $("table-scroll") : scene;
+  const control = returnFocus && container.querySelector('[data-resource="' + returnFocus + '"]');
+  (control || $("view-" + state.view)).focus({ preventScroll: true });
+}
+function openLogs() {
+  const resource = find(state.selected);
+  $("log-title").textContent = resource.name + " / " + resource.container;
+  $("log-content").textContent = resource.reason
+    ? "14:31:39 INFO  Starting checkout API\n14:31:41 ERROR Database migration pending\n14:31:41 INFO  Process exited with code 1"
+    : "14:21:08 INFO  Container started\n14:21:10 INFO  Readiness check passed";
+  $("logs").showModal();
+}
+function toggleIssues(control) {
+  state.issues = !state.issues;
+  render({ resetCamera: true });
+  if (control.hasAttribute("data-issues")) $("facts").querySelector("[data-issues]").focus();
+}
+function changeView(view) {
+  state.view = view;
+  if (view === "list") {
+    const resource = find(state.selected);
+    if (resource) {
+      const apparentScope = category(resource);
+      state.scope = apparentScope === "pods" ? "workloads" : apparentScope;
+    }
+  }
+  state.mobileOpen = false;
+  render({ resetCamera: true });
+}
+$("view-list").addEventListener("click", () => changeView("list"));
+$("view-topology").addEventListener("click", () => changeView("topology"));
+$("issues").addEventListener("click", event => toggleIssues(event.currentTarget));
+$("search-box").addEventListener("input", event => {
+  state.query = event.target.value;
+  render({ resetCamera: true });
+});
+function updateScope() {
+  if (!scopedResources().some(resource => resource.id === state.selected)) state.selected = null;
+  state.expanded.clear();
+  state.mobileOpen = false;
+  render({ resetCamera: true });
+}
+$("namespace").addEventListener("change", event => {
+  state.namespace = event.target.value;
+  updateScope();
+});
+$("host").addEventListener("change", event => {
+  state.host = event.target.value;
+  updateScope();
+});
+$("cluster").addEventListener("change", event => {
+  state.cluster = event.target.value;
+  state.namespace = "";
+  state.host = "";
+  state.selected = null;
+  state.mobileOpen = false;
+  state.expanded.clear();
+  renderNamespaces();
+  renderHosts();
+  render({ resetCamera: true });
+});
+let autoRefresh = null;
+function refreshSnapshot() {
+  const button = $("refresh");
+  $("collected").textContent = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date());
+  button.classList.remove("refreshing");
+  requestAnimationFrame(() => button.classList.add("refreshing"));
+}
+$("refresh").addEventListener("click", refreshSnapshot);
+$("auto-refresh").addEventListener("click", event => {
+  if (autoRefresh !== null) {
+    clearInterval(autoRefresh);
+    autoRefresh = null;
+  } else {
+    autoRefresh = setInterval(refreshSnapshot, 5000);
+  }
+  event.currentTarget.setAttribute("aria-pressed", autoRefresh !== null);
+});
+
+document.addEventListener("click", event => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  const { scope, mode, sort, resource, detail, host } = button.dataset;
+  if (resource) {
+    selectResource(resource, button);
+  } else if (host) {
+    state.host = state.host === host ? "" : host;
+    $("host").value = state.host;
+    updateScope();
+    (scene.querySelector('[data-host="' + host + '"]') || $("host")).focus({ preventScroll: true });
+  } else if (scope) {
+    state.scope = scope;
+    state.sort = { field: scope === "network" ? "name" : "status", descending: false };
+    render();
+    $("pane-bar").querySelector('[data-scope="' + scope + '"]').focus();
+  } else if (mode) {
+    state.mode = mode;
+    render({ resetCamera: true });
+    $("pane-bar").querySelector('[data-mode="' + mode + '"]').focus();
+  } else if (sort) {
+    state.sort = { field: sort, descending: state.sort.field === sort ? !state.sort.descending : false };
+    render();
+    $("table-scroll").querySelector('[data-sort="' + sort + '"]').focus();
+  } else if (detail) {
+    state.detailTab = detail;
+    renderInspector();
+    $("inspector").querySelector('[data-detail="' + detail + '"]').focus();
+  } else if (button.hasAttribute("data-close-detail")) {
+    closeInspector();
+  } else if (button.hasAttribute("data-logs")) {
+    openLogs();
+  } else if (button.hasAttribute("data-issues")) {
+    toggleIssues(button);
+  }
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && state.selected && !$("logs").open && state.mobileOpen) closeInspector();
+});
+
+let drag = null;
+viewport.addEventListener("pointerdown", event => {
+  if (event.button !== 0 || event.target.closest("button")) return;
+  drag = { id: event.pointerId, startX: event.clientX, startY: event.clientY, x: camera.x, y: camera.y };
+  viewport.setPointerCapture(event.pointerId);
+  viewport.classList.add("dragging");
+});
+viewport.addEventListener("pointermove", event => {
+  if (!drag || drag.id !== event.pointerId) return;
+  camera.fit = false;
+  camera.x = drag.x + event.clientX - drag.startX;
+  camera.y = drag.y + event.clientY - drag.startY;
+  drawCamera();
+});
+viewport.addEventListener("lostpointercapture", () => {
+  drag = null;
+  viewport.classList.remove("dragging");
+});
+viewport.addEventListener("wheel", event => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  event.preventDefault();
+  const rect = viewport.getBoundingClientRect();
+  zoomScene(event.deltaY < 0 ? 1.13 : 1 / 1.13, event.clientX - rect.left, event.clientY - rect.top);
+}, { passive: false });
+$("zoom-out").addEventListener("click", () => zoomScene(1 / 1.2));
+$("zoom-in").addEventListener("click", () => zoomScene(1.2));
+$("zoom-fit").addEventListener("click", fitScene);
+new ResizeObserver(() => {
+  if (camera.fit) fitScene();
+}).observe(viewport);
+
+renderNamespaces();
+renderHosts();
+render();
+if (state.view === "topology" && state.selected && viewport.clientWidth < 560 && camera.zoom < .66) {
+  camera.fit = false;
+  camera.zoom = .66;
+  camera.x = viewport.clientWidth - viewBox.width * camera.zoom;
+  camera.y = 8;
+  drawCamera();
+}
+</script>
+</body>
+</html>

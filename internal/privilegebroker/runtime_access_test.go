@@ -344,6 +344,14 @@ func (client *fixtureKubernetesClient) Detail(context.Context, string) (clusters
 func (client *fixtureKubernetesClient) Logs(context.Context, string, int) ([]clusterstatus.LogLine, error) {
 	return client.logs, nil
 }
+func (client *fixtureKubernetesClient) PodDetail(_ context.Context, _ string, pod string) (clusterstatus.Detail, error) {
+	detail := client.detail
+	detail.Pods = []clusterstatus.Pod{{Name: pod}}
+	return detail, nil
+}
+func (client *fixtureKubernetesClient) PodLogs(_ context.Context, _ string, pod string, _ int) ([]clusterstatus.LogLine, error) {
+	return []clusterstatus.LogLine{{Pod: pod, Text: "selected pod"}}, nil
+}
 func (client *fixtureKubernetesClient) Operate(_ context.Context, operation clusterstatus.Operation) error {
 	client.operated = operation
 	return nil
@@ -457,6 +465,15 @@ func TestKubernetesFactoryReadsDetailAndLogsThroughBroker(t *testing.T) {
 	logs, err := client.Logs(context.Background(), "default/Deployment/api", 100)
 	if err != nil || len(logs) != 1 || logs[0].Text != "ready" {
 		t.Fatalf("logs = %#v, error = %v", logs, err)
+	}
+	podClient := client.(clusterstatus.WorkloadPodClient)
+	detail, err = podClient.PodDetail(context.Background(), "default/Deployment/api", "api-4")
+	if err != nil || len(detail.Pods) != 1 || detail.Pods[0].Name != "api-4" {
+		t.Fatalf("Pod detail = %#v, error = %v", detail, err)
+	}
+	logs, err = podClient.PodLogs(context.Background(), "default/Deployment/api", "api-4", 100)
+	if err != nil || len(logs) != 1 || logs[0].Pod != "api-4" {
+		t.Fatalf("Pod logs = %#v, error = %v", logs, err)
 	}
 }
 

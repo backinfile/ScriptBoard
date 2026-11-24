@@ -7764,9 +7764,11 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     const key = "scriptboard.kubernetes.columns.v1";
     const narrow = window.matchMedia("(max-width: 800px)");
     let saved = null;
+    const wideColumns = ["name", "namespace", "status", "ready", "node", "cpu", "memory", "restarts"];
+    if (!root.querySelector("[data-kubernetes-workbench]")) wideColumns.push("image", "started");
     try { const value = JSON.parse(localStorage.getItem(key)); if (Array.isArray(value)) saved = value.filter(item => typeof item === "string"); } catch {}
     const apply = () => {
-      const visible = new Set(saved || (narrow.matches ? ["name", "status", "ready"] : ["name", "namespace", "status", "ready", "node", "cpu", "memory", "restarts", "image", "started"]));
+      const visible = new Set(saved || (narrow.matches ? ["name", "status", "ready"] : wideColumns));
       visible.add("name"); visible.add("actions");
       root.querySelectorAll("[data-kubernetes-column]").forEach(cell => { cell.hidden = !visible.has(cell.dataset.kubernetesColumn); });
       root.querySelectorAll("[data-kubernetes-column-toggle]").forEach(input => { input.checked = visible.has(input.dataset.kubernetesColumnToggle); });
@@ -7811,7 +7813,19 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
     const connectionDrawer = root.querySelector("[data-kubernetes-connection-drawer]");
     const connectionDrawerBody = connectionDrawer?.querySelector("[data-kubernetes-connection-drawer-body]");
     const connectionDrawerTitle = connectionDrawer?.querySelector("[data-kubernetes-connection-drawer-title]");
+    const hasWorkbench = Boolean(root.querySelector("[data-kubernetes-workbench]"));
+    if (hasWorkbench) root.setAttribute("data-kubernetes-enhanced", "");
+    let workbench = null;
+    let detailController = null;
+    let networkKind = "";
     let snapshotController = null;
+    const applyNetworkKind = () => {
+      const filter = root.querySelector("[data-kubernetes-network-kind]");
+      if (filter) filter.value = networkKind;
+      root.querySelectorAll("[data-kubernetes-network-row]").forEach(item => {
+        item.hidden = Boolean(networkKind && item.dataset.kubernetesNetworkRow !== networkKind);
+      });
+    };
     let snapshotURL = location.href;
     let operationPending = false;
     let connectionController = null;
@@ -7833,10 +7847,29 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
         const selectors = options.workloadsOnly
           ? [".kubernetes-workload-controls", ".kubernetes-table-shell", '[data-kubernetes-section-facts="workloads"]']
           : ["[data-kubernetes-external-body]", ".kubernetes-workload-controls", ".kubernetes-table-shell", "[data-kubernetes-node-list]", ...["external", "workloads", "nodes"].map(id => `[data-kubernetes-section-facts="${id}"]`)];
-        if (!options.resourcesOnly && !options.workloadsOnly) selectors.unshift(".kubernetes-monitor-summary", "[data-kubernetes-alert-slot]");
+        if (hasWorkbench) {
+          // Scope filters apply to every view. Keep the canvas and detail panel
+          // mounted so a refresh preserves the camera and selected resource.
+          selectors.splice(0, selectors.length, ".kubernetes-workload-controls", ".kubernetes-facts",
+            ".kubernetes-resource-navigation",
+            ".kubernetes-table-shell", "[data-kubernetes-external-body]", "[data-kubernetes-node-list]");
+          if (!options.workloadsOnly) selectors.unshift(".kubernetes-monitor-summary", "[data-kubernetes-alert-slot]");
+        } else if (!options.resourcesOnly && !options.workloadsOnly) {
+          selectors.unshift(".kubernetes-monitor-summary", "[data-kubernetes-alert-slot]");
+        }
+        const active = document.activeElement;
+        const focusedLink = active?.closest("[data-kubernetes-snapshot-link], .kubernetes-status-tabs a, .kubernetes-sort-link");
+        const focusHref = focusedLink?.getAttribute("href");
+        const focusName = active?.closest(".kubernetes-toolbar") ? active.name : "";
         const replacements = selectors.map(selector => [root.querySelector(selector), incoming.querySelector(selector)]);
         if ((options.resourcesOnly || options.workloadsOnly) && replacements.some(([current, next]) => !current || !next)) throw new Error("Incomplete Kubernetes snapshot.");
         replacements.forEach(([current, next]) => { if (current && next) current.replaceWith(next); });
+        if (hasWorkbench) {
+          for (const attribute of ["kubernetesConnection", "kubernetesView", "kubernetesSectionName", "kubernetesTopologyMode"]) {
+            root.dataset[attribute] = incoming.dataset[attribute];
+          }
+          applyNetworkKind();
+        }
         applyColumns();
         const sourceTime = incoming.querySelector("[data-monitor-refresh-time]");
         const currentTime = root.querySelector("[data-monitor-refresh-time]");
@@ -7858,6 +7891,12 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
           if (monitorLink && nextLink) monitorLink.href = nextLink.href;
         }
         replacements.forEach(([, next]) => { if (next?.isConnected) { renderIcons(next); localizeTimes(next); } });
+        workbench?.update(options.request?.method === "POST" || new URL(destination).searchParams.get("refresh") === "1");
+        if (focusHref && !active.isConnected) {
+          [...root.querySelectorAll("a[href]")].find(link => link.getAttribute("href") === focusHref && link.getClientRects().length)?.focus({ preventScroll: true });
+        } else if (focusName && !active.isConnected) {
+          root.querySelector(".kubernetes-toolbar")?.elements.namedItem(focusName)?.focus({ preventScroll: true });
+        }
         window.requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
         root.querySelectorAll("[data-kubernetes-refresh-status]").forEach(status => { status.textContent = root.dataset.kubernetesRefreshed; });
       } catch (error) {
@@ -7886,27 +7925,53 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       destination.searchParams.set("refresh", "1");
       return replaceSnapshot(destination.toString(), { pushHistory: false });
     }, cleanups, () => { if (!operationPending) snapshotController?.abort(); });
-    const openDetail = async button => {
+    const openDrawer = () => {
+      if (!drawer || drawer.open) return;
+      if (hasWorkbench && window.matchMedia("(min-width: 1120px)").matches) drawer.show();
+      else drawer.showModal();
+    };
+    const openDetail = async (button, name = "") => {
       if (!drawer || !body) return;
       const url = button.dataset.kubernetesDetailUrl;
       if (!url) return;
-      title.textContent = button.closest("tr,article")?.querySelector("strong")?.textContent?.trim() || "Workload";
+      detailController?.abort();
+      const controller = new AbortController();
+      detailController = controller;
+      title.textContent = name || button.closest("tr,article")?.querySelector("strong")?.textContent?.trim() || "Workload";
       meta.textContent = "";
       body.innerHTML = `<div class="kubernetes-drawer__loading"><span data-lucide="loader-circle" aria-hidden="true"></span>${escapeMarkup(kubernetesWords().loading)}</div>`;
       renderIcons(body);
-      if (!drawer.open) drawer.showModal();
+      openDrawer();
       try {
-        const detailResponse = await fetch(url, { headers: { "Accept": "application/json" } });
+        const detailResponse = await fetch(url, { headers: { "Accept": "application/json" }, signal: controller.signal });
         if (!detailResponse.ok) throw new Error(await detailResponse.text() || `HTTP ${detailResponse.status}`);
         const payload = await detailResponse.json();
+        if (controller.signal.aborted || !drawer.open) return;
         const workload = payload?.Workload || {};
         title.textContent = workload.Name || title.textContent;
         meta.textContent = [workload.Namespace, workload.Kind, workload.Image].filter(Boolean).join(" · ");
         body.innerHTML = renderKubernetesDetail(payload, button, root);
         renderIcons(body);
       } catch (error) {
-        body.innerHTML = `<div class="kubernetes-detail-empty" role="alert">${escapeMarkup(error?.message || kubernetesWords().loadFailed)}</div>`;
+        if (error?.name !== "AbortError") body.innerHTML = `<div class="kubernetes-detail-empty" role="alert">${escapeMarkup(error?.message || kubernetesWords().loadFailed)}</div>`;
       }
+    };
+    workbench = window.ScriptBoardKubernetesWorkbench?.(root, {
+      renderIcons, cleanups, locale: locale(),
+      openWorkload: (url, name) => openDetail({ dataset: { kubernetesDetailUrl: url }, closest: () => null }, name),
+      showResource(name, description, content) {
+        detailController?.abort();
+        title.textContent = name;
+        meta.textContent = description;
+        body.replaceChildren(...content);
+        renderIcons(body);
+        openDrawer();
+      },
+      closeDetails: () => drawer?.close(),
+    });
+    const onDetailClose = () => {
+      detailController?.abort();
+      workbench?.close();
     };
     const onSubmit = event => {
       const form = event.target;
@@ -8011,7 +8076,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
         openConnectionDrawer(connectionLink);
         return;
       }
-      const snapshotLink = event.target.closest(".kubernetes-status-tabs a,.kubernetes-sort-link");
+      const snapshotLink = event.target.closest(".kubernetes-status-tabs a,.kubernetes-sort-link,[data-kubernetes-snapshot-link]");
       if (snapshotLink && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
         event.preventDefault();
         if (operationPending) return;
@@ -8021,6 +8086,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       const detail = event.target.closest("[data-kubernetes-detail-url]");
       if (detail) {
         event.preventDefault();
+        if (detail.dataset.kubernetesWorkloadKey) workbench?.selectWorkload(detail.dataset.kubernetesWorkloadKey, detail);
         openDetail(detail);
         return;
       }
@@ -8064,7 +8130,7 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       if (event.target.closest("[data-kubernetes-drawer-close]")) drawer?.close();
     };
     const onDrawerClick = event => {
-      if (event.target === drawer) drawer.close();
+      if (event.target === drawer && drawer.matches(":modal")) drawer.close();
     };
     root.addEventListener("click", onClick);
     root.addEventListener("submit", onSubmit);
@@ -8131,11 +8197,19 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       });
     };
     const onClusterChange = event => {
-      const select = event.target.closest("[data-kubernetes-cluster-select]");
-      if (select && root.contains(select)) select.form?.requestSubmit();
+      const select = event.target.closest("[data-kubernetes-cluster-select]") || (hasWorkbench && event.target.closest(".kubernetes-toolbar select[name=host]"));
+      if (select && root.contains(select)) {
+        if (select.hasAttribute("data-kubernetes-cluster-select")) networkKind = "";
+        select.form?.requestSubmit();
+      }
+      if (event.target.matches("[data-kubernetes-network-kind]")) {
+        networkKind = event.target.value;
+        applyNetworkKind();
+      }
     };
     root.addEventListener("change", onClusterChange);
     drawer?.addEventListener("click", onDrawerClick);
+    drawer?.addEventListener("close", onDetailClose);
     importDrawer?.addEventListener("click", onImportDrawerClick);
     contextDrawer?.addEventListener("click", onContextDrawerClick);
     connectionDrawer?.addEventListener("click", onConnectionDrawerClick);
@@ -8154,6 +8228,8 @@ if (window.location.pathname === "/setup" && window.location.hash.startsWith("#t
       root.removeEventListener("submit", onSubmit);
       root.removeEventListener("change", onClusterChange);
       drawer?.removeEventListener("click", onDrawerClick);
+      drawer?.removeEventListener("close", onDetailClose);
+      detailController?.abort();
       importDrawer?.removeEventListener("click", onImportDrawerClick);
       contextDrawer?.removeEventListener("click", onContextDrawerClick);
       connectionDrawer?.removeEventListener("click", onConnectionDrawerClick);

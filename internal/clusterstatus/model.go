@@ -13,12 +13,13 @@ const (
 )
 
 type Connection struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Note           string `json:"note,omitempty"`
-	KubeconfigPath string `json:"kubeconfigPath"`
-	Context        string `json:"context"`
-	Mode           Mode   `json:"mode"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Note              string `json:"note,omitempty"`
+	KubeconfigPath    string `json:"kubeconfigPath"`
+	Context           string `json:"context"`
+	PhysicalHostLabel string `json:"physicalHostLabel,omitempty"`
+	Mode              Mode   `json:"mode"`
 }
 
 type Capabilities struct {
@@ -44,6 +45,8 @@ type Query struct {
 	Search, Status, Namespace, Kind, Sort, Direction string
 	ConnectionID                                     string
 	Limit                                            int
+	PhysicalHost, Section, View, TopologyMode        string
+	IncludeTopology                                  bool
 }
 
 type View struct {
@@ -61,13 +64,20 @@ type View struct {
 	MetricsAvailable             bool
 	Errors                       map[string]string
 	AvailableNamespaces          []string
+	PhysicalHosts                []string
+	UnmappedHosts                bool
+	NodesTotal                   int
+	NetworkServices              []ServiceExposure `json:"-"`
+	Topology                     *Topology         `json:",omitempty"`
 }
 
 type Node struct {
-	Name, Role, Version string
-	Ready               bool
-	CPUPercent          float64
-	MemoryPercent       float64
+	Name, Role, Version           string
+	PhysicalHost                  string
+	CPUAvailable, MemoryAvailable bool
+	Ready                         bool
+	CPUPercent                    float64
+	MemoryPercent                 float64
 }
 
 type Workload struct {
@@ -109,6 +119,31 @@ type Pod struct {
 	Containers                          []string
 }
 
+type TopologyPod struct {
+	Pod
+	UID, WorkloadKey, ControllerKind, ControllerName string
+	Status, Reason                                   string
+}
+
+type ServiceEndpoint struct {
+	PodUID string
+	Ready  *bool
+}
+
+type TopologyService struct {
+	ServiceExposure
+	Endpoints      []ServiceEndpoint
+	OtherEndpoints int
+}
+
+type Topology struct {
+	Workloads []Workload
+	Pods      []TopologyPod
+	Services  []TopologyService
+	Ingresses []IngressExposure
+	Nodes     []Node
+}
+
 type Event struct {
 	At                    time.Time
 	Type, Reason, Message string
@@ -128,6 +163,8 @@ type MetricSample struct {
 }
 
 type Snapshot struct {
+	TopologyPods         []TopologyPod
+	TopologyServices     []TopologyService
 	CollectedAt          time.Time
 	ServerVersion        string
 	Nodes                []Node
@@ -177,6 +214,12 @@ type Client interface {
 	Detail(context.Context, string) (Detail, error)
 	Logs(context.Context, string, int) ([]LogLine, error)
 	Operate(context.Context, Operation) error
+}
+
+// WorkloadPodClient reads one Pod after verifying its workload membership.
+type WorkloadPodClient interface {
+	PodDetail(context.Context, string, string) (Detail, error)
+	PodLogs(context.Context, string, string, int) ([]LogLine, error)
 }
 
 type Factory interface {

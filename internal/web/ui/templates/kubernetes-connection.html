@@ -24,6 +24,7 @@
       <section><header><div><h2>kubeconfig</h2><p>{{t .Locale "kubernetes.kubeconfig_description"}}</p></div></header>
         <label><span>{{t .Locale "kubernetes.kubeconfig_path"}}</span><input name="kubeconfig_path" value="{{.Connection.KubeconfigPath}}" required autocomplete="off" spellcheck="false" placeholder="C:\Users\admin\.kube\config"></label>
         <label><span>{{t .Locale "kubernetes.context_optional"}}</span><input name="context" value="{{.Connection.Context}}" autocomplete="off" spellcheck="false" placeholder="{{t .Locale "kubernetes.current_context"}}"></label>
+        <label><span>{{t .Locale "kubernetes.physical_host_label"}}</span><input name="physical_host_label" value="{{.Connection.PhysicalHostLabel}}" maxlength="317" placeholder="infra.example.com/physical-host" autocomplete="off" spellcheck="false"></label>
       </section>
       <section><header><div><h2>{{t .Locale "kubernetes.operation_mode"}}</h2></div></header>
         <div class="kubernetes-mode-options">

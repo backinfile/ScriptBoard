@@ -262,6 +262,9 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 	if err := migrateKubernetesConnections(migration); err != nil {
 		return err
 	}
+	if err := migrateKubernetesPhysicalHostLabel(migration); err != nil {
+		return err
+	}
 	if schemaVersion == 28 {
 		for _, statement := range []string{
 			`ALTER TABLE file_quick_access_pins RENAME TO file_quick_access_pins_user_scoped`,

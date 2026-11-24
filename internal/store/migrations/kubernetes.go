@@ -7,6 +7,19 @@ import (
 	storesqlite "scriptboard/internal/store/sqlite"
 )
 
+func migrateKubernetesPhysicalHostLabel(migration *sql.Tx) error {
+	exists, err := storesqlite.ColumnExists(migration, "kubernetes_connection", "physical_host_label")
+	if err != nil {
+		return fmt.Errorf("inspect Kubernetes physical host label: %w", err)
+	}
+	if !exists {
+		if _, err := migration.Exec("ALTER TABLE kubernetes_connection ADD COLUMN physical_host_label TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("add Kubernetes physical host label: %w", err)
+		}
+	}
+	return nil
+}
+
 func migrateKubernetesConnections(migration *sql.Tx) error {
 	singleton, err := storesqlite.ColumnExists(migration, "kubernetes_connection", "singleton")
 	if err != nil {

@@ -17,9 +17,10 @@ type kubeList[T any] struct {
 }
 
 type kubeOwnerReference struct {
-	UID  string `json:"uid"`
-	Kind string `json:"kind"`
-	Name string `json:"name"`
+	Controller *bool  `json:"controller"`
+	UID        string `json:"uid"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
 }
 
 type kubeMetadata struct {
@@ -114,6 +115,7 @@ type kubeJob struct {
 }
 
 type kubeContainerState struct {
+	Waiting *struct{ Reason string } `json:"waiting"`
 	Running *struct {
 		StartedAt time.Time `json:"startedAt"`
 	} `json:"running"`
@@ -140,6 +142,7 @@ type kubePod struct {
 	} `json:"spec"`
 	Status struct {
 		Phase             string `json:"phase"`
+		Reason            string `json:"reason"`
 		ContainerStatuses []struct {
 			Name         string             `json:"name"`
 			Ready        bool               `json:"ready"`
@@ -258,6 +261,7 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 	}]
 	var services kubeList[kubeService]
 	var ingresses kubeList[kubeIngress]
+	var endpointSlices kubeList[kubeEndpointSlice]
 	requests := []struct {
 		name, path string
 		output     any
@@ -274,6 +278,7 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 		{"namespaces", "/api/v1/namespaces", &namespaces, false},
 		{"services", "/api/v1/services", &services, false},
 		{"ingresses", "/apis/networking.k8s.io/v1/ingresses", &ingresses, false},
+		{"endpointslices", "/apis/discovery.k8s.io/v1/endpointslices", &endpointSlices, false},
 	}
 	workloadSources := 0
 	for _, source := range requests {
@@ -292,7 +297,7 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("Kubernetes credentials cannot list supported workloads")
 	}
 	snapshot.Namespaces = len(namespaces.Items)
-	snapshot.Services = externalServices(services.Items)
+	snapshot.Services = serviceExposures(services.Items, true)
 	snapshot.Ingresses = externalIngresses(ingresses.Items)
 
 	workloads := make(map[string]*Workload)
@@ -302,7 +307,9 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 		status, label := workloadStatus(ready, desired)
 		workloads[key] = &Workload{Key: key, Namespace: metadata.Namespace, Kind: kind, Name: metadata.Name, Image: image,
 			Status: status, StatusLabel: label, Ready: ready, Desired: desired, Revision: revision, Age: workloadAge(metadata.CreationTimestamp, now)}
-		ownerToWorkload[metadata.UID] = key
+		if metadata.UID != "" {
+			ownerToWorkload[metadata.UID] = key
+		}
 	}
 	for _, item := range deployments.Items {
 		addWorkload(item.Metadata, "Deployment", containerImages(item.Spec.Template.Spec.Containers), deploymentRevision(item.Metadata), item.Status.ReadyReplicas, replicasOrDefault(item.Spec.Replicas))
@@ -345,11 +352,15 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 		if podReady(pod) {
 			snapshot.PodsReady++
 		}
-		owner := firstControllerOwner(pod.Metadata.OwnerReferences, "")
-		if owner == nil {
-			continue
+		summary := summarizeTopologyPod(pod)
+		if owner := firstControllerOwner(pod.Metadata.OwnerReferences, ""); owner != nil {
+			summary.ControllerKind, summary.ControllerName = owner.Kind, owner.Name
+			if workload := workloads[ownerToWorkload[owner.UID]]; workload != nil && workload.Namespace == summary.Namespace {
+				summary.WorkloadKey = workload.Key
+			}
 		}
-		key := ownerToWorkload[owner.UID]
+		snapshot.TopologyPods = append(snapshot.TopologyPods, summary)
+		key := summary.WorkloadKey
 		workload := workloads[key]
 		if workload == nil {
 			continue
@@ -371,6 +382,7 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 			workloadNodes[key][pod.Spec.NodeName] = struct{}{}
 		}
 	}
+	snapshot.TopologyServices = collectTopologyServices(services.Items, endpointSlices.Items, snapshot.TopologyPods)
 	for key, names := range workloadNodes {
 		workloads[key].Nodes = formatNodeNames(names)
 	}
@@ -399,14 +411,16 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 		nodeUsage[metric.Metadata.Name] = metric
 	}
 	for _, item := range nodes.Items {
-		node := Node{Name: item.Metadata.Name, Role: nodeRole(item.Metadata.Labels), Version: item.Status.NodeInfo.KubeletVersion, Ready: nodeReady(item)}
+		node := Node{Name: item.Metadata.Name, Role: nodeRole(item.Metadata.Labels), Version: item.Status.NodeInfo.KubeletVersion, Ready: nodeReady(item), PhysicalHost: item.Metadata.Labels[client.physicalHostLabel]}
 		if usage, ok := nodeUsage[item.Metadata.Name]; ok {
 			cpuCapacity := parseCPU(item.Status.Capacity["cpu"])
 			memoryCapacity := parseBytes(item.Status.Capacity["memory"])
-			if cpuCapacity > 0 {
+			if cpuCapacity > 0 && usage.Usage["cpu"] != "" {
+				node.CPUAvailable = true
 				node.CPUPercent = float64(parseCPU(usage.Usage["cpu"])) / float64(cpuCapacity) * 100
 			}
-			if memoryCapacity > 0 {
+			if memoryCapacity > 0 && usage.Usage["memory"] != "" {
+				node.MemoryAvailable = true
 				node.MemoryPercent = float64(parseBytes(usage.Usage["memory"])) / float64(memoryCapacity) * 100
 			}
 		}
@@ -423,10 +437,10 @@ func (client *kubeHTTPClient) Snapshot(ctx context.Context) (Snapshot, error) {
 	return snapshot, nil
 }
 
-func externalServices(items []kubeService) []ServiceExposure {
+func serviceExposures(items []kubeService, externalOnly bool) []ServiceExposure {
 	result := make([]ServiceExposure, 0)
 	for _, item := range items {
-		if item.Spec.Type != "NodePort" && item.Spec.Type != "LoadBalancer" && item.Spec.Type != "ExternalName" && len(item.Spec.ExternalIPs) == 0 {
+		if externalOnly && item.Spec.Type != "NodePort" && item.Spec.Type != "LoadBalancer" && item.Spec.Type != "ExternalName" && len(item.Spec.ExternalIPs) == 0 {
 			continue
 		}
 		service := ServiceExposure{
@@ -571,12 +585,20 @@ func containerImages(containers []kubeContainer) string {
 }
 
 func firstControllerOwner(owners []kubeOwnerReference, kind string) *kubeOwnerReference {
+	var unspecified *kubeOwnerReference
 	for index := range owners {
-		if kind == "" || owners[index].Kind == kind {
-			return &owners[index]
+		owner := &owners[index]
+		if kind != "" && owner.Kind != kind {
+			continue
+		}
+		if owner.Controller != nil && *owner.Controller {
+			return owner
+		}
+		if owner.Controller == nil && unspecified == nil {
+			unspecified = owner
 		}
 	}
-	return nil
+	return unspecified
 }
 
 func podReady(pod kubePod) bool {

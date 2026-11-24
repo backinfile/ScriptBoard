@@ -23,8 +23,8 @@ ScriptBoard 适合个人服务器、小团队工具机和内部运维主机。�
 - 运行 PowerShell、Python、Shell、Batch、CMD 和 Node.js 脚本
 - 保存常用任务，可按计划自动运行；可定义执行参数，运行前逐项填写，脚本经 `SCRIPTBOARD_PARAM_<名称大写>` 环境变量读取，也可在启动参数中用 `{{PARAM_<名称大写>}}` 引用
 - 查看 CPU、内存、存储、应用和运行历史
-- 查看 Docker、Kubernetes（含 NodePort、LoadBalancer 与 Ingress 外部入口）和网站状态；Kubernetes 外部访问、工作负载与节点默认折叠，手动刷新、自动刷新开关与全部展开/收起按钮集中在同一行，筛选、搜索与排序仅更新工作负载区域
-- Kubernetes 负载表可独立显示完整镜像（含标签或摘要）和关联容器上次启动时间；通过“显示列”选择列，设置仅保存在当前浏览器，宽表可横向滚动。
+- 查看 Docker、Kubernetes 和网站状态。Kubernetes 支持资源列表、关系拓扑和节点分布，可按命名空间与物理机筛选。
+- Kubernetes 负载表可通过「显示列」查看完整镜像和最近启动时间。点击资源可查看详情、事件和有权限读取的 Pod 日志。
 - 搭建自定义状态面板：数值、百分比、配额、键值、网站、镜像仓库与流程图卡片；卡片可附加操作按钮，一键触发快捷执行或从浏览器直发 HTTP 请求；流程图节点实时展示执行状态，点击节点可跳转对应运行记录，并保留最近执行历史与上次执行时间；面板支持私有、公开只读、访问 Key 操作和匿名操作四档分享方式，卡片配置可导出导入
 - 在数据库工作台切换连接，备份和恢复 MySQL/MariaDB，并查看 Redis 数据
 - 在“资源 → 镜像仓库”使用与数据库页一致的连接侧栏，按 namespace 浏览镜像，查看版本、压缩大小和创建时间；新连接默认只读，可测试连接并切换为允许修改，通过“清理规则”预览批量删除范围
@@ -40,7 +40,7 @@ ScriptBoard 适合个人服务器、小团队工具机和内部运维主机。�
 
 界面支持简体中文和美式英语，并适配桌面与移动浏览器。
 
-界面预览：[Kubernetes 折叠区域](./docs/previews/kubernetes-collapsible-sections.html)（下载后用浏览器打开）。
+在 Kubernetes 集群连接中填写「物理机标签键」，例如 `infra.example.com/physical-host`。将同一台物理机上的 Node 标记为同一个标签值。Service 与 Pod 的端点连线需要集群凭据拥有 `discovery.k8s.io` 下 `endpointslices` 的列表权限。
 
 ## 支持环境
 

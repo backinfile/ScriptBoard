@@ -203,6 +203,7 @@ func webTemplateFunctions() template.FuncMap {
 		"containerStatusURL":       containerStatusURL,
 		"kubernetesSortURL":        kubernetesSortURL,
 		"kubernetesStatusURL":      kubernetesStatusURL,
+		"kubernetesViewURL":        kubernetesViewURL,
 		"serviceLogService":        serviceLogServiceLabel,
 		"duration":                 humanDuration,
 		"localDuration": func(locale webLocale, value time.Duration) string {
@@ -2386,11 +2387,11 @@ func safeWebErrorMessage(message string) string {
 	return strings.TrimSpace(string(clean))
 }
 
-var appCSS = mustWebAsset("ui/assets/app.css") + "\n" + mustWebAsset("ui/assets/file-jump.css") + "\n" + mustWebAsset("ui/assets/registries.css") + "\n" + mustWebAsset("ui/assets/resource-workspace.css") + "\n" + mustWebAsset("ui/assets/git-projects.css")
+var appCSS = mustWebAsset("ui/assets/app.css") + "\n" + mustWebAsset("ui/assets/file-jump.css") + "\n" + mustWebAsset("ui/assets/registries.css") + "\n" + mustWebAsset("ui/assets/resource-workspace.css") + "\n" + mustWebAsset("ui/assets/git-projects.css") + "\n" + mustWebAsset("ui/assets/kubernetes-monitor.css")
 
 var workbenchJS = mustWebAsset("ui/assets/workbench.js")
 
-var appJS = mustWebAsset("ui/assets/file-jump.js") + "\n" + mustWebAsset("ui/assets/app.js") + "\n" + mustWebAsset("ui/assets/registries.js") + "\n" + mustWebAsset("ui/assets/registry-card-tree.js") + "\n" + mustWebAsset("ui/assets/git-projects.js")
+var appJS = mustWebAsset("ui/assets/kubernetes-topology.js") + "\n" + mustWebAsset("ui/assets/file-jump.js") + "\n" + mustWebAsset("ui/assets/app.js") + "\n" + mustWebAsset("ui/assets/registries.js") + "\n" + mustWebAsset("ui/assets/registry-card-tree.js") + "\n" + mustWebAsset("ui/assets/git-projects.js")
 
 var markdownItJS = mustWebAsset("ui/assets/markdown-it.min.js")
 

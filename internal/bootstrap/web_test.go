@@ -93,14 +93,14 @@ func TestBrokerKubernetesServiceResolvesSavedConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE kubernetes_connection (id TEXT PRIMARY KEY, name TEXT, kubeconfig_path TEXT, context_name TEXT, operation_mode TEXT)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE kubernetes_connection (id TEXT PRIMARY KEY, name TEXT, kubeconfig_path TEXT, context_name TEXT, physical_host_label TEXT, operation_mode TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO kubernetes_connection VALUES ('k8s-local','Local','C:\\secure\\kubeconfig','production','limited')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO kubernetes_connection VALUES ('k8s-local','Local','C:\\secure\\kubeconfig','production','infra.example.com/physical-host','limited')`); err != nil {
 		t.Fatal(err)
 	}
 	connection, found, err := (brokerKubernetesService{db: db, factory: clusterstatus.HTTPFactory{}}).ResolveConnection(context.Background(), "k8s-local")
-	if err != nil || !found || connection.Name != "Local" || connection.Context != "production" || connection.Mode != clusterstatus.ModeLimited {
+	if err != nil || !found || connection.Name != "Local" || connection.Context != "production" || connection.PhysicalHostLabel != "infra.example.com/physical-host" || connection.Mode != clusterstatus.ModeLimited {
 		t.Fatalf("connection=%#v found=%v err=%v", connection, found, err)
 	}
 }

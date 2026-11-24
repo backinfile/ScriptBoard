@@ -331,8 +331,8 @@ func (service brokerKubernetesService) Open(ctx context.Context, connection clus
 
 func (service brokerKubernetesService) ResolveConnection(ctx context.Context, id string) (clusterstatus.Connection, bool, error) {
 	var connection clusterstatus.Connection
-	err := service.db.QueryRowContext(ctx, `SELECT id, name, kubeconfig_path, context_name, operation_mode FROM kubernetes_connection WHERE id=?`, id).Scan(
-		&connection.ID, &connection.Name, &connection.KubeconfigPath, &connection.Context, &connection.Mode,
+	err := service.db.QueryRowContext(ctx, `SELECT id, name, kubeconfig_path, context_name, physical_host_label, operation_mode FROM kubernetes_connection WHERE id=?`, id).Scan(
+		&connection.ID, &connection.Name, &connection.KubeconfigPath, &connection.Context, &connection.PhysicalHostLabel, &connection.Mode,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return clusterstatus.Connection{}, false, nil

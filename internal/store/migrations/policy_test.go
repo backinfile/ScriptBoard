@@ -76,6 +76,9 @@ func TestCompatible(t *testing.T) {
 			t.Fatalf("schema 74 should accept predecessor %d", version)
 		}
 	}
+	if !Compatible(77, 76) || Compatible(77, 78) {
+		t.Fatal("schema 77 must accept schema 76 and reject newer databases")
+	}
 	if !Compatible(57, 57) {
 		t.Fatal("a current database must always remain compatible")
 	}

@@ -84,10 +84,19 @@ func kubernetesQueryURL(query clusterstatus.Query, mutate func(url.Values)) stri
 	if query.Search != "" {
 		values.Set("query", query.Search)
 	}
-	for key, value := range map[string]string{"status": query.Status, "namespace": query.Namespace, "kind": query.Kind, "sort": query.Sort, "direction": query.Direction} {
+	for key, value := range map[string]string{"status": query.Status, "namespace": query.Namespace, "kind": query.Kind, "sort": query.Sort, "direction": query.Direction, "host": query.PhysicalHost} {
 		if value != "" && value != "all" {
 			values.Set(key, value)
 		}
+	}
+	if query.View == "topology" {
+		values.Set("view", query.View)
+	}
+	if query.Section != "" && query.Section != "workloads" {
+		values.Set("section", query.Section)
+	}
+	if query.TopologyMode == "placement" {
+		values.Set("topology_mode", query.TopologyMode)
 	}
 	mutate(values)
 	return "/monitor/kubernetes?" + values.Encode()
@@ -114,6 +123,19 @@ func kubernetesStatusURL(query clusterstatus.Query, status string) string {
 	})
 }
 
+func kubernetesViewURL(query clusterstatus.Query, view, section, mode string) string {
+	if view != "" {
+		query.View = view
+	}
+	if section != "" {
+		query.Section = section
+	}
+	if mode != "" {
+		query.TopologyMode = mode
+	}
+	return kubernetesQueryURL(query, func(url.Values) {})
+}
+
 func parseKubernetesQuery(request *http.Request) clusterstatus.Query {
 	query := clusterstatus.Query{
 		ConnectionID: strings.TrimSpace(request.URL.Query().Get("cluster")),
@@ -124,6 +146,19 @@ func parseKubernetesQuery(request *http.Request) clusterstatus.Query {
 		Sort:         request.URL.Query().Get("sort"),
 		Direction:    request.URL.Query().Get("direction"),
 		Limit:        100,
+		PhysicalHost: request.URL.Query().Get("host"),
+		Section:      request.URL.Query().Get("section"),
+		View:         request.URL.Query().Get("view"),
+		TopologyMode: request.URL.Query().Get("topology_mode"),
+	}
+	if query.Section != "external" && query.Section != "nodes" {
+		query.Section = "workloads"
+	}
+	if query.View != "topology" {
+		query.View = "list"
+	}
+	if query.TopologyMode != "placement" {
+		query.TopologyMode = "resources"
 	}
 	if query.Status == "" {
 		query.Status = "all"
@@ -553,6 +588,7 @@ func (a *App) addLocalKubeconfigConnection(response http.ResponseWriter, request
 
 func (a *App) kubernetesData(response http.ResponseWriter, request *http.Request) {
 	query := parseKubernetesQuery(request)
+	query.IncludeTopology = request.URL.Query().Get("topology") == "1"
 	connections, err := a.kubernetesStatus.Connections(request.Context())
 	if err != nil {
 		http.Error(response, "Unable to read Kubernetes connections", http.StatusInternalServerError)
@@ -604,7 +640,7 @@ func (a *App) kubernetesConnectionTask(response http.ResponseWriter, request *ht
 }
 
 func kubernetesConnectionFromRequest(request *http.Request) clusterstatus.Connection {
-	return clusterstatus.Connection{ID: request.PathValue("connection"), Name: request.FormValue("name"), Note: request.FormValue("note"), KubeconfigPath: request.FormValue("kubeconfig_path"), Context: request.FormValue("context"), Mode: clusterstatus.Mode(request.FormValue("mode"))}
+	return clusterstatus.Connection{ID: request.PathValue("connection"), Name: request.FormValue("name"), Note: request.FormValue("note"), KubeconfigPath: request.FormValue("kubeconfig_path"), Context: request.FormValue("context"), PhysicalHostLabel: request.FormValue("physical_host_label"), Mode: clusterstatus.Mode(request.FormValue("mode"))}
 }
 
 func (a *App) saveKubernetesConnection(response http.ResponseWriter, request *http.Request) {
@@ -677,7 +713,7 @@ func kubernetesWorkloadKey(request *http.Request) string {
 }
 
 func (a *App) kubernetesWorkloadDetails(response http.ResponseWriter, request *http.Request) {
-	detail, err := a.kubernetesStatus.Detail(request.Context(), request.PathValue("connection"), kubernetesWorkloadKey(request))
+	detail, err := a.kubernetesStatus.PodDetail(request.Context(), request.PathValue("connection"), kubernetesWorkloadKey(request), request.URL.Query().Get("pod"))
 	if err != nil {
 		http.Error(response, "Unable to read Kubernetes workload details", http.StatusNotFound)
 		return
@@ -692,7 +728,8 @@ func (a *App) kubernetesWorkloadLogs(response http.ResponseWriter, request *http
 	if limit <= 0 && strings.Contains(request.Header.Get("Accept"), "text/html") {
 		limit = 500
 	}
-	lines, err := a.kubernetesStatus.Logs(request.Context(), request.PathValue("connection"), kubernetesWorkloadKey(request), limit)
+	pod := request.URL.Query().Get("pod")
+	lines, err := a.kubernetesStatus.PodLogs(request.Context(), request.PathValue("connection"), kubernetesWorkloadKey(request), pod, limit)
 	if err != nil {
 		http.Error(response, "Unable to read Kubernetes Pod logs", http.StatusBadRequest)
 		return
@@ -705,9 +742,13 @@ func (a *App) kubernetesWorkloadLogs(response http.ResponseWriter, request *http
 			views = append(views, kubernetesLogLineView{At: line.At, Source: line.Pod + "/" + line.Container, Severity: string(logstream.ClassifySeverity(line.Text)), Text: line.Text})
 		}
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		download := url.URL{Path: strings.TrimSuffix(request.URL.Path, "/") + "/download"}
+		if pod != "" {
+			download.RawQuery = url.Values{"pod": {pod}}.Encode()
+		}
 		_ = kubernetesLogsTemplate.Execute(response, kubernetesLogsPageView{
 			Locale: locale, Connection: request.PathValue("connection"), Namespace: request.PathValue("namespace"), Kind: request.PathValue("kind"), Name: request.PathValue("name"), Lines: views,
-			DownloadURL: strings.TrimSuffix(request.URL.Path, "/") + "/download",
+			DownloadURL: download.String(),
 		})
 		return
 	}
@@ -728,7 +769,7 @@ type kubernetesLogsPageView struct {
 }
 
 func (a *App) downloadKubernetesWorkloadLogs(response http.ResponseWriter, request *http.Request) {
-	lines, err := a.kubernetesStatus.Logs(request.Context(), request.PathValue("connection"), kubernetesWorkloadKey(request), 500)
+	lines, err := a.kubernetesStatus.PodLogs(request.Context(), request.PathValue("connection"), kubernetesWorkloadKey(request), request.URL.Query().Get("pod"), 500)
 	if err != nil {
 		http.Error(response, "Unable to read Kubernetes Pod logs", http.StatusBadRequest)
 		return

@@ -43,6 +43,14 @@ func resourceForKind(kind string) (group, plural string) {
 }
 
 func (client *kubeHTTPClient) Detail(ctx context.Context, key string) (Detail, error) {
+	return client.workloadDetail(ctx, key, "")
+}
+
+func (client *kubeHTTPClient) PodDetail(ctx context.Context, key, pod string) (Detail, error) {
+	return client.workloadDetail(ctx, key, pod)
+}
+
+func (client *kubeHTTPClient) workloadDetail(ctx context.Context, key, podName string) (Detail, error) {
 	namespace, kind, name, err := parseWorkloadKey(key)
 	if err != nil {
 		return Detail{}, err
@@ -80,7 +88,11 @@ func (client *kubeHTTPClient) Detail(ctx context.Context, key string) (Detail, e
 		}
 	}
 	detail := Detail{}
+	var podUID string
 	for _, pod := range pods.Items {
+		if podName != "" && pod.Metadata.Name != podName {
+			continue
+		}
 		owner := firstControllerOwner(pod.Metadata.OwnerReferences, "")
 		if owner == nil {
 			continue
@@ -88,22 +100,21 @@ func (client *kubeHTTPClient) Detail(ctx context.Context, key string) (Detail, e
 		if _, ok := ownerUIDs[owner.UID]; !ok {
 			continue
 		}
-		readyCount, restarts := 0, 0
-		for _, status := range pod.Status.ContainerStatuses {
-			if status.Ready {
-				readyCount++
-			}
-			restarts += status.RestartCount
-		}
-		containers := make([]string, 0, len(pod.Spec.Containers))
-		for _, container := range pod.Spec.Containers {
-			containers = append(containers, container.Name)
-		}
-		detail.Pods = append(detail.Pods, Pod{Name: pod.Metadata.Name, Namespace: namespace, Node: pod.Spec.NodeName, Phase: pod.Status.Phase,
-			Ready: fmt.Sprintf("%d/%d", readyCount, len(pod.Spec.Containers)), Restarts: restarts, Containers: containers})
+		detail.Pods = append(detail.Pods, summarizeTopologyPod(pod).Pod)
+		podUID = pod.Metadata.UID
 	}
 	sort.Slice(detail.Pods, func(i, j int) bool { return detail.Pods[i].Name < detail.Pods[j].Name })
-	selector := url.QueryEscape("involvedObject.kind=" + kind + ",involvedObject.name=" + name)
+	if podName != "" {
+		if len(detail.Pods) == 0 || podUID == "" {
+			return Detail{}, errors.New("Pod was not found in the Kubernetes workload")
+		}
+		kind, name = "Pod", podName
+	}
+	selector := "involvedObject.kind=" + kind + ",involvedObject.name=" + name
+	if podName != "" {
+		selector += ",involvedObject.uid=" + podUID
+	}
+	selector = url.QueryEscape(selector)
 	var events kubeList[kubeEvent]
 	if err := client.request(ctx, http.MethodGet, fmt.Sprintf("/api/v1/namespaces/%s/events?fieldSelector=%s", url.PathEscape(namespace), selector), "", nil, &events); err == nil {
 		for _, event := range events.Items {
@@ -119,10 +130,18 @@ func (client *kubeHTTPClient) Detail(ctx context.Context, key string) (Detail, e
 }
 
 func (client *kubeHTTPClient) Logs(ctx context.Context, key string, limit int) ([]LogLine, error) {
+	return client.workloadLogs(ctx, key, "", limit)
+}
+
+func (client *kubeHTTPClient) PodLogs(ctx context.Context, key, pod string, limit int) ([]LogLine, error) {
+	return client.workloadLogs(ctx, key, pod, limit)
+}
+
+func (client *kubeHTTPClient) workloadLogs(ctx context.Context, key, podName string, limit int) ([]LogLine, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	detail, err := client.Detail(ctx, key)
+	detail, err := client.workloadDetail(ctx, key, podName)
 	if err != nil {
 		return nil, err
 	}

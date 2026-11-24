@@ -125,13 +125,14 @@ type kubeconfigFile struct {
 }
 
 type kubeHTTPClient struct {
-	baseURL     *url.URL
-	http        *http.Client
-	token       string
-	username    string
-	password    string
-	defaultNS   string
-	fingerprint string
+	baseURL           *url.URL
+	http              *http.Client
+	token             string
+	username          string
+	password          string
+	defaultNS         string
+	physicalHostLabel string
+	fingerprint       string
 }
 
 func (HTTPFactory) Open(ctx context.Context, connection Connection) (Client, error) {
@@ -244,7 +245,7 @@ func openKubeconfig(_ context.Context, connection Connection, raw []byte) (Clien
 	}
 	return &kubeHTTPClient{
 		baseURL: baseURL, http: &http.Client{Transport: transport, Timeout: 10 * time.Second}, token: strings.TrimSpace(token),
-		username: username, password: password, defaultNS: namespace, fingerprint: "sha256:" + hex.EncodeToString(digest[:]),
+		username: username, password: password, defaultNS: namespace, physicalHostLabel: connection.PhysicalHostLabel, fingerprint: "sha256:" + hex.EncodeToString(digest[:]),
 	}, nil
 }
 

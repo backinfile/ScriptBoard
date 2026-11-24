@@ -7,6 +7,7 @@ var SchemaStatements = []string{
 		note TEXT NOT NULL DEFAULT '',
 		kubeconfig_path TEXT NOT NULL,
 		context_name TEXT NOT NULL DEFAULT '',
+		physical_host_label TEXT NOT NULL DEFAULT '',
 		operation_mode TEXT NOT NULL CHECK (operation_mode IN ('observe', 'limited')),
 		fingerprint TEXT NOT NULL DEFAULT '',
 		capabilities_json TEXT NOT NULL DEFAULT '{}',

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -54,11 +55,34 @@ func New(options Options) (*Manager, error) {
 	return &Manager{db: options.DB, factory: options.Factory, interval: options.Interval, now: options.Now, runtimes: make(map[string]*connectionRuntime)}, nil
 }
 
+var labelKeyName = regexp.MustCompile("^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$")
+var labelKeyPrefixPart = regexp.MustCompile("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+func validLabelKey(key string) bool {
+	prefix, name, qualified := strings.Cut(key, "/")
+	if !qualified {
+		return labelKeyName.MatchString(key)
+	}
+	if len(prefix) > 253 || !labelKeyName.MatchString(name) {
+		return false
+	}
+	for _, part := range strings.Split(prefix, ".") {
+		if !labelKeyPrefixPart.MatchString(part) {
+			return false
+		}
+	}
+	return true
+}
+
 func normalizeConnection(connection Connection) (Connection, error) {
 	connection.ID = strings.TrimSpace(connection.ID)
 	connection.Name = strings.TrimSpace(connection.Name)
 	connection.KubeconfigPath = strings.TrimSpace(connection.KubeconfigPath)
 	connection.Context = strings.TrimSpace(connection.Context)
+	connection.PhysicalHostLabel = strings.TrimSpace(connection.PhysicalHostLabel)
+	if connection.PhysicalHostLabel != "" && !validLabelKey(connection.PhysicalHostLabel) {
+		return Connection{}, errors.New("physical host label must be a valid Kubernetes label key")
+	}
 	var err error
 	connection.Note, err = recordnote.Normalize(connection.Note)
 	if err != nil {
@@ -197,14 +221,14 @@ func (manager *Manager) SaveConnection(ctx context.Context, connection Connectio
 		}
 	}
 	_, err = transaction.ExecContext(ctx, `INSERT INTO kubernetes_connection
-		(id, name, note, kubeconfig_path, context_name, operation_mode, fingerprint, capabilities_json, last_tested_at, last_error, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
+		(id, name, note, kubeconfig_path, context_name, physical_host_label, operation_mode, fingerprint, capabilities_json, last_tested_at, last_error, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, kubeconfig_path=excluded.kubeconfig_path,
 		note=excluded.note,
-		context_name=excluded.context_name, operation_mode=excluded.operation_mode, fingerprint=excluded.fingerprint,
+		context_name=excluded.context_name, physical_host_label=excluded.physical_host_label, operation_mode=excluded.operation_mode, fingerprint=excluded.fingerprint,
 		capabilities_json=excluded.capabilities_json, last_tested_at=excluded.last_tested_at,
 		last_error='', updated_at=excluded.updated_at`, connection.ID, connection.Name, connection.Note, connection.KubeconfigPath, connection.Context,
-		connection.Mode, client.Fingerprint(), string(encoded), now.UnixNano(), now.UnixNano())
+		connection.PhysicalHostLabel, connection.Mode, client.Fingerprint(), string(encoded), now.UnixNano(), now.UnixNano())
 	if err != nil {
 		_ = client.Close()
 		return ConnectionStatus{}, err
@@ -285,7 +309,7 @@ func scanConnectionStatus(scanner rowScanner) (ConnectionStatus, error) {
 	var status ConnectionStatus
 	var encoded string
 	var testedAt int64
-	err := scanner.Scan(&status.ID, &status.Name, &status.Note, &status.KubeconfigPath, &status.Context, &status.Mode, &status.Fingerprint, &encoded, &testedAt, &status.Error)
+	err := scanner.Scan(&status.ID, &status.Name, &status.Note, &status.KubeconfigPath, &status.Context, &status.PhysicalHostLabel, &status.Mode, &status.Fingerprint, &encoded, &testedAt, &status.Error)
 	if err != nil {
 		return ConnectionStatus{}, err
 	}
@@ -297,7 +321,7 @@ func scanConnectionStatus(scanner rowScanner) (ConnectionStatus, error) {
 	return status, nil
 }
 
-const connectionStatusColumns = `id, name, note, kubeconfig_path, context_name, operation_mode, fingerprint, capabilities_json, last_tested_at, last_error`
+const connectionStatusColumns = `id, name, note, kubeconfig_path, context_name, physical_host_label, operation_mode, fingerprint, capabilities_json, last_tested_at, last_error`
 
 func (manager *Manager) ConnectionStatus(ctx context.Context, id string) (ConnectionStatus, bool, error) {
 	status, err := scanConnectionStatus(manager.db.QueryRowContext(ctx, `SELECT `+connectionStatusColumns+` FROM kubernetes_connection WHERE id=?`, id))
@@ -450,15 +474,48 @@ func (manager *Manager) View(ctx context.Context, id string, query Query) (View,
 	manager.mu.RLock()
 	snapshot := runtime.current
 	manager.mu.RUnlock()
-	view.CollectedAt, view.ServerVersion, view.Nodes = snapshot.CollectedAt, snapshot.ServerVersion, append([]Node(nil), snapshot.Nodes...)
+	view.CollectedAt, view.ServerVersion = snapshot.CollectedAt, snapshot.ServerVersion
 	view.Services = append([]ServiceExposure(nil), snapshot.Services...)
-	view.Ingresses = append([]IngressExposure(nil), snapshot.Ingresses...)
 	view.PodsReady, view.PodsTotal, view.Namespaces, view.MetricsAvailable, view.Errors = snapshot.PodsReady, snapshot.PodsTotal, snapshot.Namespaces, snapshot.MetricsAvailable, cloneStrings(snapshot.Errors)
-	workloads := append([]Workload(nil), snapshot.Workloads...)
-	view.Total = len(workloads)
+	topology := scopeTopology(snapshot, query)
+	if query.IncludeTopology {
+		view.Topology = &topology
+	}
+	view.Total, view.NodesTotal = len(topology.Workloads), len(topology.Nodes)
+	if !matchesNamespace("", query.Namespace) || query.PhysicalHost != "" {
+		view.PodsReady, view.PodsTotal = 0, len(topology.Pods)
+		for _, pod := range topology.Pods {
+			if pod.Status == "ready" && pod.Phase == "Running" {
+				view.PodsReady++
+			}
+		}
+	}
 	namespaceSet := make(map[string]struct{})
-	for _, workload := range workloads {
+	for _, workload := range snapshot.Workloads {
 		namespaceSet[workload.Namespace] = struct{}{}
+	}
+	for _, pod := range snapshot.TopologyPods {
+		namespaceSet[pod.Namespace] = struct{}{}
+	}
+	for _, service := range snapshot.TopologyServices {
+		namespaceSet[service.Namespace] = struct{}{}
+	}
+	for _, ingress := range snapshot.Ingresses {
+		namespaceSet[ingress.Namespace] = struct{}{}
+	}
+	hostSet := make(map[string]struct{})
+	for _, node := range snapshot.Nodes {
+		if node.PhysicalHost == "" {
+			view.UnmappedHosts = true
+		} else {
+			hostSet[node.PhysicalHost] = struct{}{}
+		}
+	}
+	for host := range hostSet {
+		view.PhysicalHosts = append(view.PhysicalHosts, host)
+	}
+	sort.Strings(view.PhysicalHosts)
+	for _, workload := range topology.Workloads {
 		switch workload.Status {
 		case "ready":
 			view.Ready++
@@ -474,21 +531,68 @@ func (manager *Manager) View(ctx context.Context, id string, query Query) (View,
 	}
 	sort.Strings(view.AvailableNamespaces)
 	search := strings.ToLower(strings.TrimSpace(query.Search))
-	filtered := workloads[:0]
-	for _, workload := range workloads {
-		if query.Status != "" && query.Status != "all" && workload.Status != query.Status {
-			continue
-		}
-		if query.Namespace != "" && query.Namespace != "all" && workload.Namespace != query.Namespace {
-			continue
-		}
-		if query.Kind != "" && query.Kind != "all" && workload.Kind != query.Kind {
-			continue
-		}
-		if search != "" && !strings.Contains(strings.ToLower(workload.Name+"\x00"+workload.Namespace+"\x00"+workload.Image), search) {
+	var filtered []Workload
+	for _, workload := range topology.Workloads {
+		if !matchesWorkloadStatus(query.Status, workload.Status) ||
+			query.Kind != "" && query.Kind != "all" && workload.Kind != query.Kind ||
+			!matchesText(search, workload.Name, workload.Namespace, workload.Image, workload.Nodes) {
 			continue
 		}
 		filtered = append(filtered, workload)
+	}
+	for _, node := range topology.Nodes {
+		state := "degraded"
+		if node.Ready {
+			state = "ready"
+		}
+		if matchesWorkloadStatus(query.Status, state) && matchesText(search, node.Name, node.PhysicalHost, node.Role) {
+			view.Nodes = append(view.Nodes, node)
+		}
+	}
+	if query.Sort == "host" {
+		sort.SliceStable(view.Nodes, func(i, j int) bool {
+			if query.Direction == "desc" {
+				return view.Nodes[i].PhysicalHost > view.Nodes[j].PhysicalHost
+			}
+			return view.Nodes[i].PhysicalHost < view.Nodes[j].PhysicalHost
+		})
+	}
+	filterNetworkStatus := query.Status != "" && query.Status != "all"
+	podStates := make(map[string]string)
+	if filterNetworkStatus {
+		for _, pod := range topology.Pods {
+			podStates[pod.UID] = pod.Status
+		}
+	}
+	matchingServices := make(map[string]bool)
+	for _, service := range topology.Services {
+		if filterNetworkStatus {
+			matched := false
+			for _, endpoint := range service.Endpoints {
+				if state, found := podStates[endpoint.PodUID]; found && matchesWorkloadStatus(query.Status, state) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			matchingServices[service.Namespace+"/"+service.Name] = true
+		}
+		if matchesText(search, service.Name, service.Namespace, service.Type, service.ExternalName) {
+			view.NetworkServices = append(view.NetworkServices, service.ServiceExposure)
+		}
+	}
+	for _, ingress := range topology.Ingresses {
+		fields := []string{ingress.Name, ingress.Namespace, ingress.Class}
+		matched := !filterNetworkStatus
+		for _, rule := range ingress.Rules {
+			fields = append(fields, rule.Host, rule.Path, rule.Service)
+			matched = matched || matchingServices[ingress.Namespace+"/"+rule.Service]
+		}
+		if matched && matchesText(search, fields...) {
+			view.Ingresses = append(view.Ingresses, ingress)
+		}
 	}
 	view.Matched = len(filtered)
 	sortWorkloads(filtered, query.Sort, query.Direction)
@@ -503,7 +607,15 @@ func (manager *Manager) View(ctx context.Context, id string, query Query) (View,
 	return view, nil
 }
 
+func matchesWorkloadStatus(filter, status string) bool {
+	return filter == "" || filter == "all" || status == filter || filter == "attention" && status != "ready"
+}
+
 func (manager *Manager) Detail(ctx context.Context, id, key string) (Detail, error) {
+	return manager.PodDetail(ctx, id, key, "")
+}
+
+func (manager *Manager) PodDetail(ctx context.Context, id, key, pod string) (Detail, error) {
 	runtime := manager.runtime(id)
 	manager.mu.RLock()
 	var selected Workload
@@ -523,6 +635,15 @@ func (manager *Manager) Detail(ctx context.Context, id, key string) (Detail, err
 	if err != nil {
 		return Detail{}, err
 	}
+	if pod != "" {
+		podClient, supported := client.(WorkloadPodClient)
+		if !supported {
+			return Detail{}, errors.New("Kubernetes client cannot read individual Pods")
+		}
+		detail, err := podClient.PodDetail(ctx, key, pod)
+		detail.Workload = selected
+		return detail, err
+	}
 	detail, err := client.Detail(ctx, key)
 	if err != nil {
 		return Detail{}, err
@@ -537,6 +658,13 @@ func (manager *Manager) Detail(ctx context.Context, id, key string) (Detail, err
 }
 
 func (manager *Manager) Logs(ctx context.Context, id, key string, limit int) ([]LogLine, error) {
+	return manager.PodLogs(ctx, id, key, "", limit)
+}
+
+func (manager *Manager) PodLogs(ctx context.Context, id, key, pod string, limit int) ([]LogLine, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
 	runtime := manager.runtime(id)
 	manager.mu.RLock()
 	found := false
@@ -565,6 +693,13 @@ func (manager *Manager) Logs(ctx context.Context, id, key string, limit int) ([]
 	client, err := manager.ensureClient(ctx, id, runtime)
 	if err != nil {
 		return nil, err
+	}
+	if pod != "" {
+		podClient, supported := client.(WorkloadPodClient)
+		if !supported {
+			return nil, errors.New("Kubernetes client cannot read individual Pod logs")
+		}
+		return podClient.PodLogs(ctx, key, pod, limit)
 	}
 	return client.Logs(ctx, key, limit)
 }
@@ -761,8 +896,8 @@ func cloneStrings(values map[string]string) map[string]string {
 
 func (manager *Manager) Connection(ctx context.Context, id string) (Connection, bool, error) {
 	var connection Connection
-	err := manager.db.QueryRowContext(ctx, `SELECT id, name, kubeconfig_path, context_name, operation_mode
-		FROM kubernetes_connection WHERE id=?`, id).Scan(&connection.ID, &connection.Name, &connection.KubeconfigPath, &connection.Context, &connection.Mode)
+	err := manager.db.QueryRowContext(ctx, `SELECT id, name, kubeconfig_path, context_name, physical_host_label, operation_mode
+		FROM kubernetes_connection WHERE id=?`, id).Scan(&connection.ID, &connection.Name, &connection.KubeconfigPath, &connection.Context, &connection.PhysicalHostLabel, &connection.Mode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Connection{}, false, nil
 	}

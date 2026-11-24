@@ -38,6 +38,7 @@ type runtimeWireRequest struct {
 	Kubernetes          *clusterstatus.Connection `json:"kubernetes,omitempty"`
 	WorkloadKey         string                    `json:"workload_key,omitempty"`
 	LogLimit            int                       `json:"log_limit,omitempty"`
+	PodName             string                    `json:"pod_name,omitempty"`
 	KubernetesOperation *clusterstatus.Operation  `json:"kubernetes_operation,omitempty"`
 }
 
@@ -70,7 +71,7 @@ func validateRuntimeRequest(request wireRequest) error {
 		hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || request.StateBackup != nil || request.Registry != nil || request.Kubeconfig != nil {
 		return errors.New("runtime request contains unrelated fields")
 	}
-	if strings.HasPrefix(request.Operation, "application_") && (request.Runtime.Kubernetes != nil || request.Runtime.KubernetesOperation != nil || request.Runtime.WorkloadKey != "" || request.Runtime.LogLimit != 0) {
+	if strings.HasPrefix(request.Operation, "application_") && (request.Runtime.Kubernetes != nil || request.Runtime.KubernetesOperation != nil || request.Runtime.WorkloadKey != "" || request.Runtime.LogLimit != 0 || request.Runtime.PodName != "") {
 		return errors.New("application runtime request contains Kubernetes fields")
 	}
 	switch request.Operation {
@@ -94,7 +95,7 @@ func validateRuntimeRequest(request wireRequest) error {
 		if request.Operation != operationKubernetesOpen && request.SessionToken != "" || request.Operation == operationKubernetesOpen && request.SessionToken != "" && !validCredentialSessionToken(request.SessionToken) || request.Runtime.Detail != nil || request.Runtime.ContainerName != "" || request.Runtime.ContainerAction != "" || request.Runtime.Log != nil || request.Runtime.Cursor != "" || !validKubernetesConnection(request.Runtime.Kubernetes) {
 			return errors.New("Kubernetes runtime request is invalid")
 		}
-		if request.Runtime.WorkloadKey != "" || request.Runtime.LogLimit != 0 || request.Runtime.KubernetesOperation != nil {
+		if request.Runtime.WorkloadKey != "" || request.Runtime.LogLimit != 0 || request.Runtime.PodName != "" || request.Runtime.KubernetesOperation != nil {
 			return errors.New("Kubernetes runtime request contains workload fields")
 		}
 	case operationKubernetesDetail:
@@ -140,6 +141,9 @@ func validKubernetesReadRequest(request wireRequest, logs bool) bool {
 		return false
 	}
 	if request.Runtime.WorkloadKey == "" || len(request.Runtime.WorkloadKey) > 1024 || strings.ContainsAny(request.Runtime.WorkloadKey, "\r\n\x00") {
+		return false
+	}
+	if len(request.Runtime.PodName) > 253 || strings.ContainsAny(request.Runtime.PodName, "/\\\r\n\x00") {
 		return false
 	}
 	if logs {
@@ -230,12 +234,12 @@ func (server *Server) executeRuntimeMutation(ctx context.Context, request Execut
 	switch request.Action {
 	case ActionApplicationOperate:
 		validAction := payload.ContainerAction == appstatus.ContainerStart || payload.ContainerAction == appstatus.ContainerStop || payload.ContainerAction == appstatus.ContainerRestart
-		if server.applications == nil || request.Revision != "application-runtime-v1" || payload.ContainerName != request.Resource || strings.TrimSpace(payload.ContainerName) == "" || len(payload.ContainerName) > 255 || strings.ContainsAny(payload.ContainerName, "\r\n\x00") || !validAction || payload.Detail != nil || payload.Log != nil || payload.Cursor != "" || payload.Kubernetes != nil || payload.KubernetesOperation != nil || payload.WorkloadKey != "" || payload.LogLimit != 0 {
+		if server.applications == nil || request.Revision != "application-runtime-v1" || payload.ContainerName != request.Resource || strings.TrimSpace(payload.ContainerName) == "" || len(payload.ContainerName) > 255 || strings.ContainsAny(payload.ContainerName, "\r\n\x00") || !validAction || payload.Detail != nil || payload.Log != nil || payload.Cursor != "" || payload.Kubernetes != nil || payload.KubernetesOperation != nil || payload.WorkloadKey != "" || payload.LogLimit != 0 || payload.PodName != "" {
 			return errors.New("container operation parameters are invalid")
 		}
 		return server.applications.OperateContainer(ctx, payload.ContainerName, payload.ContainerAction)
 	case ActionKubernetesOperate:
-		if server.kubernetes == nil || request.Revision != "kubernetes-runtime-v1" || request.Resource == "" || payload.KubernetesOperation == nil || payload.KubernetesOperation.WorkloadKey != request.Resource || payload.Detail != nil || payload.ContainerName != "" || payload.ContainerAction != "" || payload.Log != nil || payload.Cursor != "" || payload.WorkloadKey != "" || payload.LogLimit != 0 || !validKubernetesOperation(payload.Kubernetes, payload.KubernetesOperation) {
+		if server.kubernetes == nil || request.Revision != "kubernetes-runtime-v1" || request.Resource == "" || payload.KubernetesOperation == nil || payload.KubernetesOperation.WorkloadKey != request.Resource || payload.Detail != nil || payload.ContainerName != "" || payload.ContainerAction != "" || payload.Log != nil || payload.Cursor != "" || payload.WorkloadKey != "" || payload.LogLimit != 0 || payload.PodName != "" || !validKubernetesOperation(payload.Kubernetes, payload.KubernetesOperation) {
 			return errors.New("Kubernetes operation parameters are invalid")
 		}
 		configured, found, err := server.kubernetes.ResolveConnection(ctx, payload.Kubernetes.ID)
@@ -323,12 +327,26 @@ func (server *Server) kubernetesOperation(ctx context.Context, request wireReque
 		snapshot, snapshotErr := client.Snapshot(ctx)
 		err = snapshotErr
 		response.KubernetesSnapshot = &snapshot
-	case operationKubernetesDetail:
-		detail, detailErr := client.Detail(ctx, request.Runtime.WorkloadKey)
-		err = detailErr
-		response.KubernetesDetail = &detail
-	case operationKubernetesLogs:
-		response.KubernetesLogs, err = client.Logs(ctx, request.Runtime.WorkloadKey, request.Runtime.LogLimit)
+	case operationKubernetesDetail, operationKubernetesLogs:
+		key, pod := request.Runtime.WorkloadKey, request.Runtime.PodName
+		if pod != "" {
+			podClient, supported := client.(clusterstatus.WorkloadPodClient)
+			if !supported {
+				err = errors.New("Kubernetes client cannot read individual Pods")
+				break
+			}
+			if request.Operation == operationKubernetesLogs {
+				response.KubernetesLogs, err = podClient.PodLogs(ctx, key, pod, request.Runtime.LogLimit)
+			} else {
+				detail, detailErr := podClient.PodDetail(ctx, key, pod)
+				response.KubernetesDetail, err = &detail, detailErr
+			}
+		} else if request.Operation == operationKubernetesLogs {
+			response.KubernetesLogs, err = client.Logs(ctx, key, request.Runtime.LogLimit)
+		} else {
+			detail, detailErr := client.Detail(ctx, key)
+			response.KubernetesDetail, err = &detail, detailErr
+		}
 	}
 	if err != nil {
 		// Preserve the redacted API cause so an unchanged connection that fails
@@ -533,7 +551,11 @@ func (client *remoteKubernetesClient) Snapshot(ctx context.Context) (clusterstat
 }
 
 func (client *remoteKubernetesClient) Detail(ctx context.Context, key string) (clusterstatus.Detail, error) {
-	response, err := client.callWith(ctx, operationKubernetesDetail, &runtimeWireRequest{Kubernetes: &client.connection, WorkloadKey: key})
+	return client.PodDetail(ctx, key, "")
+}
+
+func (client *remoteKubernetesClient) PodDetail(ctx context.Context, key, pod string) (clusterstatus.Detail, error) {
+	response, err := client.callWith(ctx, operationKubernetesDetail, &runtimeWireRequest{Kubernetes: &client.connection, WorkloadKey: key, PodName: pod})
 	if err != nil {
 		return clusterstatus.Detail{}, err
 	}
@@ -544,7 +566,11 @@ func (client *remoteKubernetesClient) Detail(ctx context.Context, key string) (c
 }
 
 func (client *remoteKubernetesClient) Logs(ctx context.Context, key string, limit int) ([]clusterstatus.LogLine, error) {
-	response, err := client.callWith(ctx, operationKubernetesLogs, &runtimeWireRequest{Kubernetes: &client.connection, WorkloadKey: key, LogLimit: limit})
+	return client.PodLogs(ctx, key, "", limit)
+}
+
+func (client *remoteKubernetesClient) PodLogs(ctx context.Context, key, pod string, limit int) ([]clusterstatus.LogLine, error) {
+	response, err := client.callWith(ctx, operationKubernetesLogs, &runtimeWireRequest{Kubernetes: &client.connection, WorkloadKey: key, PodName: pod, LogLimit: limit})
 	if err != nil {
 		return nil, err
 	}
