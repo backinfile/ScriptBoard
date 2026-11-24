@@ -1,10 +1,14 @@
-# ScriptBoard v2.16.0
+# ScriptBoard v2.16.1
 
 ## Kubernetes 监控
 
 - 新增资源拓扑，可沿 Ingress、Service、工作负载和 Pod 查看关联，直接打开 Pod 事件与日志。
 - 新增按物理机分组的节点分布。可在集群连接中设置物理机标签键，并在列表和拓扑中按物理机筛选。
 - 默认显示工作负载列表，网络和节点可独立切换。紧凑工具栏为列表和拓扑留出更多空间。
+
+## 安全修复
+
+- 更新 OpenTelemetry 和 Gorilla WebSocket 依赖，修复 Go 漏洞数据库报告的安全问题。
 
 ## 升级
 
